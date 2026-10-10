@@ -203,6 +203,8 @@ What is not understood:
 
 A way to settle it would be a disassembly or trace of `ASDetail::OnClone2` (the in-process engine used by Power Pivot), or Excel-written files created by adding a relationship, a measure, a sort and a hierarchy in different orders and diffing each save.
 
+See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (working notes for contributors).
+
 ## Limitations
 
 These are not supported yet:

@@ -1,0 +1,17 @@
+using PivotWright;
+string dir = args[0];
+using var m = new DataModelWriter(new DataModelOptions { Lcid = 7177 });
+var p = m.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String) { SortByColumn = "CategoryOrder" }, new ColumnDefinition("CategoryOrder", ColumnDataType.Int64), new ColumnDefinition("Product", ColumnDataType.String) });
+string[] cats = { "Bikes", "Clothing", "Accessories" };
+int k = 1;
+for (int c = 0; c < 3; c++) for (int i = 1; i <= 4; i++) p.AddRow(k++, cats[c], c + 1, $"{cats[c]} item {i}");
+var d = m.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" }, new ColumnDefinition("MonthNumber", ColumnDataType.Int64) });
+for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
+var s = m.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
+for (int i = 0; i < 1000; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
+m.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+m.AddRelationship("Sales", "Date", "Dates", "Date");
+m.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
+m.AddHierarchy("Dates", "Calendar", "Year", "Month");
+m.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+m.Save(Path.Combine(dir, args[1] + ".xlsx"));
