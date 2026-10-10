@@ -19,7 +19,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
 | CI (GitHub Actions), editorconfig, global.json, session hook | done |
 | License | MIT (LICENSE, csproj) |
-| NuGet packaging | not done (check id availability on nuget.org) |
+| NuGet packaging | metadata, README, snupkg symbols and SourceLink set up; `release.yml` publishes on `v*` tags using the `NUGET_API_KEY` secret. Not yet published; check id `PivotWright` on nuget.org |
 
 Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 29 tests, all pass at handoff. Nothing but the .NET 8 SDK is needed.
 

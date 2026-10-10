@@ -9,11 +9,27 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <RootNamespace>PivotWright</RootNamespace>
     <AssemblyName>PivotWright</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.0-preview.1</Version>
     <Authors>Matthew Moore</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Description>Writes Excel workbooks with an embedded Power Pivot (xVelocity/VertiPaq) data model directly, without Excel or Analysis Services, following [MS-XLDM].</Description>
+    <PackageId>PivotWright</PackageId>
+    <PackageTags>excel;xlsx;powerpivot;data-model;vertipaq;xvelocity;ms-xldm</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/MatthewMooreZA/PivotWright</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/MatthewMooreZA/PivotWright</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Copyright>Copyright (c) 2026 Matthew Moore</Copyright>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="PivotWright.Tests" />

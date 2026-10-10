@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build --configuration Release
+      - run: dotnet run --configuration Release --no-build --project tests/PivotWright.Tests
+      - run: dotnet pack src/PivotWright/PivotWright.csproj --configuration Release --no-build --output nupkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/*
+      - name: Push to nuget.org
+        run: dotnet nuget push "nupkg/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
