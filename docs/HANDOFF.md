@@ -17,7 +17,8 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | Date table | analysed from Excel samples (`SPEC.md` §9); **not implemented** |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
-| NuGet packaging, CI, license | not done |
+| CI (GitHub Actions), editorconfig, global.json, session hook | done |
+| NuGet packaging, license | not done (license is the owner's choice) |
 
 Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 29 tests, all pass at handoff. Nothing but the .NET 8 SDK is needed.
 
