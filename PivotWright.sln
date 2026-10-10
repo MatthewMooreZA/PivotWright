@@ -1,0 +1,45 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{AC639F17-6FDD-4955-B0AE-7781986655BD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PivotWright", "src\PivotWright\PivotWright.csproj", "{C9D179D8-643D-40B0-A81C-277A4304691B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{C3D66493-335C-4A5B-AE38-FAD00B5810A3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PivotWright.Demo", "samples\PivotWright.Demo\PivotWright.Demo.csproj", "{B43C1A0F-791B-4B25-BFF9-53CE1411E6AC}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{02ECF6B9-F02C-4C80-B607-6F1D6C6DCB15}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PivotWright.Tests", "tests\PivotWright.Tests\PivotWright.Tests.csproj", "{FEFCAE0E-6359-47CD-8AFD-70B96232E0F4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C9D179D8-643D-40B0-A81C-277A4304691B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C9D179D8-643D-40B0-A81C-277A4304691B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C9D179D8-643D-40B0-A81C-277A4304691B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C9D179D8-643D-40B0-A81C-277A4304691B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B43C1A0F-791B-4B25-BFF9-53CE1411E6AC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B43C1A0F-791B-4B25-BFF9-53CE1411E6AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B43C1A0F-791B-4B25-BFF9-53CE1411E6AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B43C1A0F-791B-4B25-BFF9-53CE1411E6AC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FEFCAE0E-6359-47CD-8AFD-70B96232E0F4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FEFCAE0E-6359-47CD-8AFD-70B96232E0F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FEFCAE0E-6359-47CD-8AFD-70B96232E0F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FEFCAE0E-6359-47CD-8AFD-70B96232E0F4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{C9D179D8-643D-40B0-A81C-277A4304691B} = {AC639F17-6FDD-4955-B0AE-7781986655BD}
+		{B43C1A0F-791B-4B25-BFF9-53CE1411E6AC} = {C3D66493-335C-4A5B-AE38-FAD00B5810A3}
+		{FEFCAE0E-6359-47CD-8AFD-70B96232E0F4} = {02ECF6B9-F02C-4C80-B607-6F1D6C6DCB15}
+	EndGlobalSection
+EndGlobal

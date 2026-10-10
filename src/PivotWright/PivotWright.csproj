@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <RootNamespace>PivotWright</RootNamespace>
+    <AssemblyName>PivotWright</AssemblyName>
+    <Version>0.1.0</Version>
+    <Description>Writes Excel workbooks with an embedded Power Pivot (xVelocity/VertiPaq) data model directly, without Excel or Analysis Services, following [MS-XLDM].</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PivotWright.Tests" />
+  </ItemGroup>
+
+</Project>

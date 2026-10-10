@@ -1,0 +1,334 @@
+using System.Data;
+using System.Globalization;
+using PivotWright.Internal;
+using PivotWright.Internal.Model;
+using PivotWright.Internal.Package;
+
+namespace PivotWright;
+
+/// <summary>
+/// Builds an Excel workbook (.xlsx) whose Power Pivot data model contains the tables you add.
+/// Rows are streamed: each column is encoded into the xVelocity (VertiPaq) column-store format
+/// when <see cref="Save(string)"/> is called, and spilled to temporary files while loading so that
+/// tables larger than memory can be written.
+/// </summary>
+/// <example>
+/// <code>
+/// using var model = new DataModelWriter();
+/// model.AddTable("Sales", sqlCommand.ExecuteReader());
+/// model.Save("sales.xlsx");
+/// </code>
+/// </example>
+public sealed class DataModelWriter : IDisposable
+{
+    private readonly DataModelOptions _options;
+    private readonly BuilderContext _ctx;
+    private readonly List<TableBuilder> _tables = new();
+    private readonly List<RelationshipDefinition> _relationships = new();
+    private readonly List<MeasureDefinition> _measures = new();
+    private readonly List<HierarchyDefinition> _hierarchies = new();
+    private readonly HashSet<string> _tableIds = new(StringComparer.OrdinalIgnoreCase);
+    private bool _disposed;
+
+    public DataModelWriter(DataModelOptions? options = null)
+    {
+        _options = options ?? new DataModelOptions();
+        var culture = _options.Culture;
+        _ctx = new BuilderContext
+        {
+            Culture = culture,
+            StringComparer = StringComparer.Create(culture,
+                CompareOptions.IgnoreCase | CompareOptions.IgnoreKanaType | CompareOptions.IgnoreWidth),
+            // XM_HASH_ALGORITHM_FAST_CI for en-US, XM_HASH_ALGORITHM_SQL otherwise ([MS-XLDM] 2.3.3.1.4.2).
+            StringHashAlgorithm = _options.Lcid == 1033 ? 1 : 0,
+            SpillThreshold = _options.SpillThresholdBytes,
+            TempDirectory = _options.TempDirectory,
+        };
+    }
+
+    /// <summary>Names of the tables added so far.</summary>
+    public IEnumerable<string> TableNames => _tables.Select(t => t.Name);
+
+    /// <summary>Creates an empty table; add rows through the returned <see cref="TableWriter"/>.</summary>
+    public TableWriter CreateTable(string name, IEnumerable<ColumnDefinition> columns)
+    {
+        ThrowIfDisposed();
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Table name is required.", nameof(name));
+        string modelName = Identifiers.SanitizeName(name, "Table");
+        if (_tables.Any(t => string.Equals(t.Name, modelName, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"A table named '{modelName}' already exists.", nameof(name));
+        string id = Identifiers.Sanitize(modelName, "Table") + "_" + Guid.NewGuid().ToString("D");
+        _tableIds.Add(id);
+        var builder = new TableBuilder(modelName, id, columns, _ctx);
+        _tables.Add(builder);
+        return new TableWriter(builder);
+    }
+
+    /// <summary>
+    /// Adds a table and loads every row of <paramref name="reader"/> into it. Column types are taken
+    /// from the reader's field types unless overridden.
+    /// </summary>
+    /// <param name="name">Table name.</param>
+    /// <param name="reader">Source rows; read to the end but not closed.</param>
+    /// <param name="typeOverrides">Optional per-column data types, keyed by column name.</param>
+    /// <returns>The number of rows loaded.</returns>
+    public long AddTable(string name, IDataReader reader, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        var defs = new List<ColumnDefinition>(reader.FieldCount);
+        for (int i = 0; i < reader.FieldCount; i++)
+        {
+            string col = reader.GetName(i);
+            if (string.IsNullOrWhiteSpace(col)) col = "Column" + (i + 1);
+            var type = typeOverrides is not null && typeOverrides.TryGetValue(col, out var t)
+                ? t
+                : ColumnDefinition.FromClrType(reader.GetFieldType(i), _options.DecimalAsCurrency);
+            defs.Add(new ColumnDefinition(col, type));
+        }
+        var table = CreateTable(name, defs);
+        table.AddRows(reader);
+        return table.RowCount;
+    }
+
+    /// <summary>Adds a table from a <see cref="DataTable"/>.</summary>
+    public long AddTable(DataTable table, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        using var reader = table.CreateDataReader();
+        return AddTable(string.IsNullOrEmpty(table.TableName) ? "Table" + (_tables.Count + 1) : table.TableName, reader, typeOverrides);
+    }
+
+    /// <summary>
+    /// Adds a table from a sequence of objects; every public readable property becomes a column.
+    /// </summary>
+    public long AddTable<T>(string name, IEnumerable<T> rows, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var props = typeof(T).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+            .ToArray();
+        if (props.Length == 0) throw new ArgumentException($"Type {typeof(T).Name} has no public properties.");
+        var defs = props.Select(p => new ColumnDefinition(p.Name,
+            typeOverrides is not null && typeOverrides.TryGetValue(p.Name, out var t)
+                ? t
+                : ColumnDefinition.FromClrType(p.PropertyType, _options.DecimalAsCurrency))).ToList();
+        var getters = props.Select(p => (Func<T, object?>)(item => p.GetValue(item))).ToArray();
+        var table = CreateTable(name, defs);
+        var values = new object?[props.Length];
+        foreach (var item in rows)
+        {
+            for (int i = 0; i < getters.Length; i++) values[i] = item is null ? null : getters[i](item);
+            table.AddRow(values);
+        }
+        return table.RowCount;
+    }
+
+    /// <summary>Number of relationships added so far.</summary>
+    public int RelationshipCount => _relationships.Count;
+
+    /// <summary>
+    /// Adds a many-to-one relationship, like the one Power Pivot's diagram view creates by dragging a
+    /// column of the "many" table onto the key column of the "one" table. Both tables must already exist.
+    /// </summary>
+    /// <param name="manyTable">Table holding the foreign key (for example Sales).</param>
+    /// <param name="manyColumn">Foreign key column (for example ProductKey).</param>
+    /// <param name="oneTable">Table holding the primary key (for example Products).</param>
+    /// <param name="oneColumn">Primary key column; its values must be unique and not blank, which is checked when saving.</param>
+    /// <exception cref="ArgumentException">A table or column is unknown, the column types differ, the tables
+    /// are already related, or the relationship would make the model's relationships circular.</exception>
+    public void AddRelationship(string manyTable, string manyColumn, string oneTable, string oneColumn)
+    {
+        ThrowIfDisposed();
+        var many = FindTable(manyTable);
+        var one = FindTable(oneTable);
+        if (many == one) throw new ArgumentException("A relationship needs two different tables.", nameof(oneTable));
+        var fk = FindColumn(many, manyColumn);
+        var pk = FindColumn(one, oneColumn);
+        if (fk.Definition.DataType != pk.Definition.DataType)
+            throw new ArgumentException(
+                $"'{many.Name}[{fk.Definition.Name}]' is {fk.Definition.DataType} but '{one.Name}[{pk.Definition.Name}]' is {pk.Definition.DataType}; related columns need the same data type.");
+        if (_relationships.Any(r => (r.From == many && r.To == one) || (r.From == one && r.To == many)))
+            throw new ArgumentException($"'{many.Name}' and '{one.Name}' are already related.");
+        if (Reaches(one, many))
+            throw new ArgumentException($"Relating '{many.Name}' to '{one.Name}' would make the relationships circular.");
+        fk.IsForeignKey = true;
+        pk.IsPrimaryKey = true;
+        _relationships.Add(new RelationshipDefinition
+        {
+            Name = Guid.NewGuid().ToString("D"),
+            From = many, FromColumn = fk, To = one, ToColumn = pk,
+        });
+    }
+
+    /// <summary>
+    /// Orders a column by another column of the same table, like Power Pivot's "Sort by Column": a Month
+    /// column sorted by a MonthNumber column lists January to December instead of alphabetically. Every
+    /// value of <paramref name="column"/> must belong to exactly one value of <paramref name="sortColumn"/>,
+    /// which is checked when saving. Can also be set with <see cref="ColumnDefinition.SortByColumn"/>.
+    /// </summary>
+    public void SetSortByColumn(string table, string column, string sortColumn)
+    {
+        ThrowIfDisposed();
+        FindTable(table).SetSortBy(column, sortColumn);
+    }
+
+    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
+    public void SetSortByColumn(TableWriter table, string column, string sortColumn) => SetSortByColumn(table.Name, column, sortColumn);
+
+    /// <summary>Number of hierarchies added so far.</summary>
+    public int HierarchyCount => _hierarchies.Count;
+
+    /// <summary>
+    /// Adds a hierarchy to a table, like the one Power Pivot's diagram view creates with "Create Hierarchy":
+    /// an ordered drill-down path such as Category, Subcategory, Product that PivotTables offer as a single field.
+    /// </summary>
+    /// <param name="table">Table that holds the level columns.</param>
+    /// <param name="name">Hierarchy name; unique within the table and different from its column names.</param>
+    /// <param name="levels">Two or more columns of the table, from the top level down.</param>
+    public void AddHierarchy(string table, string name, params string[] levels)
+    {
+        ThrowIfDisposed();
+        var t = FindTable(table);
+        ArgumentNullException.ThrowIfNull(levels);
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Hierarchy name is required.", nameof(name));
+        string modelName = Identifiers.SanitizeName(name, "Hierarchy");
+        if (levels.Length < 2) throw new ArgumentException("A hierarchy needs at least two levels.", nameof(levels));
+        if (_hierarchies.Any(h => h.Table == t && string.Equals(h.Name, modelName, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{t.Name}' already has a hierarchy named '{modelName}'.", nameof(name));
+        if (t.Columns.Any(c => string.Equals(c.ModelName, modelName, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{t.Name}' already has a column named '{modelName}'; a hierarchy needs its own name.", nameof(name));
+        var columns = new List<ColumnBuilder>();
+        foreach (var level in levels)
+        {
+            var c = FindColumn(t, level);
+            if (columns.Contains(c)) throw new ArgumentException($"Column '{c.Definition.Name}' is used twice in the hierarchy.", nameof(levels));
+            columns.Add(c);
+        }
+        _hierarchies.Add(new HierarchyDefinition { Name = modelName, Table = t, Columns = columns });
+    }
+
+    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
+    public void AddHierarchy(TableWriter table, string name, params string[] levels) => AddHierarchy(table.Name, name, levels);
+
+    /// <summary>Number of measures added so far.</summary>
+    public int MeasureCount => _measures.Count;
+
+    /// <summary>
+    /// Adds a DAX measure, like one created in Power Pivot's "New Measure" dialog. The expression is
+    /// stored as given and evaluated by Excel when the model is opened; the library does not parse it,
+    /// so a mistake shows up as an error in the pivot table, not here.
+    /// </summary>
+    /// <param name="table">Table the measure belongs to (it appears under this table in the field list).</param>
+    /// <param name="name">Measure name; unique across the model, and must not contain [ or ].</param>
+    /// <param name="expression">DAX expression without the leading "=", for example <c>SUM(Sales[Qty])</c>.</param>
+    /// <param name="format">Number format; <see cref="MeasureFormat.General"/> when omitted.</param>
+    /// <param name="hidden">Hide the measure from client tools.</param>
+    public void AddMeasure(string table, string name, string expression, MeasureFormat? format = null, bool hidden = false)
+    {
+        ThrowIfDisposed();
+        var t = FindTable(table);
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Measure name is required.", nameof(name));
+        name = name.Trim();
+        if (name.IndexOfAny(new[] { '[', ']' }) >= 0 || name.Any(char.IsControl))
+            throw new ArgumentException($"Measure name '{name}' must not contain [, ] or control characters.", nameof(name));
+        if (name.StartsWith("__", StringComparison.Ordinal))
+            throw new ArgumentException("Measure names starting with '__' are reserved.", nameof(name));
+        if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("A DAX expression is required.", nameof(expression));
+        expression = expression.Trim();
+        if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
+        if (_measures.Any(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"A measure named '{name}' already exists.", nameof(name));
+        foreach (var tb in _tables)
+            if (tb.Columns.Any(c => string.Equals(c.Definition.Name, name, StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(c.ModelName, name, StringComparison.OrdinalIgnoreCase)) && tb == t)
+                throw new ArgumentException($"Table '{t.Name}' already has a column named '{name}'.", nameof(name));
+        _measures.Add(new MeasureDefinition
+        {
+            Name = name, Table = t.Name, Expression = expression,
+            Format = format ?? MeasureFormat.General, Hidden = hidden,
+        });
+    }
+
+    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
+    public void AddMeasure(TableWriter table, string name, string expression, MeasureFormat? format = null, bool hidden = false)
+        => AddMeasure(table.Name, name, expression, format, hidden);
+
+    /// <summary>Overload taking the writers returned by <see cref="CreateTable"/>.</summary>
+    public void AddRelationship(TableWriter manyTable, string manyColumn, TableWriter oneTable, string oneColumn)
+        => AddRelationship(manyTable.Name, manyColumn, oneTable.Name, oneColumn);
+
+    // True if the graph of relationships (treated as undirected) connects the two tables.
+    private bool Reaches(TableBuilder from, TableBuilder target)
+    {
+        var seen = new HashSet<TableBuilder> { from };
+        var queue = new Queue<TableBuilder>();
+        queue.Enqueue(from);
+        while (queue.Count > 0)
+        {
+            var t = queue.Dequeue();
+            if (t == target) return true;
+            foreach (var r in _relationships)
+            {
+                var next = r.From == t ? r.To : r.To == t ? r.From : null;
+                if (next is not null && seen.Add(next)) queue.Enqueue(next);
+            }
+        }
+        return false;
+    }
+
+    private TableBuilder FindTable(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return _tables.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"There is no table named '{name}'.", nameof(name));
+    }
+
+    private static ColumnBuilder FindColumn(TableBuilder table, string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return table.Columns.FirstOrDefault(c => string.Equals(c.Definition.Name, name, StringComparison.OrdinalIgnoreCase)
+                                                 || string.Equals(c.ModelName, name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'.", nameof(name));
+    }
+
+    /// <summary>Encodes the model and writes the workbook to a file.</summary>
+    public void Save(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 16);
+        Save(fs);
+    }
+
+    /// <summary>Encodes the model and writes the workbook to a stream.</summary>
+    public void Save(Stream output)
+    {
+        ThrowIfDisposed();
+        if (_tables.Count == 0) throw new InvalidOperationException("Add at least one table before saving.");
+        string dir = _options.TempDirectory ?? Path.GetTempPath();
+        string tempPath = Path.Combine(dir, "ppw-model-" + Guid.NewGuid().ToString("N") + ".tmp");
+        using var model = new FileStream(tempPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+            1 << 20, FileOptions.DeleteOnClose);
+        var serializer = new ModelSerializer(_options, _tables, _relationships, _ctx.StringComparer, _measures, _hierarchies);
+        serializer.Write(model);
+        XlsxWriter.Write(output, model, serializer.Info, serializer.EncodedTables, _options);
+    }
+
+    /// <summary>
+    /// Writes only the data model part (the content of xl/model/item.data) to a stream. Useful for
+    /// injecting the model into an existing workbook.
+    /// </summary>
+    public void SaveModelPart(Stream output)
+    {
+        ThrowIfDisposed();
+        if (!output.CanSeek) throw new ArgumentException("The output stream must be seekable.", nameof(output));
+        new ModelSerializer(_options, _tables, _relationships, _ctx.StringComparer, _measures, _hierarchies).Write(output);
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        foreach (var t in _tables) t.Dispose();
+    }
+}
