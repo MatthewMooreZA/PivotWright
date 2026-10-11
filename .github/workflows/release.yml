@@ -3,7 +3,7 @@ name: Release
 # Push a tag like v0.1.0-preview.1 (prerelease) or v0.1.0 (stable).
 # The tag is the single source of truth for the package version.
 # The run title shows the tag and commit on the approval screen.
-run-name: ${{ format('Release {0} @ {1}', github.ref_name, substr(github.sha, 0, 7)) }}
+run-name: ${{ format('Release {0} @ {1}', github.ref_name, github.sha) }}
 
 on:
   push:
