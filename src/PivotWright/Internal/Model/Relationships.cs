@@ -28,6 +28,8 @@ internal sealed class EncodedRelationship
     public required int Width { get; init; }
     /// <summary>Foreign key rows with a value that has no match in the primary key column.</summary>
     public required long ViolationCount { get; init; }
+    /// <summary>Version of the R$ table and its INDEX file: 2 when the primary side is a date table, else 0.</summary>
+    public int Version { get; init; }
 
     public string TableName => FileNames.RelationshipTable(ForeignTableId, Name);
 }
@@ -54,6 +56,7 @@ internal static class RelationshipEncoder
         string fkColumnId, string pkTableId, string pkColumnId, StringComparer strings, IFileSink sink,
         Func<EncodedRelationship, string> tableXml)
     {
+        int version = rel.To.DateColumn is not null ? 2 : 0;
         // Row number of every primary key value.
         var rows = new Dictionary<object, int>(new KeyComparer(strings));
         int row = 0;
@@ -100,16 +103,17 @@ internal static class RelationshipEncoder
             MaxRow = maxRow,
             Width = width,
             ViolationCount = violations,
+            Version = version,
         };
 
-        using (var s = sink.Create(FileNames.RelationshipIndex(fkTableId, rel.Name)))
+        using (var s = sink.Create(FileNames.RelationshipIndex(fkTableId, rel.Name, version)))
         {
             var buf = new byte[8 + words * 8];
             BinaryPrimitives.WriteUInt64LittleEndian(buf, (ulong)words);
             for (int i = 0; i < packed.Length; i++) BinaryPrimitives.WriteUInt64LittleEndian(buf.AsSpan(8 + i * 8), packed[i]);
             s.Write(buf);
         }
-        using (var s = sink.Create(FileNames.RelationshipTableXml(fkTableId, rel.Name)))
+        using (var s = sink.Create(FileNames.RelationshipTableXml(fkTableId, rel.Name, version)))
             s.Write(new System.Text.UTF8Encoding(false).GetBytes(tableXml(result)));
         return result;
     }

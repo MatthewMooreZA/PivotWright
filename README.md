@@ -59,6 +59,16 @@ model.AddHierarchy("Dates", "Calendar", "Year", "Month");
 
 A hierarchy is an ordered drill-down path over two or more columns of one table; PivotTables offer it as a single field with expandable levels. The name must be unique within the table and different from its column names. The tree is built and sorted when saving (levels sort like the columns do, BLANK first), so memory use grows with the number of distinct value paths. The file layout matches what Excel writes byte for byte for the same data. BLANK values inside a level (sorted first) and values that differ only in case (merged) were confirmed in Excel.
 
+### Date table
+
+```csharp
+model.AddRelationship("Sales", "Date", "Dates", "Date");
+model.AddHierarchy("Dates", "Calendar", "Year", "Month");
+model.MarkAsDateTable("Dates", "Date");
+```
+
+Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*, which time intelligence functions such as `TOTALYTD` and `SAMEPERIODLASTYEAR` rely on. The column must be `DateTime` with one whole day per row (no BLANK, no time part, no duplicates; checked when saving). The file layout follows what Excel writes after marking a date table in a model like the one above; that is the only case seen so far, so for now saving requires **a hierarchy on the date table, a relationship that uses the date column as its primary key, and a single date table per model**. This is written to match Excel's file but has **not yet been opened in Excel**. Creating a date table from scratch (Excel's *Date Table > New*) is not implemented.
+
 ### Sort by column
 
 ```csharp
@@ -209,7 +219,7 @@ See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (worki
 
 These are not supported yet:
 
-- **Calculated columns, KPIs, date tables, hiding columns from client tools, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
+- **Calculated columns, KPIs, creating a date table from scratch, hiding columns from client tools, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
 - **Refresh.** The data is written directly. The model's data source is a placeholder OLE DB connection, stored encrypted the way Excel stores it, so *Refresh* in Excel reports a connection error and keeps the existing data. Set `ConnectionString` if you want it to point somewhere real.
 - **Excel 2010 PowerPivot add-in.** The model uses compatibility level 1103, the format of Excel 2013 and later.
 

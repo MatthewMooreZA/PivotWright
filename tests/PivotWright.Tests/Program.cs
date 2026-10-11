@@ -39,6 +39,8 @@ var tests = new (string Name, Action Body)[]
     ("Sort by Column: invalid definitions are rejected", Tests.SortByColumnValidation),
     ("Relationship models: helper measure, table version 2, statistics", Tests.RelationshipDefaults),
     ("Measures: invalid definitions are rejected", Tests.MeasureValidation),
+    ("Date table: dimension, tables, files and counters as Excel saves them", Tests.DateTableMetadata),
+    ("Date table: invalid definitions are rejected", Tests.DateTableValidation),
 };
 
 int failed = 0;
@@ -618,6 +620,141 @@ namespace PivotWright.Tests
                 Rejects(() => model.AddMeasure("Many", "M3", "  "), "empty expression");
                 Rejects(() => model.AddMeasure("Many", "N", "1"), "name of a column in the same table");
                 Rejects(() => model.AddMeasure("Many", "__x", "1"), "reserved prefix");
+            }
+        }
+
+        // Dates(Date, Year, Month) with a Calendar hierarchy, related to Sales[Date]: the shape of Excel's H2_date_table.xlsx.
+        private static (DataModelWriter model, TableWriter dates, TableWriter sales) DateModel(Action<TableWriter>? fillDates = null)
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var dates = model.CreateTable("Dates", new[]
+            {
+                new ColumnDefinition("Date", ColumnDataType.DateTime),
+                new ColumnDefinition("Year", ColumnDataType.Int64),
+                new ColumnDefinition("Month", ColumnDataType.String),
+            });
+            if (fillDates is not null) fillDates(dates);
+            else for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", CultureInfo.InvariantCulture)); }
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
+            sales.AddRow(new DateTime(2025, 1, 2), 1);
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddHierarchy("Dates", "Calendar", "Year", "Month");
+            return (model, dates, sales);
+        }
+
+        /// <summary>The changes Excel makes when Dates[Date] is marked as date table (SPEC section 9, diffed against H2_date_table.xlsx).</summary>
+        public static void DateTableMetadata()
+        {
+            var (model, _, _) = DateModel();
+            using (model)
+            {
+                model.MarkAsDateTable("Dates", "Date");
+                Check.Equal("Dates", model.DateTableName, "DateTableName");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+
+                string dim = Text(@"\.0\.db\\Dates_G\.6\.dim\.xml$");
+                Check.True(dim.Contains("<Type>Time</Type>"), "dimension type Time");
+                int rowNumber = dim.IndexOf("<ID>__XL_RowNumber</ID>", StringComparison.Ordinal);
+                int dateAttr = dim.IndexOf("<ID>Date</ID>", StringComparison.Ordinal);
+                Check.True(dim.Substring(rowNumber, dateAttr - rowNumber).Contains("<Usage>Regular</Usage>"), "row number is no longer the key");
+                Check.True(!dim.Substring(rowNumber, dateAttr - rowNumber).Contains("<AttributeID>Date</AttributeID>"), "row number no longer relates to Date");
+                string dateXml = dim.Substring(dateAttr, dim.IndexOf("</Attribute>", dateAttr, StringComparison.Ordinal) - dateAttr);
+                Check.True(dateXml.Contains("<Usage>Key</Usage>"), "Date is the key");
+                Check.True(dateXml.Contains("<AttributeRelationships><AttributeRelationship><AttributeID>__XL_RowNumber</AttributeID>"), "Date relates to the row number");
+                Check.True(dim.Contains("<StructureVersion>3</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>3</DataVersion>"), "dimension counters");
+
+                string tbl = Text(@"\.0\.dim\\Dates_G\.3\.tbl\.xml$");
+                Check.True(tbl.Contains("<Version xsi:type=\"xsd:int\">3</Version>"), "table version 3");
+                Check.True(System.Text.RegularExpressions.Regex.IsMatch(tbl, @"name=""__XL_RowNumber""(?s:.*?)<ColumnFlags xsi:type=""xsd:long"">27</ColumnFlags>"), "row number ColumnFlags 27");
+                Check.True(System.Text.RegularExpressions.Regex.IsMatch(tbl, @"name=""Date""(?s:.*?)<ColumnFlags xsi:type=""xsd:long"">15</ColumnFlags>"), "date ColumnFlags 15");
+                Check.True(tbl.Contains("name=\"2.H$Dates_"), "hash index name");
+                string h = Text(@"Dates_G\.0\.dim\\H\$Dates_G\$Date\.2\.tbl\.xml$");
+                Check.True(h.Contains("<Version xsi:type=\"xsd:int\">2</Version>") && h.Contains("name=\"2.H$Dates_"), "date column hierarchy table");
+                m.Find(@"Dates_G\.0\.dim\\2\.H\$Dates_G\$Date\.POS_TO_ID\.0\.idf$");
+                m.Find(@"Dates_G\.0\.dim\\2\.H\$Dates_G\$Date\.hidx$");
+                m.Find(@"Dates_G\.0\.dim\\0\.H\$Dates_G\$Year\.hidx$");
+
+                // Sales is the many side: its table, the relationship table and the dimension move on by one.
+                Check.True(Text(@"\.0\.dim\\Sales_G\.1\.tbl\.xml$").Contains("<Version xsi:type=\"xsd:int\">1</Version>"), "Sales table version 1");
+                string rel = Text(@"R\$Sales_G\$G\.2\.tbl\.xml$");
+                Check.True(rel.Contains("<Version xsi:type=\"xsd:int\">2</Version>") && rel.Contains("name=\"2.R$Sales_"), "relationship table version 2");
+                m.Find(@"Sales_G\.0\.dim\\2\.R\$Sales_G\$G\.INDEX\.0\.idf$");
+                string sales = Text(@"\.0\.db\\Sales_G\.4\.dim\.xml$");
+                Check.True(sales.Contains("<DataVersion>1</DataVersion>"), "Sales dimension data version");
+                m.Find(@"Sales_G\.0\.dim\\info\.4\.xml$");
+
+                // Counters of the cube, the measure groups, the script and the partitions.
+                string cube = Text(@"Model\.21\.cub\.xml$");
+                Check.True(cube.Contains("<StructureVersion>12</StructureVersion>") && cube.Contains("MdxScript.10.scr.xml") && cube.Contains("Dates_") && cube.Contains(".21.det.xml"), "cube");
+                string det = Text(@"Dates_G\.21\.det\.xml$");
+                Check.True(det.Contains("<StructureVersion>9</StructureVersion><CacheVersion>2</CacheVersion>") && det.Contains(".10.prt.xml"), "measure group");
+                m.Find(@"MdxScript\.10\.scr\.xml$");
+                Check.True(Text(@"Sales_G\.10\.prt\.xml$").Contains("<DataVersion>1</DataVersion>"), "Sales partition data version 1");
+                Check.True(Text(@"Dates_G\.10\.prt\.xml$").Contains("<DataVersion>1</DataVersion>"), "Dates partition data version 1");
+                m.Find(@"Sales_G\.0\.prt\\info\.10\.xml$");
+            }
+        }
+
+        public static void DateTableValidation()
+        {
+            void Rejects<T>(Action a, string what) where T : Exception
+            {
+                try { a(); } catch (T) { return; }
+                throw new Exception("Expected " + typeof(T).Name + ": " + what);
+            }
+            void Saves(DataModelWriter model) { using var ms = new MemoryStream(); model.SaveModelPart(ms); }
+
+            var (model, _, _) = DateModel();
+            using (model)
+            {
+                Rejects<ArgumentException>(() => model.MarkAsDateTable("Nope", "Date"), "unknown table");
+                Rejects<ArgumentException>(() => model.MarkAsDateTable("Dates", "Nope"), "unknown column");
+                Rejects<ArgumentException>(() => model.MarkAsDateTable("Dates", "Year"), "not a date column");
+                Check.True(model.DateTableName is null, "nothing marked yet");
+                model.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => model.MarkAsDateTable("Sales", "Date"), "second date table");
+                Saves(model);
+            }
+
+            // Hierarchy and relationship are required: no Excel sample of the other cases exists.
+            using (var noHierarchy = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
+            {
+                var d = noHierarchy.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+                d.AddRow(new DateTime(2025, 1, 1));
+                var s = noHierarchy.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+                s.AddRow(new DateTime(2025, 1, 1));
+                noHierarchy.AddRelationship("Sales", "Date", "Dates", "Date");
+                noHierarchy.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(noHierarchy), "no hierarchy on the date table");
+            }
+            using (var noRelationship = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
+            {
+                var d = noRelationship.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                d.AddRow(new DateTime(2025, 1, 1), 2025, "January");
+                noRelationship.AddHierarchy("Dates", "Calendar", "Year", "Month");
+                noRelationship.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(noRelationship), "no relationship uses the date column");
+            }
+            var (blank, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); t.AddRow(null, 2025, "January"); });
+            using (blank)
+            {
+                blank.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(blank), "blank date");
+            }
+            var (partial, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1, 6, 0, 0), 2025, "January"); });
+            using (partial)
+            {
+                partial.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(partial), "date with a time part");
+            }
+            var (dup, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); });
+            using (dup)
+            {
+                dup.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(dup), "duplicate date");
             }
         }
 

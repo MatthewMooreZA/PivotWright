@@ -14,6 +14,10 @@ internal sealed class EncodedTable
     /// <summary>Relationships in which this table is the many side.</summary>
     public List<EncodedRelationship> Relationships { get; } = new();
     public List<EncodedHierarchy> Hierarchies { get; } = new();
+    /// <summary>The table is marked as date table (dimension type Time, its date column is the key).</summary>
+    public bool IsDateTable { get; init; }
+    /// <summary>Version of the table's .tbl.xml: 2 with hierarchies, plus 1 for a date table and the tables that relate to one.</summary>
+    public int Version { get; set; }
 
     public IEnumerable<EncodedColumn> AllColumns
     {
@@ -117,6 +121,8 @@ internal sealed class TableBuilder : IDisposable
 
     public string Name { get; }
     public string Id { get; }
+    /// <summary>The date column when the table is marked as date table, else null.</summary>
+    public ColumnBuilder? DateColumn { get; set; }
     public long Rows { get; private set; }
     public IReadOnlyList<ColumnBuilder> Columns => _columns;
 
@@ -179,7 +185,7 @@ internal sealed class TableBuilder : IDisposable
             if (c.SortBy is not null) e.OrderByColumnId = c.SortBy.Id;
             cols.Add(e);
         }
-        return new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols };
+        return new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
     }
 
     public void Dispose()

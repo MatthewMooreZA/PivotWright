@@ -2,7 +2,7 @@
 
 Start with `docs/HANDOFF.md` (state, next steps, testing loop) and `docs/SPEC.md` (format specification).
 
-- Build/test: `dotnet build` and `dotnet run --project tests/PivotWright.Tests` (all 29 must pass before committing).
+- Build/test: `dotnet build` and `dotnet run --project tests/PivotWright.Tests` (all 31 must pass before committing).
 - No Excel here. The owner (Matthew) tests generated files in desktop Excel and reports pass/fail. Send the single most-likely file first; do not send more while he is mid-test.
 - Excel-written samples in `reference/excel-samples/` are ground truth. Compare with `tools/python/extract_tree.py`, `xd.py`, `dd.py`.
 - Version counters must match file names and backup-log versions (SPEC §5). Never change one without the other.

@@ -30,12 +30,21 @@ internal sealed class ModelInfo
     public IReadOnlySet<string> HierarchyTables { get; init; } = new HashSet<string>();
     public bool AnyHierarchy => HierarchyTables.Count > 0;
 
-    // Version counters as Excel saves them after "Create Hierarchy" (see README, Open questions).
-    public int CubeVersion => AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
-    public int ScriptVersion => AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion;
-    public int PartitionVersion => AnyHierarchy ? 9 : 1;
+    /// <summary>Ids of the tables marked as date table (SPEC section 9). Excel saves such models one more edit further on.</summary>
+    public IReadOnlySet<string> DateTables { get; init; } = new HashSet<string>();
+    /// <summary>Ids of the tables on the many side of a relationship to a date table.</summary>
+    public IReadOnlySet<string> DateReferencingTables { get; init; } = new HashSet<string>();
+    public bool AnyDate => DateTables.Count > 0;
+
+    // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
+    public int CubeVersion => AnyDate ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
+    public int ScriptVersion => AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion;
+    public int PartitionVersion => AnyDate ? 10 : AnyHierarchy ? 9 : 1;
     public int DimensionVersion(string tableId, bool manySide) =>
-        HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1;
+        (HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1) + (AnyDate ? 1 : 0);
+    /// <summary>Version of a table's .tbl.xml: 2 when it holds hierarchies, plus 1 for a date table or a table related to one.</summary>
+    public int TableVersion(string tableId) =>
+        (HierarchyTables.Contains(tableId) ? FileNames.HierarchyVersion : 0) + (DateTables.Contains(tableId) || DateReferencingTables.Contains(tableId) ? 1 : 0);
 }
 
 internal sealed class TableIds
@@ -227,7 +236,7 @@ internal static class AsslWriter
         sb.Append("<Annotations").Append(NsB).Append('>').Append(TableAnnotations).Append("</Annotations>");
         sb.Append("<LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<EstimatedSize>").Append(estimatedSize).Append("</EstimatedSize>");
-        sb.Append("<Source xsi:type=\"DataSourceViewBinding\"><DataSourceViewID>Sandbox</DataSourceViewID></Source><MiningModelID/><Type>Regular</Type>");
+        sb.Append("<Source xsi:type=\"DataSourceViewBinding\"><DataSourceViewID>Sandbox</DataSourceViewID></Source><MiningModelID/><Type>").Append(m.DateTables.Contains(t.Id) ? "Time" : "Regular").Append("</Type>");
         sb.Append("<UnknownMember valuens=\"ddl200_200\">AutomaticNull</UnknownMember><MdxMissingMemberMode>Default</MdxMissingMemberMode>");
         sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
         sb.Append("<ddl300:ProcessingState>Processed</ddl300:ProcessingState>");
@@ -241,12 +250,13 @@ internal static class AsslWriter
 
         // RowNumber attribute (key of the table), related to every column.
         sb.Append("<Attribute><Name>").Append(FileNames.RowNumberId).Append("</Name><ID>").Append(FileNames.RowNumberId).Append("</ID><Description/>");
-        sb.Append("<Type valuens=\"ddl200_200\">RowNumber</Type><Usage>Key</Usage>");
+        // In a date table the date column takes over as the key of the dimension.
+        sb.Append("<Type valuens=\"ddl200_200\">RowNumber</Type><Usage>").Append(m.DateTables.Contains(t.Id) ? "Regular" : "Key").Append("</Usage>");
         AttributeCommon(sb, visible: false);
         sb.Append("<KeyColumns><KeyColumn><DataType>Integer</DataType><DataSize>4</DataSize><NullProcessing>Error</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:RowNumberBinding\"/></KeyColumn></KeyColumns>");
         sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>4</DataSize><NullProcessing>ZeroOrBlank</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:RowNumberBinding\"/></NameColumn>");
         sb.Append("<Translations/><NamingTemplateTranslations/><AttributeRelationships>");
-        foreach (var c in t.Columns)
+        foreach (var c in t.Columns.Where(c => !c.IsDateKey))
         {
             sb.Append("<AttributeRelationship><AttributeID>").Append(E(c.Id)).Append("</AttributeID><Name>").Append(E(c.Name))
               .Append("</Name><RelationshipType>Flexible</RelationshipType><Cardinality>").Append(c.IsPrimaryKey ? "One" : "Many").Append("</Cardinality><Optionality>Mandatory</Optionality><OverrideBehavior>None</OverrideBehavior><Translations/></AttributeRelationship>");
@@ -259,7 +269,7 @@ internal static class AsslWriter
             sb.Append("<Attribute><Name>").Append(E(c.Name)).Append("</Name><ID>").Append(E(c.Id)).Append("</ID><Description/>");
             sb.Append("<Annotations").Append(NsB).Append(">\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ")
               .Append(AttributeFormat(c.DataType, m.Culture, m.Lcid)).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
-            sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
+            sb.Append("<Type>Regular</Type><Usage>").Append(c.IsDateKey ? "Key" : "Regular").Append("</Usage>");
             AttributeCommon(sb, visible: !c.IsHidden, orderBy: c.OrderByColumnId);
             sb.Append("<KeyColumns><KeyColumn><DataType>").Append(type).Append("</DataType><DataSize>").Append(size)
               .Append("</DataSize><NullProcessing>").Append(c.IsPrimaryKey ? "Error" : "Preserve")
@@ -269,7 +279,11 @@ internal static class AsslWriter
             sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>").Append(size)
               .Append("</DataSize><NullProcessing>ZeroOrBlank</NullProcessing><InvalidXmlCharacters>Remove</InvalidXmlCharacters><Collation/><Format/>");
             ColumnBinding(sb, t.Id, c.Id);
-            sb.Append("</NameColumn><Translations/><NamingTemplateTranslations/><AttributeRelationships/>");
+            sb.Append("</NameColumn><Translations/><NamingTemplateTranslations/>");
+            if (c.IsDateKey)
+                sb.Append("<AttributeRelationships><AttributeRelationship><AttributeID>").Append(FileNames.RowNumberId).Append("</AttributeID><Name>").Append(FileNames.RowNumberId)
+                  .Append("</Name><RelationshipType>Flexible</RelationshipType><Cardinality>One</Cardinality><Optionality>Mandatory</Optionality><OverrideBehavior>None</OverrideBehavior><Translations/></AttributeRelationship></AttributeRelationships>");
+            else sb.Append("<AttributeRelationships/>");
             if (c.DataType == ColumnDataType.DateTime)
                 sb.Append("<ddl300_300:FormatString>General Date</ddl300_300:FormatString>");
             else if (c.DataType == ColumnDataType.Currency)
@@ -309,8 +323,11 @@ internal static class AsslWriter
             }
             sb.Append("</ddl300_300:Relationships>");
         }
-        string hv = m.HierarchyTables.Contains(t.Id) ? "2" : "0";
-        sb.Append("<StructureVersion>" + hv + "</StructureVersion><DataIDVersion>1</DataIDVersion><IncDataIDVersion>1</IncDataIDVersion><CacheVersion>1</CacheVersion><DataVersion>" + hv + "</DataVersion>");
+        int hv = m.HierarchyTables.Contains(t.Id) ? 2 : 0;
+        if (m.DateTables.Contains(t.Id))
+            sb.Append("<StructureVersion>" + (hv + 1) + "</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>" + (hv + 1) + "</DataVersion>");
+        else
+            sb.Append("<StructureVersion>" + hv + "</StructureVersion><DataIDVersion>1</DataIDVersion><IncDataIDVersion>1</IncDataIDVersion><CacheVersion>1</CacheVersion><DataVersion>" + (hv + (m.DateReferencingTables.Contains(t.Id) ? 1 : 0)) + "</DataVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><PermissionFileList/></Dimension></ObjectDefinition></Load>");
         return sb.ToString();
     }
@@ -378,7 +395,7 @@ internal static class AsslWriter
             }
             sb.Append("</Dimension>");
         }
-        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
+        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.AnyDate ? 12 : m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.Created)).Append("</LastUpdate>");
         sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", tables.Select(t => t.Id + "." + m.CubeVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append("<PerspectiveFileList/><AssemblyFileList>MdxScript." + m.ScriptVersion + ".scr.xml</AssemblyFileList><PermissionFileList/></Cube></ObjectDefinition></Load>");
@@ -490,7 +507,7 @@ internal static class AsslWriter
         sb.Append("</Attributes><ddl200_200:ShareDimensionStorage>Shared</ddl200_200:ShareDimensionStorage><CubeDimensionID>").Append(E(t.Id))
           .Append("</CubeDimensionID></Dimension>");
         foreach (var r in t.Relationships) ReferenceDimension(sb, t, r, tablesById[r.PrimaryTableId]);
-        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.AnyHierarchy ? 8 : 0) + "</StructureVersion><CacheVersion>1</CacheVersion><DataVersion>" + (!m.AnyHierarchy ? 0 : m.HierarchyTables.Contains(t.Id) ? -1 : t.Relationships.Count > 0 ? 1 : 0) + "</DataVersion>");
+        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.AnyDate ? 9 : m.AnyHierarchy ? 8 : 0) + "</StructureVersion><CacheVersion>" + (m.AnyDate ? 2 : 1) + "</CacheVersion><DataVersion>" + (!m.AnyHierarchy ? 0 : m.HierarchyTables.Contains(t.Id) ? -1 : t.Relationships.Count > 0 ? 1 : 0) + "</DataVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><AggregationDesignFileList/><PartitionFileList>")
           .Append(E(t.Id)).Append(".").Append(m.PartitionVersion).Append(".prt.xml</PartitionFileList></MeasureGroup></ObjectDefinition></Load>");
         return sb.ToString();
@@ -527,7 +544,7 @@ internal static class AsslWriter
         CommonHeader(sb, t.Name, t.Id, m.Created, m.PartitionVersion, ids.PartitionObjectId);
         sb.Append("<DataFileList/><Description/>");
         sb.Append("<Annotations").Append(NsB).Append('>').Append(TableAnnotations.Replace("\n          ", "\n                  ").Replace("\n            ", "\n                    ")).Append("</Annotations>");
-        sb.Append(m.HierarchyTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
+        sb.Append(m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Data</Type><AggregationPrefix/><StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><CurrentStorageMode valuens=\"ddl200_200\">InMemory</CurrentStorageMode>");
         sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
         sb.Append("<ProcessingMode>Regular</ProcessingMode><ProcessingPriority>0</ProcessingPriority>").Append(ErrorConfiguration);

@@ -210,6 +210,40 @@ public sealed class DataModelWriter : IDisposable
     /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
     public void AddHierarchy(TableWriter table, string name, params string[] levels) => AddHierarchy(table.Name, name, levels);
 
+    /// <summary>Name of the table marked with <see cref="MarkAsDateTable(string, string)"/>, or null.</summary>
+    public string? DateTableName => _tables.FirstOrDefault(t => t.DateColumn is not null)?.Name;
+
+    /// <summary>
+    /// Marks a table as the model's date table, like Power Pivot's "Mark as Date Table": the date column becomes the
+    /// table's key, which Excel's time intelligence functions (TOTALYTD, SAMEPERIODLASTYEAR, ...) need.
+    /// </summary>
+    /// <remarks>
+    /// Written the way Excel saves a model it just marked; only that case has been seen in an Excel-written file, so
+    /// <see cref="Save(string)"/> requires a hierarchy on the table, a relationship that uses the date column as its
+    /// primary key, and a date on every row (whole days, no duplicates). One date table per model.
+    /// </remarks>
+    /// <param name="table">Table that holds the dates (for example Dates).</param>
+    /// <param name="dateColumn">Column of type <see cref="ColumnDataType.DateTime"/> with one row per day.</param>
+    /// <exception cref="ArgumentException">The table or column is unknown, the column is not a date column, or it is sorted by another column.</exception>
+    /// <exception cref="InvalidOperationException">A date table was already marked.</exception>
+    public void MarkAsDateTable(string table, string dateColumn)
+    {
+        ThrowIfDisposed();
+        var t = FindTable(table);
+        var c = FindColumn(t, dateColumn);
+        if (c.Definition.DataType != ColumnDataType.DateTime)
+            throw new ArgumentException($"'{t.Name}[{c.Definition.Name}]' is {c.Definition.DataType}; a date table needs a DateTime column.", nameof(dateColumn));
+        if (c.SortBy is not null || t.Columns.Any(o => o.SortBy == c))
+            throw new ArgumentException($"'{t.Name}[{c.Definition.Name}]' takes part in Sort by Column, so it cannot be the date column.", nameof(dateColumn));
+        if (DateTableName is { } existing)
+            throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
+        t.DateColumn = c;
+        c.IsDateKey = true;
+    }
+
+    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
+    public void MarkAsDateTable(TableWriter table, string dateColumn) => MarkAsDateTable(table.Name, dateColumn);
+
     /// <summary>Number of measures added so far.</summary>
     public int MeasureCount => _measures.Count;
 

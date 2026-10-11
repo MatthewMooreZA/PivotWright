@@ -14,18 +14,20 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | User hierarchies | done, verified, including adding more hierarchies and Sort by Column in Excel afterwards and save + refresh |
 | Sort by Column | done, verified |
 | Hidden columns | `ColumnDefinition.IsHidden` writes the same XML Excel writes (diffed against `H1`); **not yet Excel-tested as a generated file** |
-| Date table | analysed from Excel samples (`SPEC.md` §9); **not implemented** |
+| Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **not yet Excel-tested as a generated file**. Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
+| Date table, Excel creates it from scratch (Date Table > New) | **not started**; needs an Excel-written sample (see §2) |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
 | CI (GitHub Actions), editorconfig, global.json, session hook | done |
 | License | MIT (LICENSE, csproj) |
 | NuGet packaging | **`0.1.0-preview.1` published on nuget.org (2026-10-11)**, id `PivotWright`. Metadata, README, snupkg symbols and SourceLink set up. `release.yml` publishes on `v*` tags via nuget.org trusted publishing (environment `nuget` with required reviewer, secret `NUGET_USER` = nuget.org username; no API key) |
 
-Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 29 tests, all pass at handoff. Nothing but the .NET 8 SDK is needed.
+Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 31 tests, all pass. Nothing but the .NET 8 SDK is needed.
 
 ## 2. Immediate next steps, in order
 
-1. **Date table** (`MarkAsDateTable`). Everything needed is in `SPEC.md` §9. Version counters must match file names (§5), so this is a profile change touching `FileNames` (`Internal/Model/EncodedColumn.cs`), `TableXmlWriter`, `AsslWriter` (`ModelInfo` has the version helpers: `CubeVersion`, `ScriptVersion`, `PartitionVersion`, `DimensionVersion`), and `ModelSerializer` (file naming and backup-log groups). Generate one most-likely file, diff against `reference/excel-samples/H2_date_table.xlsx` with the tools below, give it to Matthew.
+1. **Date table, part 1 (mark an existing table)**: implemented (`SPEC.md` §9). Send Matthew the file from `dotnet run --project tools/datagen -- <dir> datetbl date` and ask for the standard checks (loads; Dates marked in the Design tab; time intelligence works; add a hierarchy, add Sort by Column, save and refresh). If it fails, bisect against `H2`. Then lift the restrictions in `ModelSerializer.ValidateDateTables` one at a time, each needing an Excel sample: date table without a hierarchy, without a relationship, in a model without hierarchies, several date tables, a hash-encoded date column.
+   **Date table, part 2 (Excel creates the table from scratch)**: ask Matthew for a sample: open `V2b`, Power Pivot > Design > Date Table > New, save as `H4_date_table_new.xlsx`; ideally also one made in an empty workbook. It most likely adds a calculated table with calculated columns (not implemented), so diff it with `extract_tree.py`/`xd.py` before designing.
 2. **Hidden columns**: generate a file with hidden columns (and one with hidden columns plus hierarchies), ask Matthew to check that it loads, PivotTable fields hide, and that Create Hierarchy / Sort by Column / marking a date table still work afterwards. Use `H1` as the reference. Whether Excel's counter bumps (cube 24, measure-group structure 9) are needed is unknown; add them only if a test file fails without them.
 3. **Releasing**: push a tag `vX.Y.Z` (stable) or `vX.Y.Z-preview.N` (prerelease) from `main`. The tag sets the package version; `release.yml` builds, tests, packs, waits for Matthew's approval of the `publish` job (check the commit and version on the run page), pushes to nuget.org, then creates the GitHub Release. Never re-tag a published version (nuget.org cannot replace one); use the next `-preview.N`. Stay on previews until hidden columns and the date table are Excel-tested, then cut `v0.1.0`. Rename, license, CI, `CLAUDE.md` and packaging setup are done.
 4. Backlog features: calculated columns, KPIs, perspectives, the report-writer layer on top (the long-term aim: an Excel report modeller/writer), refresh against a real connection.
@@ -73,7 +75,7 @@ Matthew's preferences: start with "the most likely" file so he has fewer to test
 - Early sessions: ABF writer, VertiPaq encoders, golden-file match with Excel, relationships (several undocumented details), measures, hierarchies.
 - Sort by Column: loaded fine from the start, but Excel's Sort by Column / Create Hierarchy then failed on relationship models. About forty files were bisected; the four conditions in `SPEC.md` §5.3 fixed it (S22 passed).
 - Hierarchies: a base model with hierarchies loaded but further edits failed (`OnClone2`). Diffing Excel's own save showed everything bumped to specific versions with renamed files; the hierarchy profile (§5.2) reproduces it. The last bug was a measure group still pointing at `.1.prt.xml`; after the fix all of Matthew's checks passed.
-- H1/H2/H3 samples (hidden columns, date table, both) were received on 2026-10-10 and analysed; implementation is the next task.
+- H1/H2/H3 samples (hidden columns, date table, both) were received on 2026-10-10 and analysed. Marking a date table (part 1) was implemented on 2026-10-11; the other dimension versions also move up by one (Products 5→6, Dates 5→6, Sales 3→4), which the first analysis had missed.
 
 ## 7. Naming
 

@@ -112,7 +112,7 @@ Why these matter is not understood (README, "Open questions").
 
 Excel hides a column by setting `<AttributeHierarchyVisible>false</AttributeHierarchyVisible>` on its attribute in the table's dim.xml **and** in the cube's dimension attribute list (`Model.cub.xml`). No tbl.xml change. `ColumnDefinition.IsHidden` already writes both. Excel also bumps counters (cube 24, measure group structure 9) and writes a new `Sales info` file; whether those are needed is untested. In `H1_hidden_columns.xlsx` the user hid four attributes per table.
 
-## 9. Date table (observed in `H2_date_table.xlsx`, **not yet implemented**)
+## 9. Date table, marking an existing table (observed in `H2_date_table.xlsx`; implemented, **not yet tested as a generated file in Excel**)
 
 Marking `Dates[Date]` as the date table, compared with `V2b_pivotwright_hierarchies_verified.xlsx`:
 
@@ -121,10 +121,15 @@ Marking `Dates[Date]` as the date table, compared with `V2b_pivotwright_hierarch
 - Date column attribute-hierarchy table renamed to version 2: `H$Dates_G$Date.2.tbl.xml` (Version 2), `2.H$Dates_G$Date.POS_TO_ID.0.idf`, `2.H$Dates_G$Date.hidx`, column DataVersion 2.
 - The relationship whose primary side is Dates: `R$Sales_G$<guid>.2.tbl.xml` (Version 2, DataVersion 2) and `2.R$Sales_G$<guid>.INDEX.0.idf`. The other relationship stays at 0.
 - Sales tbl.xml: `Version` 0 → 1 (`Sales_G.1.tbl.xml`); Sales dimension `info.4.xml` (was `info.3`).
-- Counters: cube 18 → 21, script 9 → 10, partitions 9 → 10 (`info.10.xml`, `.10.prt.xml`), measure group `PartitionFileList` updated.
+- Counters: cube 18 → 21 (StructureVersion 11 → 12), script 9 → 10, partitions 9 → 10 (`info.10.xml`, `.10.prt.xml`), measure groups 18 → 21 (StructureVersion 8 → 9, CacheVersion 1 → 2), `PartitionFileList` updated.
+- Every dimension object version goes up by one (Products 5 → 6, Dates 5 → 6, Sales 3 → 4). Dates dimension: StructureVersion 3, DataIDVersion 2, IncDataIDVersion 2, CacheVersion 2, DataVersion 3. Sales dimension: DataVersion 0 → 1; Sales partition DataVersion 0 → 1. Products is unchanged apart from the object version.
 - H2 vs H3 (date table + hidden columns) differ only in the hidden attributes.
 
-Implementation plan: `DataModelWriter.MarkAsDateTable(table, dateColumn)` (validate: DateTime column, no BLANKs, no duplicates, whole days, one per model is not required but Excel allows several); extend the hierarchy profile with the above; one most-likely test file first; user then checks load, pivot, add hierarchy, add Sort by Column, save and refresh.
+Implementation: `DataModelWriter.MarkAsDateTable(table, dateColumn)` extends the hierarchy profile (`ModelInfo.DateTables`, `DateReferencingTables`, `TableVersion`; `EncodedColumn.IsDateKey`/`AttributeHierarchyVersion`; `EncodedRelationship.Version`). The output was diffed against `H2` (counters, file names, tbl.xml and dim.xml all equal; only list order, `<Value/>` elements and data-dependent sizes differ).
+
+Only the configuration of `H2` has been seen, so `ModelSerializer.ValidateDateTables` refuses everything else: the date table needs a hierarchy, a relationship must use the date column as primary key, one date table per model, dates must be whole days without BLANK or duplicates, and the date column must be value-encoded. Unknown: a date table without hierarchy or relationship (ColumnFlags of a date key that is no primary key, probably 12), a model without hierarchies, several date tables, per-table counters for tables that are neither in a hierarchy nor on the many side.
+
+**Excel creating a date table from scratch (Date Table > New) is a different operation** and is not specified; it needs an Excel-written sample.
 
 ## 10. Not understood (open)
 

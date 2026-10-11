@@ -12,7 +12,7 @@ internal static class TableXmlWriter
     {
         var x = new XmBuilder();
         x.Open("XMSimpleTable", t.Id, root: true);
-        x.Properties(p => p.Int("Version", t.Hierarchies.Count > 0 ? FileNames.HierarchyVersion : 0).Long("Settings", 4353).Long("RIViolationCount", 0));
+        x.Properties(p => p.Int("Version", t.Version).Long("Settings", 4353).Long("RIViolationCount", 0));
         x.Members(m =>
         {
             m.Member("SegmentMap", s =>
@@ -173,7 +173,7 @@ internal static class TableXmlWriter
         long cDistinct = 0; int cMin = 2; int cMax = 2; long cRows = 0; int cType = 0; var cW = r.Width;
         var x = new XmBuilder();
         x.Open("XMSimpleTable", r.TableName, root: true);
-        x.Properties(p => p.Int("Version", 0).Long("Settings", 2).Long("RIViolationCount", r.ViolationCount));
+        x.Properties(p => p.Int("Version", r.Version).Long("Settings", 2).Long("RIViolationCount", r.ViolationCount));
         x.Members(m =>
         {
             m.Member("SegmentMap", s =>
@@ -222,8 +222,8 @@ internal static class TableXmlWriter
                 }));
                 cc.DataObjects(d => d.DataObject(o =>
                 {
-                    o.Open("XMRawColumnPartitionDataObject", FileNames.RelationshipIndex(r.ForeignTableId, r.Name));
-                    o.Properties(p => p.Int("DataVersion", 0).Int("Partition", 0).Int("SegmentCount", 1));
+                    o.Open("XMRawColumnPartitionDataObject", FileNames.RelationshipIndex(r.ForeignTableId, r.Name, r.Version));
+                    o.Properties(p => p.Int("DataVersion", r.Version).Int("Partition", 0).Int("SegmentCount", 1));
                     o.Close();
                 }));
                 cc.Close();
@@ -247,7 +247,7 @@ internal static class TableXmlWriter
         x.Open("XMRawColumn", col.Id, providerVersion: 1);
         x.Properties(p => p
             .Long("Settings", 1025)
-            .Long("ColumnFlags", col.IsRowNumber ? 31 : col.IsPrimaryKey ? 11 : 8)
+            .Long("ColumnFlags", col.IsRowNumber ? (t.IsDateTable ? 27 : 31) : col.IsDateKey ? 15 : col.IsPrimaryKey ? 11 : 8)
             .Raw(col.OrderByColumnId is null ? "<Collation/><OrderByColumn/>" : "<Collation/><OrderByColumn>" + System.Security.SecurityElement.Escape(col.OrderByColumnId) + "</OrderByColumn>")
             .Long("Locale", lcid)
             .UInt("BinaryCharacters", 0));
@@ -270,7 +270,7 @@ internal static class TableXmlWriter
                     else p.Raw("<TableStore>").Raw(Xml.Esc(FileNames.HierarchyTable(t.Id, col.Id))).Raw("</TableStore>");
                 });
                 if (!col.IsRowNumber && col.IsValueEncoded)
-                    h.DataObjects(d => d.DataObject(o => o.Empty("XMHierarchyDataID2PositionHashIndex", FileNames.Hidx(t.Id, col.Id))));
+                    h.DataObjects(d => d.DataObject(o => o.Empty("XMHierarchyDataID2PositionHashIndex", FileNames.Hidx(t.Id, col.Id, col.AttributeHierarchyVersion))));
                 h.Close();
             });
             m.Member("ColumnStats", s =>
@@ -416,7 +416,7 @@ internal static class TableXmlWriter
         long perSegment = segments[0];
         var x = new XmBuilder();
         x.Open("XMSimpleTable", FileNames.HierarchyTable(t.Id, col.Id), root: true);
-        x.Properties(p => p.Int("Version", 0).Long("Settings", 4).Long("RIViolationCount", 0));
+        x.Properties(p => p.Int("Version", col.AttributeHierarchyVersion).Long("Settings", 4).Long("RIViolationCount", 0));
         x.Members(m =>
         {
             m.Member("SegmentMap", s =>
@@ -432,9 +432,9 @@ internal static class TableXmlWriter
             c.Collection("Partitions", null);
             c.Collection("Columns", cc =>
             {
-                SystemColumn(cc, "POS_TO_ID", 7, FileNames.PosToId(t.Id, col.Id), segments);
+                SystemColumn(cc, "POS_TO_ID", 7, FileNames.PosToId(t.Id, col.Id, col.AttributeHierarchyVersion), segments, col.AttributeHierarchyVersion);
                 if (!col.IsValueEncoded)
-                    SystemColumn(cc, "ID_TO_POS", 5, FileNames.IdToPos(t.Id, col.Id), segments);
+                    SystemColumn(cc, "ID_TO_POS", 5, FileNames.IdToPos(t.Id, col.Id, col.AttributeHierarchyVersion), segments, col.AttributeHierarchyVersion);
             });
             c.Collection("Relationships", null);
             c.Collection("UserHierarchies", null);
@@ -443,7 +443,7 @@ internal static class TableXmlWriter
         return x.ToString();
     }
 
-    private static void SystemColumn(XmBuilder x, string name, long settings, string file, IReadOnlyList<long> segments)
+    private static void SystemColumn(XmBuilder x, string name, long settings, string file, IReadOnlyList<long> segments, int dataVersion)
     {
         x.Open("XMRawColumn", name, providerVersion: 1);
         x.Properties(p => p.Long("Settings", settings).Long("ColumnFlags", 0).Raw("<Collation/><OrderByColumn/>")
@@ -474,7 +474,7 @@ internal static class TableXmlWriter
         x.DataObjects(d => d.DataObject(o =>
         {
             o.Open("XMRawColumnPartitionDataObject", file);
-            o.Properties(p => p.Int("DataVersion", 0).Int("Partition", 0).Int("SegmentCount", segments.Count));
+            o.Properties(p => p.Int("DataVersion", dataVersion).Int("Partition", 0).Int("SegmentCount", segments.Count));
             o.Close();
         }));
         x.Close();

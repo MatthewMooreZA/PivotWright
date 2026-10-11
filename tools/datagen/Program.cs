@@ -14,4 +14,5 @@ m.AddRelationship("Sales", "Date", "Dates", "Date");
 m.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
 m.AddHierarchy("Dates", "Calendar", "Year", "Month");
 m.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+if (args.Length > 2 && args[2] == "date") m.MarkAsDateTable("Dates", "Date");
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

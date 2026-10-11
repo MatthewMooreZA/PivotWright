@@ -33,6 +33,10 @@ internal sealed class EncodedColumn
     public bool IsPrimaryKey { get; init; }
     /// <summary>Many-side key of a relationship (column statistics Usage 1; primary keys use 0, other columns 3).</summary>
     public bool IsForeignKey { get; init; }
+    /// <summary>The date column of a table marked as date table (its key in the dimension, ColumnFlags 15).</summary>
+    public bool IsDateKey { get; init; }
+    /// <summary>Version of the column's attribute hierarchy (H$) table and files: 2 for a date key, else 0.</summary>
+    public int AttributeHierarchyVersion => IsDateKey ? 2 : 0;
 
     public DictionaryKind Dictionary { get; set; }
     public XmType XmType { get; set; }
@@ -87,10 +91,11 @@ internal static class FileNames
     public static string Idf(string tableId, string columnId) => $"0.{tableId}.{columnId}.0.idf";
     public static string Dictionary(string tableId, string columnId) => $"0.{tableId}.{columnId}.dictionary";
     public static string HierarchyTable(string tableId, string columnId) => $"H${tableId}${columnId}";
-    public static string HierarchyTableXml(string tableId, string columnId) => $"H${tableId}${columnId}.0.tbl.xml";
-    public static string Hidx(string tableId, string columnId) => $"0.H${tableId}${columnId}.hidx";
-    public static string PosToId(string tableId, string columnId) => $"0.H${tableId}${columnId}.POS_TO_ID.0.idf";
-    public static string IdToPos(string tableId, string columnId) => $"0.H${tableId}${columnId}.ID_TO_POS.0.idf";
+    /// <summary>Attribute hierarchy (H$) files carry the column's hierarchy version: 0, or 2 for the key of a date table.</summary>
+    public static string HierarchyTableXml(string tableId, string columnId, int version = 0) => $"H${tableId}${columnId}.{version}.tbl.xml";
+    public static string Hidx(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.hidx";
+    public static string PosToId(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.POS_TO_ID.0.idf";
+    public static string IdToPos(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.ID_TO_POS.0.idf";
     public static string TableXml(string tableId, int version = 0) => $"{tableId}.{version}.tbl.xml";
     /// <summary>Data version Excel gives user hierarchy tables (and the tables that hold them) when it creates them.</summary>
     public const int HierarchyVersion = 2;
@@ -98,8 +103,9 @@ internal static class FileNames
     public static string UserHierarchyTableXml(string tableId, string hierarchy) => $"{UserHierarchyTable(tableId, hierarchy)}.{HierarchyVersion}.tbl.xml";
     public static string UserHierarchyColumn(string tableId, string hierarchy, string column) => $"{HierarchyVersion}.{UserHierarchyTable(tableId, hierarchy)}.{column}.0.idf";
     public static string RelationshipTable(string foreignTableId, string relationship) => $"R${foreignTableId}${relationship}";
-    public static string RelationshipTableXml(string foreignTableId, string relationship) => $"{RelationshipTable(foreignTableId, relationship)}.0.tbl.xml";
-    public static string RelationshipIndex(string foreignTableId, string relationship) => $"0.{RelationshipTable(foreignTableId, relationship)}.INDEX.0.idf";
+    /// <summary>Relationship tables are version 0, or 2 when the primary side is a date table.</summary>
+    public static string RelationshipTableXml(string foreignTableId, string relationship, int version = 0) => $"{RelationshipTable(foreignTableId, relationship)}.{version}.tbl.xml";
+    public static string RelationshipIndex(string foreignTableId, string relationship, int version = 0) => $"{version}.{RelationshipTable(foreignTableId, relationship)}.INDEX.0.idf";
 }
 
 /// <summary>Destination for the data files of one table (its dimension folder in the model).</summary>
