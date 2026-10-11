@@ -67,7 +67,7 @@ model.AddHierarchy("Dates", "Calendar", "Year", "Month");
 model.MarkAsDateTable("Dates", "Date");
 ```
 
-Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*, which time intelligence functions such as `TOTALYTD` and `SAMEPERIODLASTYEAR` rely on. The column must be `DateTime` with one whole day per row (no BLANK, no time part, no duplicates; checked when saving). The file layout follows what Excel writes after marking a date table in a model like the one above; that is the only case seen so far, so for now saving requires **a hierarchy on the date table, a relationship that uses the date column as its primary key, and a single date table per model**. Verified in Excel: the model loads, the date table works in a PivotTable, and adding a hierarchy or a Sort by Column afterwards works.
+Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*, which time intelligence functions such as `TOTALYTD` and `SAMEPERIODLASTYEAR` rely on. The column must be a date column (`ColumnDataType.DateTime`, which is what `DateOnly`, `DateTime` and `DateTimeOffset` sources all map to) with one whole day per row (no BLANK, no time part, no duplicates; checked when saving). The file layout follows what Excel writes after marking a date table in a model like the one above; that is the only case seen so far, so for now saving requires **a hierarchy on the date table, a relationship that uses the date column as its primary key, and a single date table per model**. Verified in Excel: the model loads, the date table works in a PivotTable, and adding a hierarchy or a Sort by Column afterwards works.
 
 #### Generated date table
 

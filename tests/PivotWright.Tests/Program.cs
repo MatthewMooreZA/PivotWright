@@ -43,6 +43,7 @@ var tests = new (string Name, Action Body)[]
     ("Date table: invalid definitions are rejected", Tests.DateTableValidation),
     ("AddDateTable generates a standard calendar and marks it", Tests.GeneratedDateTable),
     ("AddDateTable: fiscal year end other than December", Tests.FiscalDateTable),
+    ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
 int failed = 0;
@@ -727,6 +728,34 @@ namespace PivotWright.Tests
             Rejects<ArgumentException>(() => model.AddDateTable("Bad", new DateOnly(2025, 2, 1), new DateOnly(2025, 1, 1)), "to before from");
             Rejects<InvalidOperationException>(() => model.AddDateTable("Second", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)), "second date table");
             Check.Equal(2, model.TableNames.Count(), "rejected calls add no table");
+        }
+
+        private sealed record DateRow(DateOnly Date, long Year, string Month);
+
+        public static void DateTableSourceTypes()
+        {
+            void Saves(DataModelWriter model) { using var ms = new MemoryStream(); model.SaveModelPart(ms); }
+
+            // Rows given as DateOnly, DateTime and DateTimeOffset values in the same column: all become model dates.
+            var (mixed, _, _) = DateModel(t =>
+            {
+                t.AddRow(new DateOnly(2025, 1, 1), 2025, "January");
+                t.AddRow(new DateTime(2025, 1, 2), 2025, "January");
+                t.AddRow(new DateTimeOffset(2025, 1, 3, 0, 0, 0, TimeSpan.FromHours(2)), 2025, "January");
+            });
+            using (mixed) { mixed.MarkAsDateTable("Dates", "Date"); Saves(mixed); }
+
+            // A typed source with a DateOnly property maps to the same column type.
+            using var typed = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            typed.AddTable("Dates", new[] { new DateRow(new DateOnly(2025, 1, 1), 2025, "January"), new DateRow(new DateOnly(2025, 1, 2), 2025, "January") });
+            Check.Equal(ColumnDataType.DateTime, ColumnDefinition.FromClrType(typeof(DateOnly)), "DateOnly maps to DateTime");
+            Check.Equal(ColumnDataType.DateTime, ColumnDefinition.FromClrType(typeof(DateTimeOffset)), "DateTimeOffset maps to DateTime");
+            var sales = typed.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2025, 1, 1));
+            typed.AddRelationship("Sales", "Date", "Dates", "Date");
+            typed.AddHierarchy("Dates", "Calendar", "Year", "Month");
+            typed.MarkAsDateTable("Dates", "Date");
+            Saves(typed);
         }
 
         public static void FiscalDateTable()
