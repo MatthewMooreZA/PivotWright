@@ -78,7 +78,7 @@ internal sealed class ModelSerializer
 
         var tableIds = new Dictionary<string, TableIds>();
         foreach (var t in _tables)
-            tableIds[t.Id] = new TableIds { DimensionObjectId = Xml.Guid(), MeasureGroupObjectId = Xml.Guid(), PartitionObjectId = Xml.Guid() };
+            tableIds[t.Id] = new TableIds { DimensionObjectId = Xml.Guid(), MeasureGroupObjectId = Xml.Guid(), PartitionObjectId = Xml.Guid(), Ordinal = tableIds.Count + 1 };
 
         Info = new ModelInfo
         {

@@ -52,6 +52,8 @@ internal sealed class TableIds
     public required string DimensionObjectId { get; init; }
     public required string MeasureGroupObjectId { get; init; }
     public required string PartitionObjectId { get; init; }
+    /// <summary>1-based position of the table; Excel numbers measure groups with it after a date table was marked.</summary>
+    public int Ordinal { get; init; }
 }
 
 /// <summary>
@@ -87,14 +89,14 @@ internal static class AsslWriter
     /// </summary>
     internal const int CubeObjectVersion = 1;
 
-    private static void CommonHeader(StringBuilder sb, string name, string id, DateTime created, int objectVersion, string objectId)
+    private static void CommonHeader(StringBuilder sb, string name, string id, DateTime created, int objectVersion, string objectId, int ordinal = 0)
     {
         sb.Append("<Name>").Append(E(name)).Append("</Name><ID>").Append(E(id)).Append("</ID>");
         sb.Append("<CreatedTimestamp>").Append(T(created)).Append("</CreatedTimestamp>");
         sb.Append("<LastSchemaUpdate>").Append(T(created)).Append("</LastSchemaUpdate>");
         sb.Append("<ObjectVersion>").Append(objectVersion).Append("</ObjectVersion>");
         sb.Append("<ObjectID>").Append(objectId).Append("</ObjectID>");
-        sb.Append("<Ordinal>0</Ordinal><PersistLocation>0</PersistLocation><System>false</System>");
+        sb.Append("<Ordinal>").Append(ordinal).Append("</Ordinal><PersistLocation>0</PersistLocation><System>false</System>");
     }
 
     public static string Database(ModelInfo m)
@@ -407,7 +409,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MdxScript>");
-        CommonHeader(sb, "MdxScript", "MdxScript", m.Created, m.ScriptVersion, m.MdxScriptObjectId);
+        CommonHeader(sb, "MdxScript", "MdxScript", m.Created, m.ScriptVersion, m.MdxScriptObjectId, m.AnyDate ? 1 : 0);
         string member = (measures.Count > 0) ? DefaultMemberName : "__No measures defined";
         sb.Append("<DataFileList/><Description/><DefaultScript>true</DefaultScript><Commands><Command><Text>CALCULATE; \n");
         sb.Append("CREATE MEMBER CURRENTCUBE.Measures.[").Append(member).Append("] AS 1, VISIBLE = 0; \n");
@@ -481,7 +483,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MeasureGroup>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, m.CubeVersion, ids.MeasureGroupObjectId);
+        CommonHeader(sb, t.Name, t.Id, m.Created, m.CubeVersion, ids.MeasureGroupObjectId, m.AnyDate ? ids.Ordinal : 0);
         sb.Append("<DataFileList/><Description/><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Regular</Type><DataAggregation>DataAndCacheAggregatable</DataAggregation><AggregationPrefix/>");
         sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><ProcessingPriority>0</ProcessingPriority><StorageLocation/>");
@@ -541,7 +543,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID><MeasureGroupID>").Append(E(t.Id)).Append("</MeasureGroupID></ParentObject>");
         sb.Append("<ObjectDefinition><Partition>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, m.PartitionVersion, ids.PartitionObjectId);
+        CommonHeader(sb, t.Name, t.Id, m.Created, m.PartitionVersion, ids.PartitionObjectId, m.AnyDate ? 1 : 0);
         sb.Append("<DataFileList/><Description/>");
         sb.Append("<Annotations").Append(NsB).Append('>').Append(TableAnnotations.Replace("\n          ", "\n                  ").Replace("\n            ", "\n                    ")).Append("</Annotations>");
         sb.Append(m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
