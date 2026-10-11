@@ -14,7 +14,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | User hierarchies | done, verified, including adding more hierarchies and Sort by Column in Excel afterwards and save + refresh |
 | Sort by Column | done, verified |
 | Hidden columns | `ColumnDefinition.IsHidden` writes the same XML Excel writes (diffed against `H1`); **not yet Excel-tested as a generated file** |
-| Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel test 2026-10-11 (`datetbl.xlsx`): loads, date table works in the PivotTable, but adding a hierarchy and adding a Sort by Column both fail with `ASDetail::OnClone2`** (see SPEC §9, "Test result"). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
+| Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel-tested 2026-10-11: loads, date table works in the PivotTable, adding a hierarchy and a Sort by Column work** (the first attempt failed in `OnClone2` until `Ordinal` matched Excel, SPEC §9). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
 | Date table, Excel creates it from scratch (Date Table > New) | **not started**; needs an Excel-written sample (see §2) |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
@@ -41,7 +41,7 @@ There is no Excel in the sandbox. The loop that produced every result:
 3. Give Matthew the file(s); he tests in Excel and reports **pass/fail per file**. The standard checks for a model with hierarchies: it loads; both hierarchies work in a PivotTable and respect sort columns; adding another hierarchy on each table works; adding a new Sort by Column works; saving and refreshing the PivotTable works.
 4. Matthew can also take a generated file, make an edit in Excel (hide columns, mark a date table, add a hierarchy) and save it; **those Excel-written files are the ground truth**. Ask for them when a feature is missing. They live in `reference/excel-samples/`.
 
-Matthew's preferences: start with "the most likely" file so he has fewer to test; do not send new files while he is mid-test ("hold on for feedback" — he said this once); practical, ready-to-use deliverables; he is precise about citation. Keep replies short.
+Matthew's preferences: give every test file a new, unique name on each iteration (e.g. `datetbl_v2_ordinal.xlsx`), never reuse a name, so he can refer to a specific version; start with "the most likely" file so he has fewer to test; do not send new files while he is mid-test ("hold on for feedback" — he said this once); practical, ready-to-use deliverables; he is precise about citation. Keep replies short.
 
 ### Tools
 
