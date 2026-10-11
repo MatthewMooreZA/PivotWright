@@ -244,6 +244,57 @@ public sealed class DataModelWriter : IDisposable
     /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
     public void MarkAsDateTable(TableWriter table, string dateColumn) => MarkAsDateTable(table.Name, dateColumn);
 
+    /// <summary>
+    /// Generates a standard calendar table with one row per day from <paramref name="from"/> to <paramref name="to"/> and,
+    /// by default, marks it as the model's date table (see <see cref="MarkAsDateTable(string, string)"/>, which still
+    /// works for tables you load yourself).
+    /// </summary>
+    /// <remarks>
+    /// Columns: Date, Year, QuarterNumber, Quarter ("Q1", sorted by QuarterNumber), MonthNumber, Month (name in the model
+    /// culture, sorted by MonthNumber), Day, DayOfWeekNumber (1 = Monday), DayOfWeek (name, sorted by DayOfWeekNumber).
+    /// A hierarchy named "Calendar" (Year, Quarter, Month) is added. Relate it to your fact table yourself:
+    /// <c>AddRelationship("Sales", "Date", name, "Date")</c>; marking as date table is only accepted when a relationship
+    /// uses the Date column, which is checked when saving.
+    /// </remarks>
+    /// <param name="name">Table name, for example Dates.</param>
+    /// <param name="from">First day (the time of day is ignored).</param>
+    /// <param name="to">Last day, not before <paramref name="from"/>.</param>
+    /// <param name="markAsDateTable">Mark the table as the model's date table (default).</param>
+    /// <returns>The table, which is complete; do not add rows.</returns>
+    public TableWriter AddDateTable(string name, DateTime from, DateTime to, bool markAsDateTable = true)
+    {
+        ThrowIfDisposed();
+        from = from.Date;
+        to = to.Date;
+        if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
+        if ((to - from).TotalDays > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
+        if (markAsDateTable && DateTableName is { } existing)
+            throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
+        var culture = _options.Culture;
+        var table = CreateTable(name, new[]
+        {
+            new ColumnDefinition("Date", ColumnDataType.DateTime),
+            new ColumnDefinition("Year", ColumnDataType.Int64),
+            new ColumnDefinition("QuarterNumber", ColumnDataType.Int64),
+            new ColumnDefinition("Quarter", ColumnDataType.String) { SortByColumn = "QuarterNumber" },
+            new ColumnDefinition("MonthNumber", ColumnDataType.Int64),
+            new ColumnDefinition("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" },
+            new ColumnDefinition("Day", ColumnDataType.Int64),
+            new ColumnDefinition("DayOfWeekNumber", ColumnDataType.Int64),
+            new ColumnDefinition("DayOfWeek", ColumnDataType.String) { SortByColumn = "DayOfWeekNumber" },
+        });
+        for (var d = from; d <= to; d = d.AddDays(1))
+        {
+            int quarter = (d.Month - 1) / 3 + 1;
+            int dow = d.DayOfWeek == System.DayOfWeek.Sunday ? 7 : (int)d.DayOfWeek;
+            table.AddRow(d, (long)d.Year, (long)quarter, "Q" + quarter, (long)d.Month,
+                culture.DateTimeFormat.GetMonthName(d.Month), (long)d.Day, (long)dow, culture.DateTimeFormat.GetDayName(d.DayOfWeek));
+        }
+        AddHierarchy(table.Name, "Calendar", "Year", "Quarter", "Month");
+        if (markAsDateTable) MarkAsDateTable(table.Name, "Date");
+        return table;
+    }
+
     /// <summary>Number of measures added so far.</summary>
     public int MeasureCount => _measures.Count;
 

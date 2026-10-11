@@ -69,6 +69,15 @@ model.MarkAsDateTable("Dates", "Date");
 
 Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*, which time intelligence functions such as `TOTALYTD` and `SAMEPERIODLASTYEAR` rely on. The column must be `DateTime` with one whole day per row (no BLANK, no time part, no duplicates; checked when saving). The file layout follows what Excel writes after marking a date table in a model like the one above; that is the only case seen so far, so for now saving requires **a hierarchy on the date table, a relationship that uses the date column as its primary key, and a single date table per model**. Verified in Excel: the model loads, the date table works in a PivotTable, and adding a hierarchy or a Sort by Column afterwards works.
 
+#### Generated date table
+
+```csharp
+model.AddDateTable("Dates", new DateTime(2020, 1, 1), new DateTime(2030, 12, 31));   // marked as date table
+model.AddRelationship("Sales", "Date", "Dates", "Date");
+```
+
+Alternatively `AddDateTable` builds a standard calendar for you, one row per day, with the columns Date, Year, QuarterNumber, Quarter, MonthNumber, Month, Day, DayOfWeekNumber (1 = Monday) and DayOfWeek. Quarter, Month and DayOfWeek are sorted by their number columns, a `Calendar` hierarchy (Year, Quarter, Month) is added, and the table is marked as date table unless you pass `markAsDateTable: false`. Month and day names use the model culture. You still add the relationship to your fact table yourself, and `MarkAsDateTable` keeps working for tables you load yourself. The Excel-verified case is a hand-built table (above); the generated table uses the same mechanism with extra sort columns and a three-level hierarchy and is awaiting its Excel test.
+
 ### Sort by column
 
 ```csharp

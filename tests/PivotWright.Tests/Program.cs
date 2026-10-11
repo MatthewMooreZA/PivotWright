@@ -41,6 +41,7 @@ var tests = new (string Name, Action Body)[]
     ("Measures: invalid definitions are rejected", Tests.MeasureValidation),
     ("Date table: dimension, tables, files and counters as Excel saves them", Tests.DateTableMetadata),
     ("Date table: invalid definitions are rejected", Tests.DateTableValidation),
+    ("AddDateTable generates a standard calendar and marks it", Tests.GeneratedDateTable),
 };
 
 int failed = 0;
@@ -696,6 +697,42 @@ namespace PivotWright.Tests
                 Check.True(Text(@"Dates_G\.10\.prt\.xml$").Contains("<DataVersion>1</DataVersion>"), "Dates partition data version 1");
                 m.Find(@"Sales_G\.0\.prt\\info\.10\.xml$");
             }
+        }
+
+        public static void GeneratedDateTable()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            var dates = model.AddDateTable("Dates", new DateTime(2024, 1, 1, 13, 0, 0), new DateTime(2024, 12, 31));
+            Check.Equal(366L, dates.RowCount, "leap year has 366 rows");
+            Check.Equal("Dates", model.DateTableName, "marked by default");
+            Check.Equal(1, model.HierarchyCount, "Calendar hierarchy");
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", dates.Columns.Select(c => c.Name)), "columns");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
+            sales.AddRow(new DateTime(2024, 3, 5), 1);
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            var m = ModelReader.Read(ms.ToArray());
+            string dim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.True(dim.Contains("<Type>Time</Type>"), "dimension type Time");
+            Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "Quarter, Month and DayOfWeek are sorted by their numbers");
+            Check.True(dim.Contains("<Level><Name>Quarter</Name>") && dim.Contains("<Hierarchy><Name>Calendar</Name>"), "hierarchy levels");
+
+            // Not marked: still a normal table with the hierarchy; marking later by hand is the existing API.
+            using var plain = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            plain.AddDateTable("Cal", new DateTime(2025, 1, 1), new DateTime(2025, 1, 31), markAsDateTable: false);
+            Check.True(plain.DateTableName is null, "not marked");
+            plain.MarkAsDateTable("Cal", "Date");
+            Check.Equal("Cal", plain.DateTableName, "marked afterwards");
+
+            void Rejects<T>(Action a, string what) where T : Exception
+            {
+                try { a(); } catch (T) { return; }
+                throw new Exception("Expected " + typeof(T).Name + ": " + what);
+            }
+            Rejects<ArgumentException>(() => plain.AddDateTable("Bad", new DateTime(2025, 2, 1), new DateTime(2025, 1, 1), false), "to before from");
+            Rejects<InvalidOperationException>(() => plain.AddDateTable("Second", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2)), "second marked date table");
+            Rejects<ArgumentException>(() => plain.AddDateTable("Cal", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2), false), "duplicate table name");
         }
 
         public static void DateTableValidation()
