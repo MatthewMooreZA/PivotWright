@@ -133,7 +133,7 @@ Only the configuration of `H2` has been seen, so `ModelSerializer.ValidateDateTa
 
 **Fix (verified 2026-10-11, second `datetbl.xlsx`)**: after marking a date table Excel numbers `Ordinal` (measure groups 1, 2, 3 in table order; partitions and script 1). Writing 0 made Create Hierarchy and Sort by Column fail in `OnClone2` even though everything else equalled `H2`; with the Ordinals set, the model loads, pivots, accepts a new hierarchy and a new Sort by Column. The remaining differences listed above (file-list order, `<Value/>`, `customXml`) do not matter. Ordinal is therefore a model requirement, not noise; check it first in any future profile.
 
-**Excel creating a date table from scratch (Date Table > New) is a different operation** and is not specified; it needs an Excel-written sample.
+**No "create from scratch" case**: Excel cannot create a date table by itself; a date table is always an existing table that was marked (Matthew, 2026-10-11).
 
 ## 10. Not understood (open)
 
