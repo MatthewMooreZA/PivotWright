@@ -42,6 +42,7 @@ var tests = new (string Name, Action Body)[]
     ("Date table: dimension, tables, files and counters as Excel saves them", Tests.DateTableMetadata),
     ("Date table: invalid definitions are rejected", Tests.DateTableValidation),
     ("AddDateTable generates a standard calendar and marks it", Tests.GeneratedDateTable),
+    ("AddDateTable: fiscal year end other than December", Tests.FiscalDateTable),
 };
 
 int failed = 0;
@@ -718,21 +719,52 @@ namespace PivotWright.Tests
             Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "Quarter, Month and DayOfWeek are sorted by their numbers");
             Check.True(dim.Contains("<Level><Name>Quarter</Name>") && dim.Contains("<Hierarchy><Name>Calendar</Name>"), "hierarchy levels");
 
-            // Not marked: still a normal table with the hierarchy; marking later by hand is the existing API.
-            using var plain = new DataModelWriter(new DataModelOptions { XpressCompression = false });
-            plain.AddDateTable("Cal", new DateTime(2025, 1, 1), new DateTime(2025, 1, 31), markAsDateTable: false);
-            Check.True(plain.DateTableName is null, "not marked");
-            plain.MarkAsDateTable("Cal", "Date");
-            Check.Equal("Cal", plain.DateTableName, "marked afterwards");
-
             void Rejects<T>(Action a, string what) where T : Exception
             {
                 try { a(); } catch (T) { return; }
                 throw new Exception("Expected " + typeof(T).Name + ": " + what);
             }
-            Rejects<ArgumentException>(() => plain.AddDateTable("Bad", new DateTime(2025, 2, 1), new DateTime(2025, 1, 1), false), "to before from");
-            Rejects<InvalidOperationException>(() => plain.AddDateTable("Second", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2)), "second marked date table");
-            Rejects<ArgumentException>(() => plain.AddDateTable("Cal", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2), false), "duplicate table name");
+            Rejects<ArgumentException>(() => model.AddDateTable("Bad", new DateTime(2025, 2, 1), new DateTime(2025, 1, 1)), "to before from");
+            Rejects<InvalidOperationException>(() => model.AddDateTable("Second", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2)), "second date table");
+            Check.Equal(2, model.TableNames.Count(), "rejected calls add no table");
+        }
+
+        public static void FiscalDateTable()
+        {
+            // June year end: July 2024 starts FiscalYear 2025; the fiscal year is named by the year in which it ends.
+            (int, int, int) F(int y, int m, int d, int fye) => DataModelWriter.FiscalPeriod(new DateTime(y, m, d), fye);
+            Check.Equal((2025, 1, 1), F(2024, 7, 1, 6), "July 2024, June year end");
+            Check.Equal((2025, 3, 1), F(2024, 9, 30, 6), "September is fiscal month 3, quarter 1");
+            Check.Equal((2025, 4, 2), F(2024, 10, 1, 6), "October starts quarter 2");
+            Check.Equal((2025, 12, 4), F(2025, 6, 30, 6), "June 30 closes the year");
+            Check.Equal((2026, 1, 1), F(2025, 7, 1, 6), "next year");
+            Check.Equal((2024, 1, 1), F(2024, 1, 15, 12), "December year end equals the calendar year");
+            Check.Equal((2025, 1, 1), F(2024, 12, 31, 11), "November year end: December 2024 is fiscal month 1 of 2025");
+            Check.Equal((2024, 12, 4), F(2024, 1, 31, 1), "January year end: January is the last month");
+
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            var dates = model.AddDateTable("Dates", new DateTime(2024, 1, 1), new DateTime(2025, 12, 31), fiscalYearEndMonth: 6);
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
+                string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
+            Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
+            sales.AddRow(new DateTime(2024, 8, 5), 1);
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);   // sort-by columns validate that each name maps to one number
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.Equal(5, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "five sorted columns");
+            Check.True(dim.Contains("<Hierarchy><Name>Fiscal Calendar</Name>"), "fiscal hierarchy");
+
+            using var dec = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            Check.Equal(9, dec.AddDateTable("D", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
+            Check.Equal(1, dec.HierarchyCount, "only Calendar");
+            using var bad = new DataModelWriter();
+            try { bad.AddDateTable("D", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2), 13); throw new Exception("Expected ArgumentOutOfRangeException"); }
+            catch (ArgumentOutOfRangeException) { }
+            try { bad.AddDateTable("D", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2), 0); throw new Exception("Expected ArgumentOutOfRangeException"); }
+            catch (ArgumentOutOfRangeException) { }
+            Check.Equal(0, bad.TableNames.Count(), "invalid month adds no table");
         }
 
         public static void DateTableValidation()

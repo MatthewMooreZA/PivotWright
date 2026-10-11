@@ -245,54 +245,87 @@ public sealed class DataModelWriter : IDisposable
     public void MarkAsDateTable(TableWriter table, string dateColumn) => MarkAsDateTable(table.Name, dateColumn);
 
     /// <summary>
-    /// Generates a standard calendar table with one row per day from <paramref name="from"/> to <paramref name="to"/> and,
-    /// by default, marks it as the model's date table (see <see cref="MarkAsDateTable(string, string)"/>, which still
-    /// works for tables you load yourself).
+    /// Generates a standard calendar table with one row per day from <paramref name="from"/> to <paramref name="to"/> and
+    /// marks it as the model's date table (<see cref="MarkAsDateTable(string, string)"/> still works for tables you load yourself).
     /// </summary>
     /// <remarks>
     /// Columns: Date, Year, QuarterNumber, Quarter ("Q1", sorted by QuarterNumber), MonthNumber, Month (name in the model
     /// culture, sorted by MonthNumber), Day, DayOfWeekNumber (1 = Monday), DayOfWeek (name, sorted by DayOfWeekNumber).
-    /// A hierarchy named "Calendar" (Year, Quarter, Month) is added. Relate it to your fact table yourself:
+    /// A hierarchy named "Calendar" (Year, Quarter, Month) is added.
+    /// With a <paramref name="fiscalYearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
+    /// the fiscal year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
+    /// FiscalMonthNumber (1 = first month of the fiscal year), FiscalMonth (sorted by FiscalMonthNumber) and a hierarchy
+    /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth).
+    /// Relate the table to your fact table yourself:
     /// <c>AddRelationship("Sales", "Date", name, "Date")</c>; marking as date table is only accepted when a relationship
     /// uses the Date column, which is checked when saving.
     /// </remarks>
     /// <param name="name">Table name, for example Dates.</param>
     /// <param name="from">First day (the time of day is ignored).</param>
     /// <param name="to">Last day, not before <paramref name="from"/>.</param>
-    /// <param name="markAsDateTable">Mark the table as the model's date table (default).</param>
+    /// <param name="fiscalYearEndMonth">Last month of the fiscal year, 1 to 12 (12 = December, the default, where the fiscal year is the calendar year).</param>
     /// <returns>The table, which is complete; do not add rows.</returns>
-    public TableWriter AddDateTable(string name, DateTime from, DateTime to, bool markAsDateTable = true)
+    public TableWriter AddDateTable(string name, DateTime from, DateTime to, int fiscalYearEndMonth = 12)
     {
         ThrowIfDisposed();
         from = from.Date;
         to = to.Date;
         if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
         if ((to - from).TotalDays > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
-        if (markAsDateTable && DateTableName is { } existing)
+        if (fiscalYearEndMonth is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(fiscalYearEndMonth), "The fiscal year end month must be 1 to 12.");
+        if (DateTableName is { } existing)
             throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
+        bool fiscal = fiscalYearEndMonth != 12;
         var culture = _options.Culture;
-        var table = CreateTable(name, new[]
+        var columns = new List<ColumnDefinition>
         {
-            new ColumnDefinition("Date", ColumnDataType.DateTime),
-            new ColumnDefinition("Year", ColumnDataType.Int64),
-            new ColumnDefinition("QuarterNumber", ColumnDataType.Int64),
-            new ColumnDefinition("Quarter", ColumnDataType.String) { SortByColumn = "QuarterNumber" },
-            new ColumnDefinition("MonthNumber", ColumnDataType.Int64),
-            new ColumnDefinition("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" },
-            new ColumnDefinition("Day", ColumnDataType.Int64),
-            new ColumnDefinition("DayOfWeekNumber", ColumnDataType.Int64),
-            new ColumnDefinition("DayOfWeek", ColumnDataType.String) { SortByColumn = "DayOfWeekNumber" },
-        });
+            new("Date", ColumnDataType.DateTime),
+            new("Year", ColumnDataType.Int64),
+            new("QuarterNumber", ColumnDataType.Int64),
+            new("Quarter", ColumnDataType.String) { SortByColumn = "QuarterNumber" },
+            new("MonthNumber", ColumnDataType.Int64),
+            new("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" },
+            new("Day", ColumnDataType.Int64),
+            new("DayOfWeekNumber", ColumnDataType.Int64),
+            new("DayOfWeek", ColumnDataType.String) { SortByColumn = "DayOfWeekNumber" },
+        };
+        if (fiscal)
+        {
+            columns.Add(new("FiscalYear", ColumnDataType.Int64));
+            columns.Add(new("FiscalQuarterNumber", ColumnDataType.Int64));
+            columns.Add(new("FiscalQuarter", ColumnDataType.String) { SortByColumn = "FiscalQuarterNumber" });
+            columns.Add(new("FiscalMonthNumber", ColumnDataType.Int64));
+            columns.Add(new("FiscalMonth", ColumnDataType.String) { SortByColumn = "FiscalMonthNumber" });
+        }
+        var table = CreateTable(name, columns);
+        var row = new object?[columns.Count];
         for (var d = from; d <= to; d = d.AddDays(1))
         {
             int quarter = (d.Month - 1) / 3 + 1;
             int dow = d.DayOfWeek == System.DayOfWeek.Sunday ? 7 : (int)d.DayOfWeek;
-            table.AddRow(d, (long)d.Year, (long)quarter, "Q" + quarter, (long)d.Month,
-                culture.DateTimeFormat.GetMonthName(d.Month), (long)d.Day, (long)dow, culture.DateTimeFormat.GetDayName(d.DayOfWeek));
+            row[0] = d; row[1] = (long)d.Year; row[2] = (long)quarter; row[3] = "Q" + quarter; row[4] = (long)d.Month;
+            row[5] = culture.DateTimeFormat.GetMonthName(d.Month); row[6] = (long)d.Day; row[7] = (long)dow;
+            row[8] = culture.DateTimeFormat.GetDayName(d.DayOfWeek);
+            if (fiscal)
+            {
+                var (fy, fm, fq) = FiscalPeriod(d, fiscalYearEndMonth);
+                row[9] = (long)fy; row[10] = (long)fq; row[11] = "Q" + fq; row[12] = (long)fm;
+                // Name of the calendar month that is this fiscal month.
+                row[13] = culture.DateTimeFormat.GetMonthName(d.Month);
+            }
+            table.AddRow(row);
         }
         AddHierarchy(table.Name, "Calendar", "Year", "Quarter", "Month");
-        if (markAsDateTable) MarkAsDateTable(table.Name, "Date");
+        if (fiscal) AddHierarchy(table.Name, "Fiscal Calendar", "FiscalYear", "FiscalQuarter", "FiscalMonth");
+        MarkAsDateTable(table.Name, "Date");
         return table;
+    }
+
+    /// <summary>Fiscal year (the calendar year in which it ends), month (1 = first month) and quarter of a date.</summary>
+    internal static (int year, int month, int quarter) FiscalPeriod(DateTime d, int fiscalYearEndMonth)
+    {
+        int month = (d.Month - fiscalYearEndMonth - 1 + 12) % 12 + 1;
+        return (d.Month > fiscalYearEndMonth ? d.Year + 1 : d.Year, month, (month - 1) / 3 + 1);
     }
 
     /// <summary>Number of measures added so far.</summary>

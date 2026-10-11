@@ -72,11 +72,13 @@ Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*
 #### Generated date table
 
 ```csharp
-model.AddDateTable("Dates", new DateTime(2020, 1, 1), new DateTime(2030, 12, 31));   // marked as date table
+model.AddDateTable("Dates", new DateTime(2020, 1, 1), new DateTime(2030, 12, 31));   // also marks it as date table
+// or, for a financial year ending in June:
+// model.AddDateTable("Dates", new DateTime(2020, 7, 1), new DateTime(2030, 6, 30), fiscalYearEndMonth: 6);
 model.AddRelationship("Sales", "Date", "Dates", "Date");
 ```
 
-Alternatively `AddDateTable` builds a standard calendar for you, one row per day, with the columns Date, Year, QuarterNumber, Quarter, MonthNumber, Month, Day, DayOfWeekNumber (1 = Monday) and DayOfWeek. Quarter, Month and DayOfWeek are sorted by their number columns, a `Calendar` hierarchy (Year, Quarter, Month) is added, and the table is marked as date table unless you pass `markAsDateTable: false`. Month and day names use the model culture. You still add the relationship to your fact table yourself, and `MarkAsDateTable` keeps working for tables you load yourself. The Excel-verified case is a hand-built table (above); the generated table uses the same mechanism with extra sort columns and a three-level hierarchy and is awaiting its Excel test.
+Alternatively `AddDateTable` builds a standard calendar for you, one row per day, with the columns Date, Year, QuarterNumber, Quarter, MonthNumber, Month, Day, DayOfWeekNumber (1 = Monday) and DayOfWeek. Quarter, Month and DayOfWeek are sorted by their number columns, a `Calendar` hierarchy (Year, Quarter, Month) is added, and the table is marked as date table. Pass `fiscalYearEndMonth` (1 to 12, default 12) for a financial year that does not end in December: the table then also gets FiscalYear (the calendar year in which the fiscal year ends, so with a June year end July 2024 belongs to FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter, FiscalMonthNumber (1 = first month of the fiscal year) and FiscalMonth, sorted by their numbers, plus a `Fiscal Calendar` hierarchy (FiscalYear, FiscalQuarter, FiscalMonth). Month and day names use the model culture. You still add the relationship to your fact table yourself, and `MarkAsDateTable` keeps working for tables you load yourself. The Excel-verified case is a hand-built table (above); the generated table uses the same mechanism with extra sort columns and a three-level hierarchy and is awaiting its Excel test.
 
 ### Sort by column
 
