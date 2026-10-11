@@ -743,7 +743,7 @@ namespace PivotWright.Tests
             Check.Equal((2024, 12, 4), F(2024, 1, 31, 1), "January year end: January is the last month");
 
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            var dates = model.AddDateTable("Dates", new DateTime(2024, 1, 1), new DateTime(2025, 12, 31), fiscalYearEndMonth: 6);
+            var dates = model.AddDateTable("Dates", new DateTime(2024, 1, 1), new DateTime(2025, 12, 31), yearEndMonth: 6);
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
             Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");

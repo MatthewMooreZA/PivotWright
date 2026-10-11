@@ -252,8 +252,8 @@ public sealed class DataModelWriter : IDisposable
     /// Columns: Date, Year, QuarterNumber, Quarter ("Q1", sorted by QuarterNumber), MonthNumber, Month (name in the model
     /// culture, sorted by MonthNumber), Day, DayOfWeekNumber (1 = Monday), DayOfWeek (name, sorted by DayOfWeekNumber).
     /// A hierarchy named "Calendar" (Year, Quarter, Month) is added.
-    /// With a <paramref name="fiscalYearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
-    /// the fiscal year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
+    /// With a <paramref name="yearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
+    /// the financial year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
     /// FiscalMonthNumber (1 = first month of the fiscal year), FiscalMonth (sorted by FiscalMonthNumber) and a hierarchy
     /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth).
     /// Relate the table to your fact table yourself:
@@ -263,19 +263,19 @@ public sealed class DataModelWriter : IDisposable
     /// <param name="name">Table name, for example Dates.</param>
     /// <param name="from">First day (the time of day is ignored).</param>
     /// <param name="to">Last day, not before <paramref name="from"/>.</param>
-    /// <param name="fiscalYearEndMonth">Last month of the fiscal year, 1 to 12 (12 = December, the default, where the fiscal year is the calendar year).</param>
+    /// <param name="yearEndMonth">Last month of the financial year, 1 to 12 (12 = December, the default, where the financial year is the calendar year). Any other month adds the Fiscal* columns.</param>
     /// <returns>The table, which is complete; do not add rows.</returns>
-    public TableWriter AddDateTable(string name, DateTime from, DateTime to, int fiscalYearEndMonth = 12)
+    public TableWriter AddDateTable(string name, DateTime from, DateTime to, int yearEndMonth = 12)
     {
         ThrowIfDisposed();
         from = from.Date;
         to = to.Date;
         if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
         if ((to - from).TotalDays > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
-        if (fiscalYearEndMonth is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(fiscalYearEndMonth), "The fiscal year end month must be 1 to 12.");
+        if (yearEndMonth is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(yearEndMonth), "The year end month must be 1 to 12.");
         if (DateTableName is { } existing)
             throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
-        bool fiscal = fiscalYearEndMonth != 12;
+        bool fiscal = yearEndMonth != 12;
         var culture = _options.Culture;
         var columns = new List<ColumnDefinition>
         {
@@ -308,7 +308,7 @@ public sealed class DataModelWriter : IDisposable
             row[8] = culture.DateTimeFormat.GetDayName(d.DayOfWeek);
             if (fiscal)
             {
-                var (fy, fm, fq) = FiscalPeriod(d, fiscalYearEndMonth);
+                var (fy, fm, fq) = FiscalPeriod(d, yearEndMonth);
                 row[9] = (long)fy; row[10] = (long)fq; row[11] = "Q" + fq; row[12] = (long)fm;
                 // Name of the calendar month that is this fiscal month.
                 row[13] = culture.DateTimeFormat.GetMonthName(d.Month);
@@ -321,11 +321,11 @@ public sealed class DataModelWriter : IDisposable
         return table;
     }
 
-    /// <summary>Fiscal year (the calendar year in which it ends), month (1 = first month) and quarter of a date.</summary>
-    internal static (int year, int month, int quarter) FiscalPeriod(DateTime d, int fiscalYearEndMonth)
+    /// <summary>Financial year (the calendar year in which it ends), month (1 = first month) and quarter of a date.</summary>
+    internal static (int year, int month, int quarter) FiscalPeriod(DateTime d, int yearEndMonth)
     {
-        int month = (d.Month - fiscalYearEndMonth - 1 + 12) % 12 + 1;
-        return (d.Month > fiscalYearEndMonth ? d.Year + 1 : d.Year, month, (month - 1) / 3 + 1);
+        int month = (d.Month - yearEndMonth - 1 + 12) % 12 + 1;
+        return (d.Month > yearEndMonth ? d.Year + 1 : d.Year, month, (month - 1) / 3 + 1);
     }
 
     /// <summary>Number of measures added so far.</summary>
