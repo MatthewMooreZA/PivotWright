@@ -14,7 +14,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | User hierarchies | done, verified, including adding more hierarchies and Sort by Column in Excel afterwards and save + refresh |
 | Sort by Column | done, verified |
 | Hidden columns | `ColumnDefinition.IsHidden` writes the same XML Excel writes (diffed against `H1`); **not yet Excel-tested as a generated file** |
-| Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **not yet Excel-tested as a generated file**. Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
+| Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel test 2026-10-11 (`datetbl.xlsx`): loads, date table works in the PivotTable, but adding a hierarchy and adding a Sort by Column both fail with `ASDetail::OnClone2`** (see SPEC §9, "Test result"). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
 | Date table, Excel creates it from scratch (Date Table > New) | **not started**; needs an Excel-written sample (see §2) |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
