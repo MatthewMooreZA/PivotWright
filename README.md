@@ -72,9 +72,9 @@ Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*
 #### Generated date table
 
 ```csharp
-model.AddDateTable("Dates", new DateTime(2020, 1, 1), new DateTime(2030, 12, 31));   // also marks it as date table
+model.AddDateTable("Dates", new DateOnly(2020, 1, 1), new DateOnly(2030, 12, 31));   // also marks it as date table
 // or, for a financial year ending in June:
-// model.AddDateTable("Dates", new DateTime(2020, 7, 1), new DateTime(2030, 6, 30), yearEndMonth: 6);
+// model.AddDateTable("Dates", new DateOnly(2020, 7, 1), new DateOnly(2030, 6, 30), yearEndMonth: 6);
 model.AddRelationship("Sales", "Date", "Dates", "Date");
 ```
 

@@ -261,17 +261,15 @@ public sealed class DataModelWriter : IDisposable
     /// uses the Date column, which is checked when saving.
     /// </remarks>
     /// <param name="name">Table name, for example Dates.</param>
-    /// <param name="from">First day (the time of day is ignored).</param>
+    /// <param name="from">First day.</param>
     /// <param name="to">Last day, not before <paramref name="from"/>.</param>
     /// <param name="yearEndMonth">Last month of the financial year, 1 to 12 (12 = December, the default, where the financial year is the calendar year). Any other month adds the Fiscal* columns.</param>
     /// <returns>The table, which is complete; do not add rows.</returns>
-    public TableWriter AddDateTable(string name, DateTime from, DateTime to, int yearEndMonth = 12)
+    public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, int yearEndMonth = 12)
     {
         ThrowIfDisposed();
-        from = from.Date;
-        to = to.Date;
         if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
-        if ((to - from).TotalDays > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
+        if (to.DayNumber - from.DayNumber > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
         if (yearEndMonth is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(yearEndMonth), "The year end month must be 1 to 12.");
         if (DateTableName is { } existing)
             throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
@@ -299,8 +297,9 @@ public sealed class DataModelWriter : IDisposable
         }
         var table = CreateTable(name, columns);
         var row = new object?[columns.Count];
-        for (var d = from; d <= to; d = d.AddDays(1))
+        for (int n = from.DayNumber; n <= to.DayNumber; n++)
         {
+            var d = DateOnly.FromDayNumber(n);
             int quarter = (d.Month - 1) / 3 + 1;
             int dow = d.DayOfWeek == System.DayOfWeek.Sunday ? 7 : (int)d.DayOfWeek;
             row[0] = d; row[1] = (long)d.Year; row[2] = (long)quarter; row[3] = "Q" + quarter; row[4] = (long)d.Month;
@@ -322,7 +321,7 @@ public sealed class DataModelWriter : IDisposable
     }
 
     /// <summary>Financial year (the calendar year in which it ends), month (1 = first month) and quarter of a date.</summary>
-    internal static (int year, int month, int quarter) FiscalPeriod(DateTime d, int yearEndMonth)
+    internal static (int year, int month, int quarter) FiscalPeriod(DateOnly d, int yearEndMonth)
     {
         int month = (d.Month - yearEndMonth - 1 + 12) % 12 + 1;
         return (d.Month > yearEndMonth ? d.Year + 1 : d.Year, month, (month - 1) / 3 + 1);

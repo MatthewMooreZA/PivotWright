@@ -703,7 +703,7 @@ namespace PivotWright.Tests
         public static void GeneratedDateTable()
         {
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            var dates = model.AddDateTable("Dates", new DateTime(2024, 1, 1, 13, 0, 0), new DateTime(2024, 12, 31));
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2024, 12, 31));
             Check.Equal(366L, dates.RowCount, "leap year has 366 rows");
             Check.Equal("Dates", model.DateTableName, "marked by default");
             Check.Equal(1, model.HierarchyCount, "Calendar hierarchy");
@@ -724,15 +724,15 @@ namespace PivotWright.Tests
                 try { a(); } catch (T) { return; }
                 throw new Exception("Expected " + typeof(T).Name + ": " + what);
             }
-            Rejects<ArgumentException>(() => model.AddDateTable("Bad", new DateTime(2025, 2, 1), new DateTime(2025, 1, 1)), "to before from");
-            Rejects<InvalidOperationException>(() => model.AddDateTable("Second", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2)), "second date table");
+            Rejects<ArgumentException>(() => model.AddDateTable("Bad", new DateOnly(2025, 2, 1), new DateOnly(2025, 1, 1)), "to before from");
+            Rejects<InvalidOperationException>(() => model.AddDateTable("Second", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)), "second date table");
             Check.Equal(2, model.TableNames.Count(), "rejected calls add no table");
         }
 
         public static void FiscalDateTable()
         {
             // June year end: July 2024 starts FiscalYear 2025; the fiscal year is named by the year in which it ends.
-            (int, int, int) F(int y, int m, int d, int fye) => DataModelWriter.FiscalPeriod(new DateTime(y, m, d), fye);
+            (int, int, int) F(int y, int m, int d, int fye) => DataModelWriter.FiscalPeriod(new DateOnly(y, m, d), fye);
             Check.Equal((2025, 1, 1), F(2024, 7, 1, 6), "July 2024, June year end");
             Check.Equal((2025, 3, 1), F(2024, 9, 30, 6), "September is fiscal month 3, quarter 1");
             Check.Equal((2025, 4, 2), F(2024, 10, 1, 6), "October starts quarter 2");
@@ -743,7 +743,7 @@ namespace PivotWright.Tests
             Check.Equal((2024, 12, 4), F(2024, 1, 31, 1), "January year end: January is the last month");
 
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            var dates = model.AddDateTable("Dates", new DateTime(2024, 1, 1), new DateTime(2025, 12, 31), yearEndMonth: 6);
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 6);
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
             Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");
@@ -757,12 +757,12 @@ namespace PivotWright.Tests
             Check.True(dim.Contains("<Hierarchy><Name>Fiscal Calendar</Name>"), "fiscal hierarchy");
 
             using var dec = new DataModelWriter(new DataModelOptions { XpressCompression = false });
-            Check.Equal(9, dec.AddDateTable("D", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
+            Check.Equal(9, dec.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
             Check.Equal(1, dec.HierarchyCount, "only Calendar");
             using var bad = new DataModelWriter();
-            try { bad.AddDateTable("D", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2), 13); throw new Exception("Expected ArgumentOutOfRangeException"); }
+            try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 13); throw new Exception("Expected ArgumentOutOfRangeException"); }
             catch (ArgumentOutOfRangeException) { }
-            try { bad.AddDateTable("D", new DateTime(2025, 1, 1), new DateTime(2025, 1, 2), 0); throw new Exception("Expected ArgumentOutOfRangeException"); }
+            try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 0); throw new Exception("Expected ArgumentOutOfRangeException"); }
             catch (ArgumentOutOfRangeException) { }
             Check.Equal(0, bad.TableNames.Count(), "invalid month adds no table");
         }

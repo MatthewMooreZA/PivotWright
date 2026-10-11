@@ -6,7 +6,7 @@ string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
 for (int c = 0; c < 3; c++) for (int i = 1; i <= 4; i++) p.AddRow(k++, cats[c], c + 1, $"{cats[c]} item {i}");
 bool generated = args.Length > 2 && args[2] == "gendate";
-if (generated) m.AddDateTable("Dates", new DateTime(2025, 1, 1), new DateTime(2025, 12, 31), args.Length > 3 ? int.Parse(args[3]) : 12);
+if (generated) m.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), args.Length > 3 ? int.Parse(args[3]) : 12);
 else
 {
     var d = m.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" }, new ColumnDefinition("MonthNumber", ColumnDataType.Int64) });
