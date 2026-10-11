@@ -2,6 +2,9 @@ name: Release
 
 # Push a tag like v0.1.0-preview.1 (prerelease) or v0.1.0 (stable).
 # The tag is the single source of truth for the package version.
+# The run title shows the tag and commit on the approval screen.
+run-name: ${{ format('Release {0} @ {1}', github.ref_name, substr(github.sha, 0, 7)) }}
+
 on:
   push:
     tags: ['v*']
@@ -28,6 +31,18 @@ jobs:
           version="${tag#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+          {
+            echo "## Release candidate"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package version | \`$version\` |"
+            echo "| Prerelease | $([[ "$version" == *-* ]] && echo yes || echo no) |"
+            echo "| Commit | [\`${GITHUB_SHA::7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}) |"
+            echo "| Full SHA | \`$GITHUB_SHA\` |"
+            echo ""
+            echo "Approve the **publish** job to push this to nuget.org."
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: dotnet build --configuration Release -p:Version=${{ steps.version.outputs.version }}
       - run: dotnet run --configuration Release --no-build --project tests/PivotWright.Tests
       - run: dotnet pack src/PivotWright/PivotWright.csproj --configuration Release --no-build -p:Version=${{ steps.version.outputs.version }} --output nupkg
@@ -37,6 +52,7 @@ jobs:
           path: nupkg/*
 
   publish:
+    name: ${{ format('Publish {0} to nuget.org', needs.build.outputs.version) }}
     needs: build
     runs-on: ubuntu-latest
     # Must match the environment name in the nuget.org trusted publishing policy.
