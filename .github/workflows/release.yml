@@ -1,0 +1,94 @@
+name: Release
+
+# Push a tag like v0.1.0-preview.1 (prerelease) or v0.1.0 (stable).
+# The tag is the single source of truth for the package version.
+# The run title shows the tag and commit on the approval screen.
+run-name: ${{ format('Release {0} @ {1}', github.ref_name, substr(github.sha, 0, 7)) }}
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Derive version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag '$tag' is not a valid version tag (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-suffix)." >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+          {
+            echo "## Release candidate"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package version | \`$version\` |"
+            echo "| Prerelease | $([[ "$version" == *-* ]] && echo yes || echo no) |"
+            echo "| Commit | [\`${GITHUB_SHA::7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}) |"
+            echo "| Full SHA | \`$GITHUB_SHA\` |"
+            echo ""
+            echo "Approve the **publish** job to push this to nuget.org."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - run: dotnet build --configuration Release -p:Version=${{ steps.version.outputs.version }}
+      - run: dotnet run --configuration Release --no-build --project tests/PivotWright.Tests
+      - run: dotnet pack src/PivotWright/PivotWright.csproj --configuration Release --no-build -p:Version=${{ steps.version.outputs.version }} --output nupkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/*
+
+  publish:
+    name: ${{ format('Publish {0} to nuget.org', needs.build.outputs.version) }}
+    needs: build
+    runs-on: ubuntu-latest
+    # Must match the environment name in the nuget.org trusted publishing policy.
+    environment: nuget
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      # Exchanges the GitHub OIDC token for a short-lived nuget.org API key.
+      - uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      - run: dotnet nuget push "nupkg/*.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  github-release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          flags=""
+          if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" nupkg/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes $flags

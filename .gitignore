@@ -4,3 +4,10 @@ obj/
 .vs/
 *.xlsx
 !reference/**/*.xlsx
+__pycache__/
+*.pyc
+TestResults/
+.idea/
+.vscode/
+*.nupkg
+.claude/settings.local.json

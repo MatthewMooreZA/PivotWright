@@ -275,3 +275,7 @@ The library has no package dependencies.
 - [MS-XLDM] Spreadsheet Data Model File Format: https://learn.microsoft.com/openspecs/office_file_formats/ms-xldm/
 - [MS-XCA] Xpress Compression Algorithm: https://learn.microsoft.com/openspecs/windows_protocols/ms-xca/
 - Power Pivot naming requirements: https://learn.microsoft.com/previous-versions//ff452213(v=technet.10)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
