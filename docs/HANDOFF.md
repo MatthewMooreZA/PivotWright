@@ -19,7 +19,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
 | CI (GitHub Actions), editorconfig, global.json, session hook | done |
 | License | MIT (LICENSE, csproj) |
-| NuGet packaging | metadata, README, snupkg symbols and SourceLink set up; `release.yml` publishes on `v*` tags via nuget.org trusted publishing (environment `nuget`, secret `NUGET_USER` = nuget.org username; no API key). Not yet published; check id `PivotWright` on nuget.org |
+| NuGet packaging | **`0.1.0-preview.1` published on nuget.org (2026-10-11)**, id `PivotWright`. Metadata, README, snupkg symbols and SourceLink set up. `release.yml` publishes on `v*` tags via nuget.org trusted publishing (environment `nuget` with required reviewer, secret `NUGET_USER` = nuget.org username; no API key) |
 
 Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 29 tests, all pass at handoff. Nothing but the .NET 8 SDK is needed.
 
@@ -27,7 +27,7 @@ Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` �
 
 1. **Date table** (`MarkAsDateTable`). Everything needed is in `SPEC.md` §9. Version counters must match file names (§5), so this is a profile change touching `FileNames` (`Internal/Model/EncodedColumn.cs`), `TableXmlWriter`, `AsslWriter` (`ModelInfo` has the version helpers: `CubeVersion`, `ScriptVersion`, `PartitionVersion`, `DimensionVersion`), and `ModelSerializer` (file naming and backup-log groups). Generate one most-likely file, diff against `reference/excel-samples/H2_date_table.xlsx` with the tools below, give it to Matthew.
 2. **Hidden columns**: generate a file with hidden columns (and one with hidden columns plus hierarchies), ask Matthew to check that it loads, PivotTable fields hide, and that Create Hierarchy / Sort by Column / marking a date table still work afterwards. Use `H1` as the reference. Whether Excel's counter bumps (cube 24, measure-group structure 9) are needed is unknown; add them only if a test file fails without them.
-3. **First NuGet release**: confirm the id `PivotWright` is free on nuget.org (unreachable from the sandbox), make the repo public, create the `nuget` environment (required reviewer), register the trusted publishing policy on nuget.org (workflow `release.yml`, environment `nuget`), add the `NUGET_USER` repo secret, then push a tag `vX.Y.Z` (stable) or `vX.Y.Z-preview.N` (prerelease); the tag sets the package version and `release.yml` also creates the GitHub Release. The csproj `<Version>` only affects local builds. Rename, license, CI, `CLAUDE.md` and packaging setup are done.
+3. **Releasing**: push a tag `vX.Y.Z` (stable) or `vX.Y.Z-preview.N` (prerelease) from `main`. The tag sets the package version; `release.yml` builds, tests, packs, waits for Matthew's approval of the `publish` job (check the commit and version on the run page), pushes to nuget.org, then creates the GitHub Release. Never re-tag a published version (nuget.org cannot replace one); use the next `-preview.N`. Stay on previews until hidden columns and the date table are Excel-tested, then cut `v0.1.0`. Rename, license, CI, `CLAUDE.md` and packaging setup are done.
 4. Backlog features: calculated columns, KPIs, perspectives, the report-writer layer on top (the long-term aim: an Excel report modeller/writer), refresh against a real connection.
 
 ## 3. How testing works (important)
