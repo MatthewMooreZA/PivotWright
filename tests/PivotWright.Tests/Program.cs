@@ -43,6 +43,7 @@ var tests = new (string Name, Action Body)[]
     ("Date table: invalid definitions are rejected", Tests.DateTableValidation),
     ("AddDateTable generates a standard calendar and marks it", Tests.GeneratedDateTable),
     ("AddDateTable: fiscal year end other than December", Tests.FiscalDateTable),
+    ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -756,6 +757,26 @@ namespace PivotWright.Tests
             typed.AddHierarchy("Dates", "Calendar", "Year", "Month");
             typed.MarkAsDateTable("Dates", "Date");
             Saves(typed);
+        }
+
+        /// <summary>
+        /// February year end, data for 2025: FiscalYear 2025 holds only Q4 (Jan, Feb), FiscalYear 2026 holds Q1..Q4 (Mar..Dec).
+        /// Q4 is the first quarter that appears in the data, but under 2026 our tree lists it after Q3. Excel's pivot showed Q4 first
+        /// (data-id order), so this pins what we write, not what Excel displays: see SPEC section 7, "Open".
+        /// </summary>
+        public static void FiscalHierarchyOrder()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 2);
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2025, 1, 1));
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            var m = ModelReader.Read(ms.ToArray());
+            var ids = DecodeTree(m, "Dates", "Fiscal Calendar", "MULTI_LEVEL_ID", 0);
+            // Level 0: two years (2 nodes). Level 1: Q4 of 2025, then Q1..Q4 of 2026. Quarter ids by first appearance: Q4=3, Q1=4, Q2=5, Q3=6.
+            Check.Equal("3,4,5,6,3", string.Join(",", ids.Skip(2).Take(5)), "quarter nodes: 2025 Q4, then 2026 Q1, Q2, Q3, Q4");
         }
 
         public static void FiscalDateTable()

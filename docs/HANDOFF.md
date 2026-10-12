@@ -14,7 +14,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | User hierarchies | done, verified, including adding more hierarchies and Sort by Column in Excel afterwards and save + refresh |
 | Sort by Column | done, verified |
 | Hidden columns | `ColumnDefinition.IsHidden` writes the same XML Excel writes (diffed against `H1`); **not yet Excel-tested as a generated file** |
-| Generated date table (`AddDateTable`, 2026-10-11) | standard calendar + `Calendar` hierarchy + marked; unit-tested; **Excel-verified 2026-10-11** (`datetbl_gen_v1`: loads, date table in pivot, add hierarchy, add Sort by Column; December year end) (`datagen <dir> <name> gendate`); `AddDateTable` takes `yearEndMonth` (default 12 = identical output; other months add Fiscal* columns and a `Fiscal Calendar` hierarchy, unit-tested, not yet in Excel: `datagen <dir> <name> gendate 6`) |
+| Generated date table (`AddDateTable`, 2026-10-11) | standard calendar + `Calendar` hierarchy + marked; unit-tested; **non-December year end (`datetbl_gen_ye2_v1`) shows quarters in data-id order in the pivot: Sort by Column is only verified when sort order equals first-appearance order, see SPEC §7 "Open"; waiting for Excel sample `H5`**. Default December: **Excel-verified 2026-10-11** (`datetbl_gen_v1`: loads, date table in pivot, add hierarchy, add Sort by Column; December year end) (`datagen <dir> <name> gendate`); `AddDateTable` takes `yearEndMonth` (default 12 = identical output; other months add Fiscal* columns and a `Fiscal Calendar` hierarchy, unit-tested, not yet in Excel: `datagen <dir> <name> gendate 6`) |
 | Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel-tested 2026-10-11: loads, date table works in the PivotTable, adding a hierarchy and a Sort by Column work** (the first attempt failed in `OnClone2` until `Ordinal` matched Excel, SPEC §9). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
@@ -22,7 +22,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | License | MIT (LICENSE, csproj) |
 | NuGet packaging | **`0.1.0-preview.1` published on nuget.org (2026-10-11)**, id `PivotWright`. Metadata, README, snupkg symbols and SourceLink set up. `release.yml` publishes on `v*` tags via nuget.org trusted publishing (environment `nuget` with required reviewer, secret `NUGET_USER` = nuget.org username; no API key) |
 
-Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 34 tests, all pass. Nothing but the .NET 8 SDK is needed.
+Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 35 tests, all pass. Nothing but the .NET 8 SDK is needed.
 
 ## 2. Immediate next steps, in order
 
