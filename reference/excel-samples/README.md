@@ -11,3 +11,5 @@ All files were saved by desktop Excel 365 (Windows, en-ZA) from models first gen
 | `H2_date_table.xlsx` | V2b with Dates marked as a date table |
 | `H3_date_table_and_hidden.xlsx` | both |
 | `H5_sort_reapplied.xlsx` | `datetbl_gen_ye2_v1` (February year end) after Sort by Column was re-applied to FiscalQuarter in Excel: shows StructureType Unnatural for the Fiscal Calendar hierarchy (SPEC §7) |
+| `H8_hide_one_column.xlsx` | V2b with only Sales[Qty] hidden: the counters after one hide operation on a plain column (SPEC §8) |
+| `H9_hide_one_hierarchy_level.xlsx` | V2b with only Products[Product], a hierarchy level, hidden (SPEC §8) |
