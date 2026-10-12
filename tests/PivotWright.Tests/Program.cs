@@ -45,6 +45,7 @@ var tests = new (string Name, Action Body)[]
     ("AddDateTable: fiscal year end other than December", Tests.FiscalDateTable),
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
+    ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -839,6 +840,33 @@ namespace PivotWright.Tests
             try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 0); throw new Exception("Expected ArgumentOutOfRangeException"); }
             catch (ArgumentOutOfRangeException) { }
             Check.Equal(0, bad.TableNames.Count(), "invalid month adds no table");
+        }
+
+        public static void DateTableYearLabel()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 6, yearLabel: "Financial");
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek,FinancialYear,FinancialQuarterNumber,FinancialQuarter,FinancialMonthNumber,FinancialMonth",
+                string.Join(",", dates.Columns.Select(c => c.Name)), "columns use the label");
+            Check.True(dates.Columns.Single(c => c.Name == "FinancialQuarter").SortByColumn == "FinancialQuarterNumber", "sort-by follows the label");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2024, 1, 1));
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.True(dim.Contains("<Hierarchy><Name>Financial Calendar</Name>") && !dim.Contains("Fiscal"), "hierarchy named after the label, no Fiscal left");
+
+            // The default label is unchanged, and an invalid label is rejected before anything is added.
+            using var def = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            Check.True(def.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 6).Columns.Any(c => c.Name == "FiscalYear"), "default label Fiscal");
+            using var bad = new DataModelWriter();
+            foreach (var label in new[] { "", " ", "1Fiscal", "Fin Year", "Fin-Year", "Year.End" })
+            {
+                try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 6, label); throw new Exception("Expected ArgumentException for label '" + label + "'"); }
+                catch (ArgumentException) { }
+            }
+            Check.Equal(0, bad.TableNames.Count(), "invalid labels add no table");
         }
 
         public static void DateTableValidation()

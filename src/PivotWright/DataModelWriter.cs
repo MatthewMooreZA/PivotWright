@@ -253,9 +253,10 @@ public sealed class DataModelWriter : IDisposable
     /// culture, sorted by MonthNumber), Day, DayOfWeekNumber (1 = Monday), DayOfWeek (name, sorted by DayOfWeekNumber).
     /// A hierarchy named "Calendar" (Year, Quarter, Month) is added.
     /// With a <paramref name="yearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
-    /// the financial year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
-    /// FiscalMonthNumber (1 = first month of the fiscal year), FiscalMonth (sorted by FiscalMonthNumber) and a hierarchy
-    /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth).
+    /// the year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
+    /// FiscalMonthNumber (1 = first month of that year), FiscalMonth (sorted by FiscalMonthNumber) and a hierarchy
+    /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth). <paramref name="yearLabel"/> replaces "Fiscal" in these
+    /// names, for a year that is not a fiscal year (for example "Financial": FinancialYear, "Financial Calendar").
     /// Relate the table to your fact table yourself:
     /// <c>AddRelationship("Sales", "Date", name, "Date")</c>; marking as date table is only accepted when a relationship
     /// uses the Date column, which is checked when saving.
@@ -263,14 +264,17 @@ public sealed class DataModelWriter : IDisposable
     /// <param name="name">Table name, for example Dates.</param>
     /// <param name="from">First day.</param>
     /// <param name="to">Last day, not before <paramref name="from"/>.</param>
-    /// <param name="yearEndMonth">Last month of the financial year, 1 to 12 (12 = December, the default, where the financial year is the calendar year). Any other month adds the Fiscal* columns.</param>
+    /// <param name="yearEndMonth">Last month of the year, 1 to 12 (12 = December, the default, where the year is the calendar year). Any other month adds the Fiscal* columns.</param>
+    /// <param name="yearLabel">Prefix of the columns and hierarchy added for a year end other than December, "Fiscal" by default. Letters and digits only, starting with a letter; not used when <paramref name="yearEndMonth"/> is 12.</param>
     /// <returns>The table, which is complete; do not add rows.</returns>
-    public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, int yearEndMonth = 12)
+    public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, int yearEndMonth = 12, string yearLabel = "Fiscal")
     {
         ThrowIfDisposed();
         if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
         if (to.DayNumber - from.DayNumber > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
         if (yearEndMonth is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(yearEndMonth), "The year end month must be 1 to 12.");
+        if (string.IsNullOrEmpty(yearLabel) || !char.IsLetter(yearLabel[0]) || !yearLabel.All(char.IsLetterOrDigit))
+            throw new ArgumentException("The year label must be letters and digits only, starting with a letter (for example \"Fiscal\" or \"Financial\").", nameof(yearLabel));
         if (DateTableName is { } existing)
             throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
         bool fiscal = yearEndMonth != 12;
@@ -289,11 +293,11 @@ public sealed class DataModelWriter : IDisposable
         };
         if (fiscal)
         {
-            columns.Add(new("FiscalYear", ColumnDataType.Int64));
-            columns.Add(new("FiscalQuarterNumber", ColumnDataType.Int64));
-            columns.Add(new("FiscalQuarter", ColumnDataType.String) { SortByColumn = "FiscalQuarterNumber" });
-            columns.Add(new("FiscalMonthNumber", ColumnDataType.Int64));
-            columns.Add(new("FiscalMonth", ColumnDataType.String) { SortByColumn = "FiscalMonthNumber" });
+            columns.Add(new(yearLabel + "Year", ColumnDataType.Int64));
+            columns.Add(new(yearLabel + "QuarterNumber", ColumnDataType.Int64));
+            columns.Add(new(yearLabel + "Quarter", ColumnDataType.String) { SortByColumn = yearLabel + "QuarterNumber" });
+            columns.Add(new(yearLabel + "MonthNumber", ColumnDataType.Int64));
+            columns.Add(new(yearLabel + "Month", ColumnDataType.String) { SortByColumn = yearLabel + "MonthNumber" });
         }
         var table = CreateTable(name, columns);
         var row = new object?[columns.Count];
@@ -315,7 +319,7 @@ public sealed class DataModelWriter : IDisposable
             table.AddRow(row);
         }
         AddHierarchy(table.Name, "Calendar", "Year", "Quarter", "Month");
-        if (fiscal) AddHierarchy(table.Name, "Fiscal Calendar", "FiscalYear", "FiscalQuarter", "FiscalMonth");
+        if (fiscal) AddHierarchy(table.Name, yearLabel + " Calendar", yearLabel + "Year", yearLabel + "Quarter", yearLabel + "Month");
         MarkAsDateTable(table.Name, "Date");
         return table;
     }
