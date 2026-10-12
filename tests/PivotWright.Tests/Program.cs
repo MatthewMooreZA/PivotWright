@@ -47,6 +47,8 @@ var tests = new (string Name, Action Body)[]
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
+    ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
+    ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -841,6 +843,85 @@ namespace PivotWright.Tests
                 try { _ = new DateTableOptions { YearEndMonth = month }; throw new Exception("Expected ArgumentOutOfRangeException for month " + month); }
                 catch (ArgumentOutOfRangeException) { }
             }
+        }
+
+        // Names of the attributes marked AttributeHierarchyVisible=false in a dimension (Name) or in the cube's dimension list (AttributeID).
+        private static string HiddenAttributes(string xml, string dimensionId = "")
+        {
+            System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/analysisservices/2003/engine";
+            var doc = System.Xml.Linq.XDocument.Parse(xml);
+            IEnumerable<System.Xml.Linq.XElement> attributes = dimensionId.Length == 0
+                ? doc.Descendants(ns + "Attributes").First().Elements(ns + "Attribute")
+                : doc.Descendants(ns + "Dimension").First(d => (d.Element(ns + "ID")?.Value ?? "").StartsWith(dimensionId, StringComparison.Ordinal)).Element(ns + "Attributes")!.Elements(ns + "Attribute");
+            return string.Join(",", attributes.Where(a => a.Element(ns + "AttributeHierarchyVisible")?.Value == "false")
+                .Select(a => (a.Element(ns + "Name") ?? a.Element(ns + "AttributeID"))!.Value));
+        }
+
+        // A model without hierarchies or relationships stays in the base profile (SPEC 5.1) when columns are hidden:
+        // only AttributeHierarchyVisible changes, in the dimension and in the cube.
+        public static void HiddenColumnsPlainTable()
+        {
+            void Build(bool hide, out string dim, out string cube, out string[] names)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var t = model.CreateTable("T", new[]
+                {
+                    new ColumnDefinition("A", ColumnDataType.Int64),
+                    new ColumnDefinition("B", ColumnDataType.String) { IsHidden = hide },
+                    new ColumnDefinition("C", ColumnDataType.Double) { IsHidden = hide },
+                });
+                t.AddRow(1, "x", 1.5); t.AddRow(2, "y", 2.5);
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                dim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\T_G\.1\.dim\.xml$"));
+                cube = Encoding.UTF8.GetString(m.Find(@"Model\.1\.cub\.xml$"));
+                names = m.Files.Keys.Select(k => System.Text.RegularExpressions.Regex.Replace(ModelReader.Normalize(k), "[0-9A-F]{20}", "DB")).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            }
+            Build(true, out var dimH, out var cubeH, out var namesH);
+            Build(false, out var dimV, out var cubeV, out var namesV);
+            Check.Equal("__XL_RowNumber,B,C", HiddenAttributes(dimH), "hidden attributes in the dimension");
+            Check.Equal("__XL_RowNumber,B,C", HiddenAttributes(cubeH, "T_"), "hidden attributes in the cube");
+            Check.Equal("__XL_RowNumber", HiddenAttributes(dimV), "nothing else hidden by default (dimension)");
+            Check.Equal("__XL_RowNumber", HiddenAttributes(cubeV, "T_"), "nothing else hidden by default (cube)");
+            Check.True(namesH.SequenceEqual(namesV), "hiding adds, removes or renames no file");
+        }
+
+        // The columns Matthew hid in Excel for H1_hidden_columns.xlsx: keys, hierarchy levels and sort columns. In the model they stay
+        // usable (relationships, hierarchies, sorting), only the attribute hierarchies are marked invisible.
+        public static void HiddenColumnsKeysAndLevels()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64) { IsHidden = true },
+                new ColumnDefinition("Category", ColumnDataType.String) { SortByColumn = "CategoryOrder", IsHidden = true },
+                new ColumnDefinition("CategoryOrder", ColumnDataType.Int64) { IsHidden = true },
+                new ColumnDefinition("Product", ColumnDataType.String) { IsHidden = true },
+            });
+            products.AddRow(1, "Bikes", 1, "Road"); products.AddRow(2, "Clothing", 2, "Jersey");
+            var sales = model.CreateTable("Sales", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64) { IsHidden = true },
+                new ColumnDefinition("Qty", ColumnDataType.Int64),
+            });
+            sales.AddRow(1, 3); sales.AddRow(2, 4);
+            model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+            model.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
+            model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);   // saves: hidden keys still pass the relationship checks, hidden levels the hierarchy and sort checks
+            var m = ModelReader.Read(ms.ToArray());
+            string pDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Products_G\.5\.dim\.xml$"));
+            string sDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$"));
+            string cube = Encoding.UTF8.GetString(m.Find(@"Model\.18\.cub\.xml$"));
+            Check.Equal("__XL_RowNumber,ProductKey,Category,CategoryOrder,Product", HiddenAttributes(pDim), "Products attributes hidden");
+            Check.Equal("__XL_RowNumber,ProductKey", HiddenAttributes(sDim), "Sales attributes hidden");
+            Check.Equal("__XL_RowNumber,ProductKey,Category,CategoryOrder,Product", HiddenAttributes(cube, "Products_"), "Products hidden in the cube");
+            Check.Equal("__XL_RowNumber,ProductKey", HiddenAttributes(cube, "Sales_"), "Sales hidden in the cube");
+            Check.True(pDim.Contains("<Hierarchy><Name>Product Hierarchy</Name>") && cube.Contains("<HierarchyID>Product Hierarchy</HierarchyID><Enabled>true</Enabled><Visible>true</Visible>"), "the hierarchy stays visible");
+            Check.True(pDim.Contains("<OrderByAttributeID>CategoryOrder</OrderByAttributeID>"), "sort by a hidden column still works");
+            Check.True(sDim.Contains("<ddl300_300:Relationship>"), "relationship on a hidden key");
         }
 
         public static void DateTableFlags()
