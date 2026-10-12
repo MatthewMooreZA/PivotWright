@@ -15,7 +15,7 @@ Normative sources: [MS-XLDM] (Spreadsheet Data Model file format), [MS-XCA] (Xpr
 
 `PivotWright` is a pure-managed .NET 8 library that writes `.xlsx` workbooks containing a Power Pivot data model (`xl/model/item.data`, an Analysis Services backup "ABF" holding VertiPaq files) with no Excel, SSAS or COM at write time. Input is an `IDataReader`, `DataTable`, objects or rows. Long-term aim: an Excel report modeller/writer. The model is the first layer.
 
-Supported and verified in Excel: tables, six data types, relationships (many-to-one), measures, user hierarchies, Sort by Column. Backlog: hidden columns (implemented, not verified as a feature), date tables, perspectives, calculated columns, KPIs, refresh with a real data source.
+Supported and verified in Excel: tables, six data types, relationships (many-to-one), measures, user hierarchies, Sort by Column, hidden columns, date tables (marking an existing table and the generated `AddDateTable`). Backlog: calculated columns (next), KPIs, perspectives, refresh with a real data source.
 
 ## 2. Public API (all in namespace `PivotWright`)
 
