@@ -46,6 +46,7 @@ var tests = new (string Name, Action Body)[]
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
+    ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -711,7 +712,7 @@ namespace PivotWright.Tests
             Check.Equal(366L, dates.RowCount, "leap year has 366 rows");
             Check.Equal("Dates", model.DateTableName, "marked by default");
             Check.Equal(1, model.HierarchyCount, "Calendar hierarchy");
-            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", dates.Columns.Select(c => c.Name)), "columns");
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", dates.Columns.Select(c => c.Name)), "columns");
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
             sales.AddRow(new DateTime(2024, 3, 5), 1);
             model.AddRelationship("Sales", "Date", "Dates", "Date");
@@ -720,7 +721,7 @@ namespace PivotWright.Tests
             var m = ModelReader.Read(ms.ToArray());
             string dim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
             Check.True(dim.Contains("<Type>Time</Type>"), "dimension type Time");
-            Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "Quarter, Month and DayOfWeek are sorted by their numbers");
+            Check.Equal(4, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "Quarter, Month, YearMonth and DayOfWeek are sorted by their numbers");
             Check.True(dim.Contains("<Level><Name>Quarter</Name>") && dim.Contains("<Hierarchy><Name>Calendar</Name>"), "hierarchy levels");
 
             void Rejects<T>(Action a, string what) where T : Exception
@@ -769,7 +770,7 @@ namespace PivotWright.Tests
         public static void FiscalHierarchyOrder()
         {
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 2);
+            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 2, completeYears: false);
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2025, 1, 1));
             model.AddRelationship("Sales", "Date", "Dates", "Date");
@@ -788,7 +789,7 @@ namespace PivotWright.Tests
             string Types(DateOnly from, DateOnly to, int yearEnd)
             {
                 using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-                model.AddDateTable("Dates", from, to, yearEnd);
+                model.AddDateTable("Dates", from, to, yearEnd, completeYears: false);
                 var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
                 sales.AddRow(from);
                 model.AddRelationship("Sales", "Date", "Dates", "Date");
@@ -819,7 +820,7 @@ namespace PivotWright.Tests
 
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
             var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 6);
-            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
             Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
@@ -828,11 +829,11 @@ namespace PivotWright.Tests
             var ms = new MemoryStream();
             model.SaveModelPart(ms);   // sort-by columns validate that each name maps to one number
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
-            Check.Equal(5, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "five sorted columns");
+            Check.Equal(6, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "six sorted columns");
             Check.True(dim.Contains("<Hierarchy><Name>Fiscal Calendar</Name>"), "fiscal hierarchy");
 
             using var dec = new DataModelWriter(new DataModelOptions { XpressCompression = false });
-            Check.Equal(9, dec.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
+            Check.Equal(11, dec.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
             Check.Equal(1, dec.HierarchyCount, "only Calendar");
             using var bad = new DataModelWriter();
             try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 13); throw new Exception("Expected ArgumentOutOfRangeException"); }
@@ -842,11 +843,49 @@ namespace PivotWright.Tests
             Check.Equal(0, bad.TableNames.Count(), "invalid month adds no table");
         }
 
+        public static void DateTableFlags()
+        {
+            (DateOnly, DateOnly) C(DateOnly f, DateOnly t, int ye) => DataModelWriter.CompleteYears(f, t, ye);
+            Check.Equal((new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31)), C(new DateOnly(2025, 3, 15), new DateOnly(2025, 9, 10), 12), "calendar year");
+            Check.Equal((new DateOnly(2023, 7, 1), new DateOnly(2026, 6, 30)), C(new DateOnly(2024, 2, 1), new DateOnly(2025, 9, 10), 6), "June year end");
+            Check.Equal((new DateOnly(2024, 3, 1), new DateOnly(2026, 2, 28)), C(new DateOnly(2025, 1, 15), new DateOnly(2025, 12, 31), 2), "February year end");
+            Check.Equal((new DateOnly(2022, 3, 1), new DateOnly(2024, 2, 29)), C(new DateOnly(2022, 3, 1), new DateOnly(2023, 6, 1), 2), "ends on 29 February of a leap year");
+            Check.Equal((new DateOnly(2024, 2, 1), new DateOnly(2025, 1, 31)), C(new DateOnly(2024, 2, 1), new DateOnly(2025, 1, 31), 1), "January year end, already whole");
+
+            // completeYears
+            Check.Equal(365L, new DataModelWriter().AddDateTable("A", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16)).RowCount, "extended to 2025 by default");
+            Check.Equal(2L, new DataModelWriter().AddDateTable("B", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16), completeYears: false).RowCount, "exact range when off");
+            Check.Equal(366L, new DataModelWriter().AddDateTable("C", new DateOnly(2024, 2, 1), new DateOnly(2024, 2, 2), 6).RowCount, "July 2023 to June 2024 (leap)");
+
+            // includeYearMonth and hideSortColumns: each flag on its own
+            string[] Names(TableWriter t, bool hidden) => t.Columns.Where(c => c.IsHidden == hidden).Select(c => c.Name).ToArray();
+            var range = (new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31));
+            var all = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, 6);
+            Check.Equal("QuarterNumber,MonthNumber,YearMonthNumber,DayOfWeekNumber,FiscalQuarterNumber,FiscalMonthNumber", string.Join(",", Names(all, true)), "defaults hide the sort keys");
+            Check.True(all.Columns.Any(c => c.Name == "YearMonth"), "YearMonth by default");
+            var noHide = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, 6, hideSortColumns: false);
+            Check.Equal(0, noHide.Columns.Count(c => c.IsHidden), "nothing hidden when off");
+            var noYm = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, includeYearMonth: false);
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", noYm.Columns.Select(c => c.Name)), "no YearMonth when off");
+            Check.Equal("QuarterNumber,MonthNumber,DayOfWeekNumber", string.Join(",", Names(noYm, true)), "hidden without YearMonth");
+
+            // The hidden attributes reach the dimension, and the model saves (every YearMonth label maps to one number across years).
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            model.AddDateTable("Dates", range.Item1, range.Item2, 6);
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2024, 1, 1));
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.Equal(1 + 6, System.Text.RegularExpressions.Regex.Matches(dim, "<AttributeHierarchyVisible>false</AttributeHierarchyVisible>").Count, "row number plus six hidden attributes");
+        }
+
         public static void DateTableYearLabel()
         {
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
             var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 6, yearLabel: "Financial");
-            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek,FinancialYear,FinancialQuarterNumber,FinancialQuarter,FinancialMonthNumber,FinancialMonth",
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FinancialYear,FinancialQuarterNumber,FinancialQuarter,FinancialMonthNumber,FinancialMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns use the label");
             Check.True(dates.Columns.Single(c => c.Name == "FinancialQuarter").SortByColumn == "FinancialQuarterNumber", "sort-by follows the label");
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
