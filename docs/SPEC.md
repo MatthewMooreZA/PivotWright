@@ -133,6 +133,10 @@ Counter deltas Excel wrote for the same ten hides (Dates: Date, Year, Month, Mon
 
 The ObjectVersion deltas are the same in both samples; the StructureVersion deltas differ, so they depend on the history of operations. Products gets one more than its four hidden columns, which is unexplained. A per-operation rule needs smaller samples (HANDOFF).
 
+**Single-operation samples (received 2026-10-12)**, relative to V2b: `H8_hide_one_column.xlsx` (Sales[Qty], a plain column) and `H9_hide_one_hierarchy_level.xlsx` (Products[Product]). Both: cube 18 to 21 (structure 11 to 12), every measure group 18 to 20 (structure unchanged), script and partitions unchanged, no tbl.xml or data file renamed, only the attribute visibility in the dimension and the cube changed. Dimension of the table with the hidden column: Sales (not in a hierarchy) 3 to 4 with `info.4.xml`; Products (holds a hierarchy) 5 to 7. In H8 Products' dimension also went 5 to 6 although only Sales was touched (Dates did not move); unexplained, not reproduced. Ten hides in `H1` were not ten times this (measure groups +6, cube +16), so the counters follow Excel's save sequence, not the number of columns.
+
+Implementation (`ModelInfo.HiddenProfile`: hidden columns in a model with hierarchies and no date table): the state after one hide operation; measure groups get their own version (`MeasureGroupVersion` 20, the cube 21 and cube structure 12); the dimension of each table with hidden columns +1, or +2 when it holds a hierarchy. Reproduces `H9` exactly and `H8` apart from the unexplained Products bump. First Excel test of the profile: `hidden_h1equiv_v2_counters.xlsx`.
+
 ## 9. Date table, marking an existing table (observed in `H2_date_table.xlsx`; implemented, **not yet tested as a generated file in Excel**)
 
 Marking `Dates[Date]` as the date table, compared with `V2b_pivotwright_hierarchies_verified.xlsx`:

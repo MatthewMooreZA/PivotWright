@@ -49,6 +49,7 @@ var tests = new (string Name, Action Body)[]
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
     ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
     ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
+    ("Hidden columns: counters after a hide operation (H8, H9)", Tests.HiddenColumnsProfile),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -912,9 +913,9 @@ namespace PivotWright.Tests
             var ms = new MemoryStream();
             model.SaveModelPart(ms);   // saves: hidden keys still pass the relationship checks, hidden levels the hierarchy and sort checks
             var m = ModelReader.Read(ms.ToArray());
-            string pDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Products_G\.5\.dim\.xml$"));
-            string sDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$"));
-            string cube = Encoding.UTF8.GetString(m.Find(@"Model\.18\.cub\.xml$"));
+            string pDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$"));
+            string sDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Sales_G\.4\.dim\.xml$"));
+            string cube = Encoding.UTF8.GetString(m.Find(@"Model\.21\.cub\.xml$"));
             Check.Equal("__XL_RowNumber,ProductKey,Category,CategoryOrder,Product", HiddenAttributes(pDim), "Products attributes hidden");
             Check.Equal("__XL_RowNumber,ProductKey", HiddenAttributes(sDim), "Sales attributes hidden");
             Check.Equal("__XL_RowNumber,ProductKey,Category,CategoryOrder,Product", HiddenAttributes(cube, "Products_"), "Products hidden in the cube");
@@ -922,6 +923,51 @@ namespace PivotWright.Tests
             Check.True(pDim.Contains("<Hierarchy><Name>Product Hierarchy</Name>") && cube.Contains("<HierarchyID>Product Hierarchy</HierarchyID><Enabled>true</Enabled><Visible>true</Visible>"), "the hierarchy stays visible");
             Check.True(pDim.Contains("<OrderByAttributeID>CategoryOrder</OrderByAttributeID>"), "sort by a hidden column still works");
             Check.True(sDim.Contains("<ddl300_300:Relationship>"), "relationship on a hidden key");
+        }
+
+        // After a hide operation Excel advances the counters (H8_hide_one_column.xlsx, H9_hide_one_hierarchy_level.xlsx):
+        // cube +3 (structure +1), measure groups +2, the dimension of a table with hidden columns +1, or +2 if it holds a hierarchy.
+        // Without them Excel loaded such a model but failed every later edit in ASDetail::OnClone2.
+        public static void HiddenColumnsProfile()
+        {
+            ModelReader Save(bool hide, bool hierarchy, bool hideLevel = false)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[]
+                {
+                    new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                    new ColumnDefinition("Category", ColumnDataType.String),
+                    new ColumnDefinition("Product", ColumnDataType.String) { IsHidden = hide && hideLevel },
+                });
+                products.AddRow(1, "Bikes", "Road"); products.AddRow(2, "Clothing", "Jersey");
+                var sales = model.CreateTable("Sales", new[]
+                {
+                    new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                    new ColumnDefinition("Qty", ColumnDataType.Int64) { IsHidden = hide && !hideLevel },
+                });
+                sales.AddRow(1, 3); sales.AddRow(2, 4);
+                model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+                if (hierarchy) model.AddHierarchy("Products", "Browse", "Category", "Product");
+                model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                return ModelReader.Read(ms.ToArray());
+            }
+            // One hidden plain column (H8): Sales dimension 3 -> 4 (info file follows), cube 21, measure groups 20, cube structure 12.
+            var plain = Save(hide: true, hierarchy: true);
+            plain.Find(@"Sales_G\.0\.dim\\info\.4\.xml$");
+            plain.Find(@"\.0\.db\\Sales_G\.4\.dim\.xml$");
+            plain.Find(@"\.0\.db\\Products_G\.5\.dim\.xml$");   // no hidden column there
+            Check.True(Encoding.UTF8.GetString(plain.Find(@"Model\.21\.cub\.xml$")).Contains("<StructureVersion>12</StructureVersion>"), "cube structure 12");
+            plain.Find(@"Sales_G\.20\.det\.xml$"); plain.Find(@"Products_G\.20\.det\.xml$");
+            Check.True(Encoding.UTF8.GetString(plain.Find(@"Model\.21\.cub\.xml$")).Contains("Sales_") && Encoding.UTF8.GetString(plain.Find(@"Model\.21\.cub\.xml$")).Contains(".20.det.xml"), "cube lists the .20. measure groups");
+            // One hidden hierarchy level (H9): Products dimension 5 -> 7, no info file for a table with a hierarchy.
+            var level = Save(hide: true, hierarchy: true, hideLevel: true);
+            level.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$");
+            level.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$");
+            // Nothing hidden, or no hierarchy: the earlier profiles are unchanged.
+            Save(hide: false, hierarchy: true).Find(@"Model\.18\.cub\.xml$");
+            Save(hide: true, hierarchy: false).Find(@"Model\.1\.cub\.xml$");
         }
 
         public static void DateTableFlags()

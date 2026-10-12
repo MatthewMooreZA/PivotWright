@@ -36,12 +36,24 @@ internal sealed class ModelInfo
     public IReadOnlySet<string> DateReferencingTables { get; init; } = new HashSet<string>();
     public bool AnyDate => DateTables.Count > 0;
 
+    /// <summary>Ids of the tables with at least one column hidden from client tools.</summary>
+    public IReadOnlySet<string> HiddenTables { get; init; } = new HashSet<string>();
+    /// <summary>
+    /// Models with hierarchies and hidden columns are written the way Excel saves them right after a hide operation
+    /// (H8_hide_one_column.xlsx, H9_hide_one_hierarchy_level.xlsx; SPEC section 8). Without these counters Excel loaded and displayed
+    /// such a model but failed every later edit in ASDetail::OnClone2. Not used together with a date table (verified without).
+    /// </summary>
+    public bool HiddenProfile => HiddenTables.Count > 0 && AnyHierarchy && !AnyDate;
+
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => AnyDate ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
+    public int CubeVersion => AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
+    /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
+    public int MeasureGroupVersion => HiddenProfile ? 20 : CubeVersion;
     public int ScriptVersion => AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion;
     public int PartitionVersion => AnyDate ? 10 : AnyHierarchy ? 9 : 1;
     public int DimensionVersion(string tableId, bool manySide) =>
-        (HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1) + (AnyDate ? 1 : 0);
+        (HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1) + (AnyDate ? 1 : 0)
+        + (HiddenProfile && HiddenTables.Contains(tableId) ? (HierarchyTables.Contains(tableId) ? 2 : 1) : 0);
     /// <summary>Version of a table's .tbl.xml: 2 when it holds hierarchies, plus 1 for a date table or a table related to one.</summary>
     public int TableVersion(string tableId) =>
         (HierarchyTables.Contains(tableId) ? FileNames.HierarchyVersion : 0) + (DateTables.Contains(tableId) || DateReferencingTables.Contains(tableId) ? 1 : 0);
@@ -397,9 +409,9 @@ internal static class AsslWriter
             }
             sb.Append("</Dimension>");
         }
-        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.AnyDate ? 12 : m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
+        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.Created)).Append("</LastUpdate>");
-        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", tables.Select(t => t.Id + "." + m.CubeVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
+        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", tables.Select(t => t.Id + "." + m.MeasureGroupVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append("<PerspectiveFileList/><AssemblyFileList>MdxScript." + m.ScriptVersion + ".scr.xml</AssemblyFileList><PermissionFileList/></Cube></ObjectDefinition></Load>");
         return sb.ToString();
     }
@@ -483,7 +495,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MeasureGroup>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, m.CubeVersion, ids.MeasureGroupObjectId, m.AnyDate ? ids.Ordinal : 0);
+        CommonHeader(sb, t.Name, t.Id, m.Created, m.MeasureGroupVersion, ids.MeasureGroupObjectId, m.AnyDate ? ids.Ordinal : 0);
         sb.Append("<DataFileList/><Description/><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Regular</Type><DataAggregation>DataAndCacheAggregatable</DataAggregation><AggregationPrefix/>");
         sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><ProcessingPriority>0</ProcessingPriority><StorageLocation/>");

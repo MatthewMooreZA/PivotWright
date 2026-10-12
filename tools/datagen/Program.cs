@@ -1,9 +1,15 @@
 using PivotWright;
 string dir = args[0];
-// "hidden" mode hides the columns Matthew hid in Excel to make H1_hidden_columns.xlsx.
-bool hideH1 = args.Length > 2 && args[2] == "hidden";
-var h1Hidden = new HashSet<string> { "Dates.Date", "Dates.Year", "Dates.Month", "Dates.MonthNumber", "Products.ProductKey", "Products.Category", "Products.CategoryOrder", "Products.Product", "Sales.ProductKey", "Sales.Date" };
-ColumnDefinition Col(string table, string name, ColumnDataType type, string? sortBy = null) => new(name, type) { SortByColumn = sortBy, IsHidden = hideH1 && h1Hidden.Contains(table + "." + name) };
+// Modes that hide the columns of Excel's samples: "hidden" = H1_hidden_columns.xlsx (ten columns), "h8" = H8_hide_one_column.xlsx
+// (Sales.Qty), "h9" = H9_hide_one_hierarchy_level.xlsx (Products.Product).
+var hiddenSet = (args.Length > 2 ? args[2] : "") switch
+{
+    "hidden" => new HashSet<string> { "Dates.Date", "Dates.Year", "Dates.Month", "Dates.MonthNumber", "Products.ProductKey", "Products.Category", "Products.CategoryOrder", "Products.Product", "Sales.ProductKey", "Sales.Date" },
+    "h8" => new HashSet<string> { "Sales.Qty" },
+    "h9" => new HashSet<string> { "Products.Product" },
+    _ => new HashSet<string>(),
+};
+ColumnDefinition Col(string table, string name, ColumnDataType type, string? sortBy = null) => new(name, type) { SortByColumn = sortBy, IsHidden = hiddenSet.Contains(table + "." + name) };
 using var m = new DataModelWriter(new DataModelOptions { Lcid = 7177 });
 var p = m.CreateTable("Products", new[] { Col("Products", "ProductKey", ColumnDataType.Int64), Col("Products", "Category", ColumnDataType.String, "CategoryOrder"), Col("Products", "CategoryOrder", ColumnDataType.Int64), Col("Products", "Product", ColumnDataType.String) });
 string[] cats = { "Bikes", "Clothing", "Accessories" };

@@ -101,6 +101,7 @@ internal sealed class ModelSerializer
             TableIds = tableIds,
             HierarchyTables = _hierarchies.Select(h => h.Table.Id).ToHashSet(),
             DateTables = _tables.Where(t => t.DateColumn is not null).Select(t => t.Id).ToHashSet(),
+            HiddenTables = _tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden)).Select(t => t.Id).ToHashSet(),
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
         };
 
@@ -162,8 +163,8 @@ internal sealed class ModelSerializer
         {
             var ids = tableIds[t.Id];
             string detFolder = cubeFolder + "\\" + t.Id + ".0.det";
-            var mg = Group(BackupLog.ClassMeasureGroup, t.Id, t.Name, Info.CubeVersion, detFolder, ids.MeasureGroupObjectId);
-            AddText(mg, cubeFolder + "\\" + t.Id + "." + Info.CubeVersion + ".det.xml", AsslWriter.MeasureGroup(Info, t, encodedById));
+            var mg = Group(BackupLog.ClassMeasureGroup, t.Id, t.Name, Info.MeasureGroupVersion, detFolder, ids.MeasureGroupObjectId);
+            AddText(mg, cubeFolder + "\\" + t.Id + "." + Info.MeasureGroupVersion + ".det.xml", AsslWriter.MeasureGroup(Info, t, encodedById));
             string prtFolder = detFolder + "\\" + t.Id + ".0.prt";
             var prt = Group(BackupLog.ClassPartition, t.Id, t.Name, Info.PartitionVersion, prtFolder, ids.PartitionObjectId);
             AddText(prt, detFolder + "\\" + t.Id + "." + Info.PartitionVersion + ".prt.xml", partitionXml[t.Id]);
