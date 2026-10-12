@@ -44,6 +44,7 @@ var tests = new (string Name, Action Body)[]
     ("AddDateTable generates a standard calendar and marks it", Tests.GeneratedDateTable),
     ("AddDateTable: fiscal year end other than December", Tests.FiscalDateTable),
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
+    ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -777,6 +778,29 @@ namespace PivotWright.Tests
             var ids = DecodeTree(m, "Dates", "Fiscal Calendar", "MULTI_LEVEL_ID", 0);
             // Level 0: two years (2 nodes). Level 1: Q4 of 2025, then Q1..Q4 of 2026. Quarter ids by first appearance: Q4=3, Q1=4, Q2=5, Q3=6.
             Check.Equal("3,4,5,6,3", string.Join(",", ids.Skip(2).Take(5)), "quarter nodes: 2025 Q4, then 2026 Q1, Q2, Q3, Q4");
+        }
+
+        // Excel writes StructureType Unnatural when a level member has more than one parent (H5_sort_reapplied.xlsx: Q4 under
+        // FiscalYear 2025 and 2026) and Natural otherwise; with Natural, Excel's pivot ignored the sort order of such levels.
+        public static void HierarchyStructureType()
+        {
+            string Types(DateOnly from, DateOnly to, int yearEnd)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+                model.AddDateTable("Dates", from, to, yearEnd);
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+                sales.AddRow(from);
+                model.AddRelationship("Sales", "Date", "Dates", "Date");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+                var found = System.Text.RegularExpressions.Regex.Matches(dim, @"<Hierarchy><Name>([^<]+)</Name>.*?<ddl300:StructureType>(\w+)</ddl300:StructureType>");
+                return string.Join(",", found.Select(m => m.Groups[1].Value + "=" + m.Groups[2].Value));
+            }
+            Check.Equal("Calendar=Natural", Types(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), 12), "one calendar year, December year end");
+            Check.Equal("Calendar=Unnatural", Types(new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), 12), "Q1 under two years");
+            Check.Equal("Calendar=Natural,Fiscal Calendar=Unnatural", Types(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), 2), "Q4 under FiscalYear 2025 and 2026");
+            Check.Equal("Calendar=Unnatural,Fiscal Calendar=Natural", Types(new DateOnly(2025, 3, 1), new DateOnly(2026, 2, 28), 2), "one whole fiscal year spans two calendar years: Q1 under 2025 and 2026, but one FiscalYear");
         }
 
         public static void FiscalDateTable()

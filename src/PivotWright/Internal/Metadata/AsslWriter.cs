@@ -300,7 +300,7 @@ internal static class AsslWriter
             foreach (var h in t.Hierarchies)
             {
                 sb.Append("<Hierarchy><Name>").Append(E(h.Name)).Append("</Name><ID>").Append(E(h.Name)).Append("</ID><Description/>")
-                  .Append("<ddl300:ProcessingState>Processed</ddl300:ProcessingState><ddl300:StructureType>Natural</ddl300:StructureType><ddl300:RaggedHoleState>None</ddl300:RaggedHoleState>")
+                  .Append("<ddl300:ProcessingState>Processed</ddl300:ProcessingState><ddl300:StructureType>").Append(h.Natural ? "Natural" : "Unnatural").Append("</ddl300:StructureType><ddl300:RaggedHoleState>None</ddl300:RaggedHoleState>")
                   .Append("<DisplayFolder/><AllMemberName/><MemberNamesUnique>false</MemberNamesUnique><AllowDuplicateNames>true</AllowDuplicateNames><ddl2:MemberKeysUnique>NotUnique</ddl2:MemberKeysUnique>")
                   .Append("<AllMemberTranslations/><Translations/><Levels>");
                 foreach (var lc in h.Levels)

@@ -22,6 +22,11 @@ internal sealed class EncodedHierarchy
     /// <summary>Position of the first node of every level in the tree.</summary>
     public required IReadOnlyList<long> LevelStarts { get; init; }
     public required long Records { get; init; }
+    /// <summary>
+    /// True when every member of a level has exactly one parent (a Product belongs to one Category). Excel writes
+    /// StructureType Unnatural otherwise, for example for Quarter Q4 under two years (SPEC section 7).
+    /// </summary>
+    public bool Natural { get; init; } = true;
 
     public static readonly string[] ColumnNames = { "MULTI_LEVEL_ID", "PARENT_POS", "FIRST_CHILD_POS", "CHILD_COUNT" };
 }
@@ -59,16 +64,22 @@ internal static class HierarchyEncoder
         var nodeParent = new List<int>[levels];
         for (int l = 0; l < levels; l++) { nodeOf[l] = new(); nodeId[l] = new(); nodeParent[l] = new(); }
         var iters = def.Columns.Select(c => c.Keys().GetEnumerator()).ToArray();
+        var firstParentId = new Dictionary<uint, uint>[levels];
+        for (int l = 0; l < levels; l++) firstParentId[l] = new();
+        bool natural = true;
         try
         {
             for (long row = 0; row < def.Table.Rows; row++)
             {
                 int parent = -1;
+                uint parentId = DataIds.Null;
                 for (int l = 0; l < levels; l++)
                 {
                     if (!iters[l].MoveNext()) throw new InvalidOperationException("A hierarchy column has fewer rows than the table.");
                     object? key = iters[l].Current;
                     uint id = key is null ? DataIds.Null : keyToId[l][key];
+                    if (l > 0 && natural && !firstParentId[l].TryAdd(id, parentId) && firstParentId[l][id] != parentId) natural = false;
+                    parentId = id;
                     ulong k = ((ulong)(uint)(parent + 1) << 32) | id;
                     if (!nodeOf[l].TryGetValue(k, out int idx))
                     {
@@ -136,6 +147,7 @@ internal static class HierarchyEncoder
             Levels = encodedLevels,
             LevelStarts = starts.Take(levels).ToArray(),
             Records = total,
+            Natural = natural,
         };
 
         void WriteColumn(string name, uint[] values, uint min)

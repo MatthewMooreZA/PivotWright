@@ -10,3 +10,4 @@ All files were saved by desktop Excel 365 (Windows, en-ZA) from models first gen
 | `H1_hidden_columns.xlsx` | V2b with columns hidden from client tools in Excel |
 | `H2_date_table.xlsx` | V2b with Dates marked as a date table |
 | `H3_date_table_and_hidden.xlsx` | both |
+| `H5_sort_reapplied.xlsx` | `datetbl_gen_ye2_v1` (February year end) after Sort by Column was re-applied to FiscalQuarter in Excel: shows StructureType Unnatural for the Fiscal Calendar hierarchy (SPEC §7) |
