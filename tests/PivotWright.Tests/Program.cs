@@ -965,6 +965,18 @@ namespace PivotWright.Tests
             var level = Save(hide: true, hierarchy: true, hideLevel: true);
             level.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$");
             level.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$");
+            // Timestamps as in H9: only the edited dimension and the cube are stamped after their creation, the cube's LastUpdate a bit later.
+            string Stamp(string xml, string tag) => System.Text.RegularExpressions.Regex.Match(xml, "<" + tag + ">([^<]*)</" + tag + ">").Groups[1].Value;
+            string pDim = Encoding.UTF8.GetString(level.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$"));
+            string sDim = Encoding.UTF8.GetString(level.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$"));
+            string cubeXml = Encoding.UTF8.GetString(level.Find(@"Model\.21\.cub\.xml$"));
+            string detXml = Encoding.UTF8.GetString(level.Find(@"Products_G\.20\.det\.xml$"));
+            Check.True(string.CompareOrdinal(Stamp(pDim, "LastSchemaUpdate"), Stamp(pDim, "CreatedTimestamp")) > 0, "edited dimension stamped after creation");
+            Check.Equal(Stamp(sDim, "CreatedTimestamp"), Stamp(sDim, "LastSchemaUpdate"), "untouched dimension keeps its creation time");
+            Check.Equal(Stamp(detXml, "CreatedTimestamp"), Stamp(detXml, "LastSchemaUpdate"), "measure groups are not stamped");
+            Check.Equal(Stamp(pDim, "LastSchemaUpdate"), Stamp(cubeXml, "LastSchemaUpdate"), "cube stamped with the edit time");
+            Check.True(string.CompareOrdinal(Stamp(cubeXml, "LastUpdate"), Stamp(cubeXml, "LastSchemaUpdate")) > 0, "cube LastUpdate after LastSchemaUpdate");
+            Check.Equal(Stamp(pDim, "CreatedTimestamp"), Stamp(pDim, "LastProcessed"), "processed at creation");
             // Nothing hidden, or no hierarchy: the earlier profiles are unchanged.
             Save(hide: false, hierarchy: true).Find(@"Model\.18\.cub\.xml$");
             Save(hide: true, hierarchy: false).Find(@"Model\.1\.cub\.xml$");

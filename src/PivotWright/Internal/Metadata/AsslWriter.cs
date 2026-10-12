@@ -44,6 +44,11 @@ internal sealed class ModelInfo
     /// such a model but failed every later edit in ASDetail::OnClone2. Not used together with a date table (verified without).
     /// </summary>
     public bool HiddenProfile => HiddenTables.Count > 0 && AnyHierarchy && !AnyDate;
+    /// <summary>
+    /// When the hide operation happened, in the hidden profile: Excel keeps CreatedTimestamp at the original creation and stamps the
+    /// edited dimensions and the cube with the edit time in LastSchemaUpdate (the cube's LastUpdate a fraction later), as in H8 and H9.
+    /// </summary>
+    public DateTime EditedAt { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
     public int CubeVersion => AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
@@ -101,11 +106,11 @@ internal static class AsslWriter
     /// </summary>
     internal const int CubeObjectVersion = 1;
 
-    private static void CommonHeader(StringBuilder sb, string name, string id, DateTime created, int objectVersion, string objectId, int ordinal = 0)
+    private static void CommonHeader(StringBuilder sb, string name, string id, DateTime created, int objectVersion, string objectId, int ordinal = 0, DateTime? schemaUpdated = null)
     {
         sb.Append("<Name>").Append(E(name)).Append("</Name><ID>").Append(E(id)).Append("</ID>");
         sb.Append("<CreatedTimestamp>").Append(T(created)).Append("</CreatedTimestamp>");
-        sb.Append("<LastSchemaUpdate>").Append(T(created)).Append("</LastSchemaUpdate>");
+        sb.Append("<LastSchemaUpdate>").Append(T(schemaUpdated ?? created)).Append("</LastSchemaUpdate>");
         sb.Append("<ObjectVersion>").Append(objectVersion).Append("</ObjectVersion>");
         sb.Append("<ObjectID>").Append(objectId).Append("</ObjectID>");
         sb.Append("<Ordinal>").Append(ordinal).Append("</Ordinal><PersistLocation>0</PersistLocation><System>false</System>");
@@ -245,7 +250,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID></ParentObject>");
         sb.Append("<ObjectDefinition><Dimension>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, version, ids.DimensionObjectId);
+        CommonHeader(sb, t.Name, t.Id, m.Created, version, ids.DimensionObjectId, schemaUpdated: m.HiddenProfile && m.HiddenTables.Contains(t.Id) ? m.EditedAt : null);
         sb.Append("<DataFileList>").Append(E(string.Join(";", dataFiles))).Append("</DataFileList><Description/>");
         sb.Append("<Annotations").Append(NsB).Append('>').Append(TableAnnotations).Append("</Annotations>");
         sb.Append("<LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
@@ -379,7 +384,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID></ParentObject>");
         sb.Append("<ObjectDefinition><Cube>");
-        CommonHeader(sb, "Model", "Model", m.Created, m.CubeVersion, m.CubeObjectId);
+        CommonHeader(sb, "Model", "Model", m.Created, m.CubeVersion, m.CubeObjectId, schemaUpdated: m.HiddenProfile ? m.EditedAt : null);
         sb.Append("<DataFileList/><Description/>");
         sb.Append("<Annotations").Append(NsA).Append(">\n            <Annotation>\n              <Name>DefaultMeasure</Name>\n              <Value>").Append(hasMeasures ? DefaultMemberName : "__No measures defined").Append("</Value>\n            </Annotation>\n          </Annotations>");
         sb.Append("<LastProcessed>1699-12-31T00:00:00</LastProcessed><Language>").Append(m.Lcid).Append("</Language><Collation/><DefaultMeasure/><Visible>true</Visible><AggregationPrefix/>");
@@ -410,7 +415,7 @@ internal static class AsslWriter
             sb.Append("</Dimension>");
         }
         sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
-        sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.Created)).Append("</LastUpdate>");
+        sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.HiddenProfile ? m.EditedAt.AddMilliseconds(200) : m.Created)).Append("</LastUpdate>");
         sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", tables.Select(t => t.Id + "." + m.MeasureGroupVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append("<PerspectiveFileList/><AssemblyFileList>MdxScript." + m.ScriptVersion + ".scr.xml</AssemblyFileList><PermissionFileList/></Cube></ObjectDefinition></Load>");
         return sb.ToString();

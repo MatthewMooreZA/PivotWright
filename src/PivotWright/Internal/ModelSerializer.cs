@@ -80,6 +80,10 @@ internal sealed class ModelSerializer
         foreach (var t in _tables)
             tableIds[t.Id] = new TableIds { DimensionObjectId = Xml.Guid(), MeasureGroupObjectId = Xml.Guid(), PartitionObjectId = Xml.Guid(), Ordinal = tableIds.Count + 1 };
 
+        var hiddenTables = _tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden)).Select(t => t.Id).ToHashSet();
+        bool hiddenProfile = hiddenTables.Count > 0 && _hierarchies.Count > 0 && !_tables.Any(t => t.DateColumn is not null);
+        // In the hidden profile the model looks like one that was created a little earlier and edited just now (see ModelInfo.EditedAt).
+        var created = hiddenProfile ? now.AddMinutes(-1) : now;
         Info = new ModelInfo
         {
             DatabaseId = dbId,
@@ -93,15 +97,16 @@ internal sealed class ModelSerializer
             Lcid = _options.Lcid,
             CultureName = string.IsNullOrEmpty(_options.Culture.Name) ? "en-US" : _options.Culture.Name,
             Culture = _options.Culture,
-            Created = now,
-            Processed = now,
+            Created = created,
+            Processed = created,
+            EditedAt = now,
             EncryptedConnectionString = crypt.Encrypt(_options.ConnectionString, ModelCryptKey.ConnectionStringFlags),
             EncryptedDatabasePassword = crypt.Encrypt(string.Empty, ModelCryptKey.DatabasePasswordFlags),
             EncryptedDataSourcePassword = crypt.Encrypt(string.Empty, ModelCryptKey.EmptyPasswordFlags),
             TableIds = tableIds,
             HierarchyTables = _hierarchies.Select(h => h.Table.Id).ToHashSet(),
             DateTables = _tables.Where(t => t.DateColumn is not null).Select(t => t.Id).ToHashSet(),
-            HiddenTables = _tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden)).Select(t => t.Id).ToHashSet(),
+            HiddenTables = hiddenTables,
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
         };
 
