@@ -88,7 +88,7 @@ Three more behaviours are on by default and each has its own flag in `DateTableO
 new ColumnDefinition("MonthNumber", ColumnDataType.Int64) { IsHidden = true }
 ```
 
-A hidden column stays in the model (relationships, sorting, hierarchies and DAX can still use it) but does not appear in the PivotTable field list, the usual treatment for keys and sort-order columns. `AddDateTable` hides its sort-order columns this way. Confirmed in Excel on a model with relationships, hierarchies, sort-by columns and a date table: it loads, the fields are hidden, and adding a hierarchy or a Sort by Column afterwards works. Not tested: hiding a column that is itself a hierarchy level.
+A hidden column stays in the model (relationships, sorting, hierarchies and DAX can still use it) but does not appear in the PivotTable field list, the usual treatment for keys and sort-order columns. `AddDateTable` hides its sort-order columns this way. Confirmed in Excel: the model loads, the fields are hidden, and hierarchies, sorting and measures keep working. **Known limitation:** in a model with hierarchies, hiding keys or hierarchy levels makes Excel fail when you then edit the model in Power Pivot (adding a hierarchy, hiding another column, adding a Sort by Column: "ASDetail::OnClone2"). Hiding the sort-order columns of a generated date table (`AddDateTable`) does not have this problem. A fix is in progress.
 
 ### Sort by column
 

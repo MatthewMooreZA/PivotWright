@@ -118,6 +118,21 @@ References: Microsoft, [HierarchyStructureType enumeration](https://dotnet.terri
 
 Excel hides a column by setting `<AttributeHierarchyVisible>false</AttributeHierarchyVisible>` on its attribute in the table's dim.xml **and** in the cube's dimension attribute list (`Model.cub.xml`). No tbl.xml change. `ColumnDefinition.IsHidden` already writes both. Excel also bumps counters (cube 24, measure group structure 9) and writes a new `Sales info` file; **not needed**: `datetbl_gen_defaults_v1` (six hidden sort columns, relationships, two hierarchies, sort-by, date table, no counter bumps) loaded, hid the fields and accepted a new hierarchy and Sort by Column in Excel. Untested: a hidden column that is a hierarchy level, hidden columns in a model without hierarchies. In `H1_hidden_columns.xlsx` the user hid four attributes per table.
 
+**Test result 2026-10-12 (`hidden_h1equiv_v1.xlsx`, V2b with the same ten columns hidden as `H1`, no counter bumps): loads, columns hidden, hierarchies and sort order work, but every edit (add hierarchy, hide another column, add Sort by Column) fails with `ASDetail::OnClone2`.** Excel's `H1` and ours are identical in every ASSL file apart from counters and list order, in every `.tbl.xml` (GUIDs normalised) and in every data file, so the counters are the only candidate. (The date-table file `datetbl_gen_defaults_v1`, which hides six sort columns and carries the date-table counters, did accept edits; its hidden columns were sort-number columns only, no keys or hierarchy levels, which may or may not matter.)
+
+Counter deltas Excel wrote for the same ten hides (Dates: Date, Year, Month, MonthNumber; Products: ProductKey, Category, CategoryOrder, Product; Sales: ProductKey, Date):
+
+| Object | H1 vs hierarchy profile (V2b) | H3 vs H2 (date-table state) |
+|---|---|---|
+| dimension ObjectVersion Dates / Products / Sales | 5 to 9 / 5 to 10 / 3 to 5 (+4/+5/+2) | 6 to 10 / 6 to 11 / 4 to 6 (+4/+5/+2) |
+| measure group ObjectVersion (all three) | 18 to 24 (+6) | 21 to 27 (+6) |
+| measure group StructureVersion Dates and Products (Sales unchanged) | 8 to 9 (+1) | 9 to 11 (+2) |
+| cube ObjectVersion | 18 to 34 (+16) | 21 to 37 (+16) |
+| cube StructureVersion | 11 to 16 (+5) | 12 to 19 (+7) |
+| script, partitions, Ordinals | unchanged (9, 9, all 0) | unchanged |
+
+The ObjectVersion deltas are the same in both samples; the StructureVersion deltas differ, so they depend on the history of operations. Products gets one more than its four hidden columns, which is unexplained. A per-operation rule needs smaller samples (HANDOFF).
+
 ## 9. Date table, marking an existing table (observed in `H2_date_table.xlsx`; implemented, **not yet tested as a generated file in Excel**)
 
 Marking `Dates[Date]` as the date table, compared with `V2b_pivotwright_hierarchies_verified.xlsx`:
