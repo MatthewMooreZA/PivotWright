@@ -253,10 +253,10 @@ public sealed class DataModelWriter : IDisposable
     /// culture, sorted by MonthNumber), YearMonthNumber (202503), YearMonth ("Mar 2025", sorted by YearMonthNumber, so a month
     /// is not ambiguous across years), Day, DayOfWeekNumber (1 = Monday), DayOfWeek (name, sorted by DayOfWeekNumber).
     /// A hierarchy named "Calendar" (Year, Quarter, Month) is added.
-    /// With a <paramref name="yearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
+    /// With a <see cref="DateTableOptions.YearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
     /// the year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
     /// FiscalMonthNumber (1 = first month of that year), FiscalMonth (sorted by FiscalMonthNumber) and a hierarchy
-    /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth). <paramref name="yearLabel"/> replaces "Fiscal" in these
+    /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth). <see cref="DateTableOptions.YearLabel"/> replaces "Fiscal" in these
     /// names, for a year that is not a fiscal year (for example "Financial": FinancialYear, "Financial Calendar").
     /// Relate the table to your fact table yourself:
     /// <c>AddRelationship("Sales", "Date", name, "Date")</c>; marking as date table is only accepted when a relationship
@@ -265,23 +265,19 @@ public sealed class DataModelWriter : IDisposable
     /// <param name="name">Table name, for example Dates.</param>
     /// <param name="from">A day in the first year to include.</param>
     /// <param name="to">A day in the last year to include, not before <paramref name="from"/>.</param>
-    /// <param name="yearEndMonth">Last month of the year, 1 to 12 (12 = December, the default, where the year is the calendar year). Any other month adds the Fiscal* columns.</param>
-    /// <param name="yearLabel">Prefix of the columns and hierarchy added for a year end other than December, "Fiscal" by default. Letters and digits only, starting with a letter; not used when <paramref name="yearEndMonth"/> is 12.</param>
-    /// <param name="completeYears">Extend the range to whole years (calendar years, or years ending in <paramref name="yearEndMonth"/>), as DAX's CALENDARAUTO does and as Microsoft's date table guidance asks. Default true; false uses <paramref name="from"/> and <paramref name="to"/> as given.</param>
-    /// <param name="includeYearMonth">Add YearMonthNumber and YearMonth ("Mar 2025"), so a month can be told apart across years. Default true.</param>
-    /// <param name="hideSortColumns">Hide the number columns that only exist to sort other columns (QuarterNumber, MonthNumber, YearMonthNumber, DayOfWeekNumber and the Fiscal ones) from client tools, as is usual practice. Default true.</param>
+    /// <param name="options">Year end, labels and the optional features (whole-year range, YearMonth, hidden sort columns); defaults when null.</param>
     /// <returns>The table, which is complete; do not add rows.</returns>
-    public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, int yearEndMonth = 12, string yearLabel = "Fiscal",
-        bool completeYears = true, bool includeYearMonth = true, bool hideSortColumns = true)
+    public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, DateTableOptions? options = null)
     {
         ThrowIfDisposed();
+        options ??= new DateTableOptions();
+        int yearEndMonth = options.YearEndMonth;
+        string yearLabel = options.YearLabel;
+        bool hideSortColumns = options.HideSortColumns;
         if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
-        if (yearEndMonth is < 1 or > 12) throw new ArgumentOutOfRangeException(nameof(yearEndMonth), "The year end month must be 1 to 12.");
-        if (string.IsNullOrEmpty(yearLabel) || !char.IsLetter(yearLabel[0]) || !yearLabel.All(char.IsLetterOrDigit))
-            throw new ArgumentException("The year label must be letters and digits only, starting with a letter (for example \"Fiscal\" or \"Financial\").", nameof(yearLabel));
         if (DateTableName is { } existing)
             throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
-        if (completeYears) (from, to) = CompleteYears(from, to, yearEndMonth);
+        if (options.CompleteYears) (from, to) = CompleteYears(from, to, yearEndMonth);
         if (to.DayNumber - from.DayNumber > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
         bool fiscal = yearEndMonth != 12;
         var culture = _options.Culture;
@@ -297,7 +293,7 @@ public sealed class DataModelWriter : IDisposable
         Add("Quarter", ColumnDataType.String, d => "Q" + ((d.Month - 1) / 3 + 1), "QuarterNumber");
         Add("MonthNumber", ColumnDataType.Int64, d => (long)d.Month, sortKey: true);
         Add("Month", ColumnDataType.String, d => dtf.GetMonthName(d.Month), "MonthNumber");
-        if (includeYearMonth)
+        if (options.IncludeYearMonth)
         {
             Add("YearMonthNumber", ColumnDataType.Int64, d => (long)(d.Year * 100 + d.Month), sortKey: true);
             Add("YearMonth", ColumnDataType.String, d => dtf.GetAbbreviatedMonthName(d.Month) + " " + d.Year, "YearMonthNumber");

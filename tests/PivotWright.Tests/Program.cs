@@ -770,7 +770,7 @@ namespace PivotWright.Tests
         public static void FiscalHierarchyOrder()
         {
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 2, completeYears: false);
+            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 2, CompleteYears = false });
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2025, 1, 1));
             model.AddRelationship("Sales", "Date", "Dates", "Date");
@@ -789,7 +789,7 @@ namespace PivotWright.Tests
             string Types(DateOnly from, DateOnly to, int yearEnd)
             {
                 using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-                model.AddDateTable("Dates", from, to, yearEnd, completeYears: false);
+                model.AddDateTable("Dates", from, to, new DateTableOptions { YearEndMonth = yearEnd, CompleteYears = false });
                 var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
                 sales.AddRow(from);
                 model.AddRelationship("Sales", "Date", "Dates", "Date");
@@ -819,7 +819,7 @@ namespace PivotWright.Tests
             Check.Equal((2024, 12, 4), F(2024, 1, 31, 1), "January year end: January is the last month");
 
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 6);
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 6 });
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
             Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");
@@ -835,12 +835,12 @@ namespace PivotWright.Tests
             using var dec = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             Check.Equal(11, dec.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
             Check.Equal(1, dec.HierarchyCount, "only Calendar");
-            using var bad = new DataModelWriter();
-            try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 13); throw new Exception("Expected ArgumentOutOfRangeException"); }
-            catch (ArgumentOutOfRangeException) { }
-            try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 0); throw new Exception("Expected ArgumentOutOfRangeException"); }
-            catch (ArgumentOutOfRangeException) { }
-            Check.Equal(0, bad.TableNames.Count(), "invalid month adds no table");
+            // Invalid settings are rejected when the options are created, before any table work.
+            foreach (int month in new[] { 0, 13, -1 })
+            {
+                try { _ = new DateTableOptions { YearEndMonth = month }; throw new Exception("Expected ArgumentOutOfRangeException for month " + month); }
+                catch (ArgumentOutOfRangeException) { }
+            }
         }
 
         public static void DateTableFlags()
@@ -854,24 +854,24 @@ namespace PivotWright.Tests
 
             // completeYears
             Check.Equal(365L, new DataModelWriter().AddDateTable("A", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16)).RowCount, "extended to 2025 by default");
-            Check.Equal(2L, new DataModelWriter().AddDateTable("B", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16), completeYears: false).RowCount, "exact range when off");
-            Check.Equal(366L, new DataModelWriter().AddDateTable("C", new DateOnly(2024, 2, 1), new DateOnly(2024, 2, 2), 6).RowCount, "July 2023 to June 2024 (leap)");
+            Check.Equal(2L, new DataModelWriter().AddDateTable("B", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16), new DateTableOptions { CompleteYears = false }).RowCount, "exact range when off");
+            Check.Equal(366L, new DataModelWriter().AddDateTable("C", new DateOnly(2024, 2, 1), new DateOnly(2024, 2, 2), new DateTableOptions { YearEndMonth = 6 }).RowCount, "July 2023 to June 2024 (leap)");
 
             // includeYearMonth and hideSortColumns: each flag on its own
             string[] Names(TableWriter t, bool hidden) => t.Columns.Where(c => c.IsHidden == hidden).Select(c => c.Name).ToArray();
             var range = (new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31));
-            var all = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, 6);
+            var all = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6 });
             Check.Equal("QuarterNumber,MonthNumber,YearMonthNumber,DayOfWeekNumber,FiscalQuarterNumber,FiscalMonthNumber", string.Join(",", Names(all, true)), "defaults hide the sort keys");
             Check.True(all.Columns.Any(c => c.Name == "YearMonth"), "YearMonth by default");
-            var noHide = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, 6, hideSortColumns: false);
+            var noHide = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6, HideSortColumns = false });
             Check.Equal(0, noHide.Columns.Count(c => c.IsHidden), "nothing hidden when off");
-            var noYm = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, includeYearMonth: false);
+            var noYm = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { IncludeYearMonth = false });
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", noYm.Columns.Select(c => c.Name)), "no YearMonth when off");
             Check.Equal("QuarterNumber,MonthNumber,DayOfWeekNumber", string.Join(",", Names(noYm, true)), "hidden without YearMonth");
 
             // The hidden attributes reach the dimension, and the model saves (every YearMonth label maps to one number across years).
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            model.AddDateTable("Dates", range.Item1, range.Item2, 6);
+            model.AddDateTable("Dates", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6 });
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2024, 1, 1));
             model.AddRelationship("Sales", "Date", "Dates", "Date");
@@ -884,7 +884,7 @@ namespace PivotWright.Tests
         public static void DateTableYearLabel()
         {
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
-            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), yearEndMonth: 6, yearLabel: "Financial");
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 6, YearLabel = "Financial" });
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FinancialYear,FinancialQuarterNumber,FinancialQuarter,FinancialMonthNumber,FinancialMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns use the label");
             Check.True(dates.Columns.Single(c => c.Name == "FinancialQuarter").SortByColumn == "FinancialQuarterNumber", "sort-by follows the label");
@@ -898,14 +898,16 @@ namespace PivotWright.Tests
 
             // The default label is unchanged, and an invalid label is rejected before anything is added.
             using var def = new DataModelWriter(new DataModelOptions { XpressCompression = false });
-            Check.True(def.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 6).Columns.Any(c => c.Name == "FiscalYear"), "default label Fiscal");
-            using var bad = new DataModelWriter();
+            Check.True(def.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), new DateTableOptions { YearEndMonth = 6 }).Columns.Any(c => c.Name == "FiscalYear"), "default label Fiscal");
             foreach (var label in new[] { "", " ", "1Fiscal", "Fin Year", "Fin-Year", "Year.End" })
             {
-                try { bad.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), 6, label); throw new Exception("Expected ArgumentException for label '" + label + "'"); }
+                try { _ = new DateTableOptions { YearLabel = label }; throw new Exception("Expected ArgumentException for label '" + label + "'"); }
                 catch (ArgumentException) { }
             }
-            Check.Equal(0, bad.TableNames.Count(), "invalid labels add no table");
+            Check.Equal("Fiscal", new DateTableOptions().YearLabel, "default label");
+            Check.Equal(12, new DateTableOptions().YearEndMonth, "default year end");
+            var defaults = new DateTableOptions();
+            Check.True(defaults.CompleteYears && defaults.IncludeYearMonth && defaults.HideSortColumns, "features on by default");
         }
 
         public static void DateTableValidation()

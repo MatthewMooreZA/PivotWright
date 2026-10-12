@@ -6,8 +6,17 @@ string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
 for (int c = 0; c < 3; c++) for (int i = 1; i <= 4; i++) p.AddRow(k++, cats[c], c + 1, $"{cats[c]} item {i}");
 bool generated = args.Length > 2 && args[2] == "gendate";
-if (generated) m.AddDateTable("Dates", new DateOnly(args.Length > 4 ? int.Parse(args[4]) : 2025, 1, 1), new DateOnly(args.Length > 5 ? int.Parse(args[5]) : 2025, 12, 31), args.Length > 3 ? int.Parse(args[3]) : 12, args.Length > 6 ? args[6] : "Fiscal",
-    completeYears: !(args.Length > 7 && args[7].Contains("exact")), includeYearMonth: !(args.Length > 7 && args[7].Contains("noym")), hideSortColumns: !(args.Length > 7 && args[7].Contains("nohide")));
+if (generated)
+    m.AddDateTable("Dates",
+        new DateOnly(args.Length > 4 ? int.Parse(args[4]) : 2025, 1, 1), new DateOnly(args.Length > 5 ? int.Parse(args[5]) : 2025, 12, 31),
+        new DateTableOptions
+        {
+            YearEndMonth = args.Length > 3 ? int.Parse(args[3]) : 12,
+            YearLabel = args.Length > 6 ? args[6] : "Fiscal",
+            CompleteYears = !(args.Length > 7 && args[7].Contains("exact")),
+            IncludeYearMonth = !(args.Length > 7 && args[7].Contains("noym")),
+            HideSortColumns = !(args.Length > 7 && args[7].Contains("nohide")),
+        });
 else
 {
     var d = m.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" }, new ColumnDefinition("MonthNumber", ColumnDataType.Int64) });
