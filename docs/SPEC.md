@@ -114,9 +114,9 @@ Evidence: after Excel re-applied Sort by Column on FiscalQuarter, the only subst
 
 References: Microsoft, [HierarchyStructureType enumeration](https://dotnet.territoriali.olinfo.it/en-us/previous-versions/sql/sql-server-2012/gg502673(v=sql.110)) (mirror of the SQL Server 2012 AMO documentation: Natural, Unnatural, Unknown); Microsoft, [Attribute Relationships](https://technet.microsoft.com/en-us/ms174557) (a relationship requires a many-to-one relationship between child and parent members); Chris Webb, [Natural and unnatural hierarchies in the SSAS 2012 Tabular model](https://blog.crossjoin.co.uk/2012/02/28/natural-and-unnatural-hierarchies-in-the-ssas-2012-tabular-model/) (in Tabular the engine determines this from the data while processing).
 
-## 8. Hidden columns (observed, implementation exists)
+## 8. Hidden columns (observed; implemented and Excel-verified on a generated file, 2026-10-12)
 
-Excel hides a column by setting `<AttributeHierarchyVisible>false</AttributeHierarchyVisible>` on its attribute in the table's dim.xml **and** in the cube's dimension attribute list (`Model.cub.xml`). No tbl.xml change. `ColumnDefinition.IsHidden` already writes both. Excel also bumps counters (cube 24, measure group structure 9) and writes a new `Sales info` file; whether those are needed is untested. In `H1_hidden_columns.xlsx` the user hid four attributes per table.
+Excel hides a column by setting `<AttributeHierarchyVisible>false</AttributeHierarchyVisible>` on its attribute in the table's dim.xml **and** in the cube's dimension attribute list (`Model.cub.xml`). No tbl.xml change. `ColumnDefinition.IsHidden` already writes both. Excel also bumps counters (cube 24, measure group structure 9) and writes a new `Sales info` file; **not needed**: `datetbl_gen_defaults_v1` (six hidden sort columns, relationships, two hierarchies, sort-by, date table, no counter bumps) loaded, hid the fields and accepted a new hierarchy and Sort by Column in Excel. Untested: a hidden column that is a hierarchy level, hidden columns in a model without hierarchies. In `H1_hidden_columns.xlsx` the user hid four attributes per table.
 
 ## 9. Date table, marking an existing table (observed in `H2_date_table.xlsx`; implemented, **not yet tested as a generated file in Excel**)
 

@@ -82,6 +82,14 @@ Alternatively `AddDateTable` builds a standard calendar for you, one row per day
 
 Three more behaviours are on by default and each has its own flag: `completeYears` extends the range to whole years (calendar years, or years ending in `yearEndMonth`) as DAX's `CALENDARAUTO` does and as Microsoft's date table guidance asks, so `from` and `to` only need to be a day inside the first and last year; `includeYearMonth` adds `YearMonth` ("Mar 2025", sorted by `YearMonthNumber`) so a month can be told apart across years; `hideSortColumns` hides the number columns that exist only to sort other columns (`QuarterNumber`, `MonthNumber`, `YearMonthNumber`, `DayOfWeekNumber` and the fiscal ones) from the field list, as is usual practice. Pass `false` to switch any of them off. Month and day names use the model culture. You still add the relationship to your fact table yourself, and `MarkAsDateTable` keeps working for tables you load yourself. The Excel-verified case is a hand-built table (above); the generated table uses the same mechanism with extra sort columns and a three-level hierarchy and was verified in Excel (loads, works as date table in a PivotTable, accepts a new hierarchy and a new Sort by Column). The non-December `yearEndMonth` variant (February year end) was verified in Excel the same way.
 
+### Hidden columns
+
+```csharp
+new ColumnDefinition("MonthNumber", ColumnDataType.Int64) { IsHidden = true }
+```
+
+A hidden column stays in the model (relationships, sorting, hierarchies and DAX can still use it) but does not appear in the PivotTable field list, the usual treatment for keys and sort-order columns. `AddDateTable` hides its sort-order columns this way. Confirmed in Excel on a model with relationships, hierarchies, sort-by columns and a date table: it loads, the fields are hidden, and adding a hierarchy or a Sort by Column afterwards works. Not tested: hiding a column that is itself a hierarchy level.
+
 ### Sort by column
 
 ```csharp
@@ -232,7 +240,7 @@ See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (worki
 
 These are not supported yet:
 
-- **Calculated columns, KPIs, hiding columns from client tools, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
+- **Calculated columns, KPIs, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
 - **Refresh.** The data is written directly. The model's data source is a placeholder OLE DB connection, stored encrypted the way Excel stores it, so *Refresh* in Excel reports a connection error and keeps the existing data. Set `ConnectionString` if you want it to point somewhere real.
 - **Excel 2010 PowerPivot add-in.** The model uses compatibility level 1103, the format of Excel 2013 and later.
 
