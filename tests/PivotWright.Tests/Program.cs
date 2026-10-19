@@ -50,6 +50,7 @@ var tests = new (string Name, Action Body)[]
     ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
     ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
     ("Hidden columns: counters after a hide operation (H8, H9)", Tests.HiddenColumnsProfile),
+    ("Measure groups get distinct Ordinals when the model has hierarchies", Tests.DistinctOrdinals),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -980,6 +981,38 @@ namespace PivotWright.Tests
             // Nothing hidden, or no hierarchy: the earlier profiles are unchanged.
             Save(hide: false, hierarchy: true).Find(@"Model\.18\.cub\.xml$");
             Save(hide: true, hierarchy: false).Find(@"Model\.1\.cub\.xml$");
+        }
+
+        // With every Ordinal 0 the engine told the measure groups apart only by hash order of their ids: whether Create Hierarchy and
+        // Sort by Column worked in Excel depended on the random ids (ASDetail::OnClone2). Excel numbers them distinctly.
+        public static void DistinctOrdinals()
+        {
+            ModelReader Save(bool hierarchy)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var a = model.CreateTable("A", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
+                a.AddRow(1, "x");
+                var b = model.CreateTable("B", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                b.AddRow(1, 2);
+                var c = model.CreateTable("C", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
+                c.AddRow(1, "y");
+                model.AddRelationship("B", "K", "A", "K");
+                if (hierarchy) model.AddHierarchy("A", "H", "K", "Name");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                return ModelReader.Read(ms.ToArray());
+            }
+            string[] Ordinals(ModelReader m, string pattern) =>
+                m.Files.Where(kv => System.Text.RegularExpressions.Regex.IsMatch(kv.Key, pattern))
+                    .Select(kv => System.Text.RegularExpressions.Regex.Match(Encoding.UTF8.GetString(kv.Value), "<Ordinal>(\\d+)</Ordinal>").Groups[1].Value)
+                    .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            var with = Save(hierarchy: true);
+            Check.Equal("1,2,3", string.Join(",", Ordinals(with, @"\.det\.xml$")), "measure group Ordinals are distinct");
+            Check.Equal("1,1,1", string.Join(",", Ordinals(with, @"\.prt\.xml$")), "partition Ordinals");
+            Check.Equal("1", string.Join(",", Ordinals(with, @"\.scr\.xml$")), "script Ordinal");
+            // Models without a hierarchy keep Excel's verified output.
+            var without = Save(hierarchy: false);
+            Check.Equal("0,0,0", string.Join(",", Ordinals(without, @"\.det\.xml$")), "no hierarchy: Ordinals unchanged");
         }
 
         public static void DateTableFlags()
