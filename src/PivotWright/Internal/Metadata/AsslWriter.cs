@@ -38,9 +38,9 @@ internal sealed class ModelInfo
     /// <summary>
     /// Measure groups get distinct Ordinals (and the partitions and script 1), as Excel numbers them. With every Ordinal 0 the engine tells
     /// the measure groups apart only by hash order of their ids, so whether Create Hierarchy or Sort by Column worked depended on the ids
-    /// (mddetail.cpp, ASDetail::OnClone2). Models without hierarchies stay as they were.
+    /// (mddetail.cpp, ASDetail::OnClone2). Written for every model.
     /// </summary>
-    public bool UniqueOrdinals => AnyDate || AnyHierarchy;
+    public bool UniqueOrdinals => true;
 
     /// <summary>Ids of the tables with at least one column hidden from client tools.</summary>
     public IReadOnlySet<string> HiddenTables { get; init; } = new HashSet<string>();

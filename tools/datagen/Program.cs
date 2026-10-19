@@ -36,8 +36,9 @@ var s = m.CreateTable("Sales", new[] { Col("Sales", "ProductKey", ColumnDataType
 for (int i = 0; i < 1000; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
 m.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
 m.AddRelationship("Sales", "Date", "Dates", "Date");
-m.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
-if (!generated) m.AddHierarchy("Dates", "Calendar", "Year", "Month");
+bool plain = args.Length > 2 && args[2] == "plain";   // no hierarchies at all
+if (!plain) m.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
+if (!generated && !plain) m.AddHierarchy("Dates", "Calendar", "Year", "Month");
 m.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
 if (args.Length > 2 && args[2] == "date") m.MarkAsDateTable("Dates", "Date");
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

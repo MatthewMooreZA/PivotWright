@@ -50,7 +50,7 @@ var tests = new (string Name, Action Body)[]
     ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
     ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
     ("Hidden columns: counters after a hide operation (H8, H9)", Tests.HiddenColumnsProfile),
-    ("Measure groups get distinct Ordinals when the model has hierarchies", Tests.DistinctOrdinals),
+    ("Measure groups get distinct Ordinals in every model", Tests.DistinctOrdinals),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
@@ -1010,9 +1010,9 @@ namespace PivotWright.Tests
             Check.Equal("1,2,3", string.Join(",", Ordinals(with, @"\.det\.xml$")), "measure group Ordinals are distinct");
             Check.Equal("1,1,1", string.Join(",", Ordinals(with, @"\.prt\.xml$")), "partition Ordinals");
             Check.Equal("1", string.Join(",", Ordinals(with, @"\.scr\.xml$")), "script Ordinal");
-            // Models without a hierarchy keep Excel's verified output.
+            // Models without a hierarchy get them too: a hierarchy can be added in Excel later.
             var without = Save(hierarchy: false);
-            Check.Equal("0,0,0", string.Join(",", Ordinals(without, @"\.det\.xml$")), "no hierarchy: Ordinals unchanged");
+            Check.Equal("1,2,3", string.Join(",", Ordinals(without, @"\.det\.xml$")), "no hierarchy: distinct Ordinals as well");
         }
 
         public static void DateTableFlags()
