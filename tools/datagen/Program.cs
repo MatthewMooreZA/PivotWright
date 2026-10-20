@@ -11,6 +11,16 @@ var hiddenSet = (args.Length > 2 ? args[2] : "") switch
 };
 ColumnDefinition Col(string table, string name, ColumnDataType type, string? sortBy = null) => new(name, type) { SortByColumn = sortBy, IsHidden = hiddenSet.Contains(table + "." + name) };
 using var m = new DataModelWriter(new DataModelOptions { Lcid = 7177 });
+if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship, no measure, no hierarchy
+{
+    var pr = m.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Product", ColumnDataType.String) });
+    for (int i = 1; i <= 12; i++) pr.AddRow(i, $"Item {i}");
+    var sl = m.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+    for (int i = 0; i < 500; i++) sl.AddRow(1 + i % 12, 1 + i % 5);
+    m.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+    m.Save(Path.Combine(dir, args[1] + ".xlsx"));
+    return;
+}
 var p = m.CreateTable("Products", new[] { Col("Products", "ProductKey", ColumnDataType.Int64), Col("Products", "Category", ColumnDataType.String, "CategoryOrder"), Col("Products", "CategoryOrder", ColumnDataType.Int64), Col("Products", "Product", ColumnDataType.String) });
 string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
