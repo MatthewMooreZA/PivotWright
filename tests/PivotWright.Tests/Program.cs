@@ -39,6 +39,19 @@ var tests = new (string Name, Action Body)[]
     ("Sort by Column: invalid definitions are rejected", Tests.SortByColumnValidation),
     ("Relationship models: helper measure, table version 2, statistics", Tests.RelationshipDefaults),
     ("Measures: invalid definitions are rejected", Tests.MeasureValidation),
+    ("Date table: dimension, tables, files and counters as Excel saves them", Tests.DateTableMetadata),
+    ("Date table: invalid definitions are rejected", Tests.DateTableValidation),
+    ("AddDateTable generates a standard calendar and marks it", Tests.GeneratedDateTable),
+    ("AddDateTable: fiscal year end other than December", Tests.FiscalDateTable),
+    ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
+    ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
+    ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
+    ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
+    ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
+    ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
+    ("Hidden columns: counters after a hide operation (H8, H9)", Tests.HiddenColumnsProfile),
+    ("Measure groups get distinct Ordinals in every model", Tests.DistinctOrdinals),
+    ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
 };
 
 int failed = 0;
@@ -618,6 +631,514 @@ namespace PivotWright.Tests
                 Rejects(() => model.AddMeasure("Many", "M3", "  "), "empty expression");
                 Rejects(() => model.AddMeasure("Many", "N", "1"), "name of a column in the same table");
                 Rejects(() => model.AddMeasure("Many", "__x", "1"), "reserved prefix");
+            }
+        }
+
+        // Dates(Date, Year, Month) with a Calendar hierarchy, related to Sales[Date]: the shape of Excel's H2_date_table.xlsx.
+        private static (DataModelWriter model, TableWriter dates, TableWriter sales) DateModel(Action<TableWriter>? fillDates = null)
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var dates = model.CreateTable("Dates", new[]
+            {
+                new ColumnDefinition("Date", ColumnDataType.DateTime),
+                new ColumnDefinition("Year", ColumnDataType.Int64),
+                new ColumnDefinition("Month", ColumnDataType.String),
+            });
+            if (fillDates is not null) fillDates(dates);
+            else for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", CultureInfo.InvariantCulture)); }
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
+            sales.AddRow(new DateTime(2025, 1, 2), 1);
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddHierarchy("Dates", "Calendar", "Year", "Month");
+            return (model, dates, sales);
+        }
+
+        /// <summary>The changes Excel makes when Dates[Date] is marked as date table (SPEC section 9, diffed against H2_date_table.xlsx).</summary>
+        public static void DateTableMetadata()
+        {
+            var (model, _, _) = DateModel();
+            using (model)
+            {
+                model.MarkAsDateTable("Dates", "Date");
+                Check.Equal("Dates", model.DateTableName, "DateTableName");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+
+                string dim = Text(@"\.0\.db\\Dates_G\.6\.dim\.xml$");
+                Check.True(dim.Contains("<Type>Time</Type>"), "dimension type Time");
+                int rowNumber = dim.IndexOf("<ID>__XL_RowNumber</ID>", StringComparison.Ordinal);
+                int dateAttr = dim.IndexOf("<ID>Date</ID>", StringComparison.Ordinal);
+                Check.True(dim.Substring(rowNumber, dateAttr - rowNumber).Contains("<Usage>Regular</Usage>"), "row number is no longer the key");
+                Check.True(!dim.Substring(rowNumber, dateAttr - rowNumber).Contains("<AttributeID>Date</AttributeID>"), "row number no longer relates to Date");
+                string dateXml = dim.Substring(dateAttr, dim.IndexOf("</Attribute>", dateAttr, StringComparison.Ordinal) - dateAttr);
+                Check.True(dateXml.Contains("<Usage>Key</Usage>"), "Date is the key");
+                Check.True(dateXml.Contains("<AttributeRelationships><AttributeRelationship><AttributeID>__XL_RowNumber</AttributeID>"), "Date relates to the row number");
+                Check.True(dim.Contains("<StructureVersion>3</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>3</DataVersion>"), "dimension counters");
+
+                string tbl = Text(@"\.0\.dim\\Dates_G\.3\.tbl\.xml$");
+                Check.True(tbl.Contains("<Version xsi:type=\"xsd:int\">3</Version>"), "table version 3");
+                Check.True(System.Text.RegularExpressions.Regex.IsMatch(tbl, @"name=""__XL_RowNumber""(?s:.*?)<ColumnFlags xsi:type=""xsd:long"">27</ColumnFlags>"), "row number ColumnFlags 27");
+                Check.True(System.Text.RegularExpressions.Regex.IsMatch(tbl, @"name=""Date""(?s:.*?)<ColumnFlags xsi:type=""xsd:long"">15</ColumnFlags>"), "date ColumnFlags 15");
+                Check.True(tbl.Contains("name=\"2.H$Dates_"), "hash index name");
+                string h = Text(@"Dates_G\.0\.dim\\H\$Dates_G\$Date\.2\.tbl\.xml$");
+                Check.True(h.Contains("<Version xsi:type=\"xsd:int\">2</Version>") && h.Contains("name=\"2.H$Dates_"), "date column hierarchy table");
+                m.Find(@"Dates_G\.0\.dim\\2\.H\$Dates_G\$Date\.POS_TO_ID\.0\.idf$");
+                m.Find(@"Dates_G\.0\.dim\\2\.H\$Dates_G\$Date\.hidx$");
+                m.Find(@"Dates_G\.0\.dim\\0\.H\$Dates_G\$Year\.hidx$");
+
+                // Sales is the many side: its table, the relationship table and the dimension move on by one.
+                Check.True(Text(@"\.0\.dim\\Sales_G\.1\.tbl\.xml$").Contains("<Version xsi:type=\"xsd:int\">1</Version>"), "Sales table version 1");
+                string rel = Text(@"R\$Sales_G\$G\.2\.tbl\.xml$");
+                Check.True(rel.Contains("<Version xsi:type=\"xsd:int\">2</Version>") && rel.Contains("name=\"2.R$Sales_"), "relationship table version 2");
+                m.Find(@"Sales_G\.0\.dim\\2\.R\$Sales_G\$G\.INDEX\.0\.idf$");
+                string sales = Text(@"\.0\.db\\Sales_G\.4\.dim\.xml$");
+                Check.True(sales.Contains("<DataVersion>1</DataVersion>"), "Sales dimension data version");
+                m.Find(@"Sales_G\.0\.dim\\info\.4\.xml$");
+
+                // Counters of the cube, the measure groups, the script and the partitions.
+                string cube = Text(@"Model\.21\.cub\.xml$");
+                Check.True(cube.Contains("<StructureVersion>12</StructureVersion>") && cube.Contains("MdxScript.10.scr.xml") && cube.Contains("Dates_") && cube.Contains(".21.det.xml"), "cube");
+                string det = Text(@"Dates_G\.21\.det\.xml$");
+                Check.True(det.Contains("<StructureVersion>9</StructureVersion><CacheVersion>2</CacheVersion>") && det.Contains(".10.prt.xml"), "measure group");
+                m.Find(@"MdxScript\.10\.scr\.xml$");
+                Check.True(Text(@"Sales_G\.10\.prt\.xml$").Contains("<DataVersion>1</DataVersion>"), "Sales partition data version 1");
+                Check.True(Text(@"Dates_G\.10\.prt\.xml$").Contains("<DataVersion>1</DataVersion>"), "Dates partition data version 1");
+                m.Find(@"Sales_G\.0\.prt\\info\.10\.xml$");
+            }
+        }
+
+        public static void GeneratedDateTable()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2024, 12, 31));
+            Check.Equal(366L, dates.RowCount, "leap year has 366 rows");
+            Check.Equal("Dates", model.DateTableName, "marked by default");
+            Check.Equal(1, model.HierarchyCount, "Calendar hierarchy");
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", dates.Columns.Select(c => c.Name)), "columns");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
+            sales.AddRow(new DateTime(2024, 3, 5), 1);
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            var m = ModelReader.Read(ms.ToArray());
+            string dim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.True(dim.Contains("<Type>Time</Type>"), "dimension type Time");
+            Check.Equal(4, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "Quarter, Month, YearMonth and DayOfWeek are sorted by their numbers");
+            Check.True(dim.Contains("<Level><Name>Quarter</Name>") && dim.Contains("<Hierarchy><Name>Calendar</Name>"), "hierarchy levels");
+
+            void Rejects<T>(Action a, string what) where T : Exception
+            {
+                try { a(); } catch (T) { return; }
+                throw new Exception("Expected " + typeof(T).Name + ": " + what);
+            }
+            Rejects<ArgumentException>(() => model.AddDateTable("Bad", new DateOnly(2025, 2, 1), new DateOnly(2025, 1, 1)), "to before from");
+            Rejects<InvalidOperationException>(() => model.AddDateTable("Second", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)), "second date table");
+            Check.Equal(2, model.TableNames.Count(), "rejected calls add no table");
+        }
+
+        private sealed record DateRow(DateOnly Date, long Year, string Month);
+
+        public static void DateTableSourceTypes()
+        {
+            void Saves(DataModelWriter model) { using var ms = new MemoryStream(); model.SaveModelPart(ms); }
+
+            // Rows given as DateOnly, DateTime and DateTimeOffset values in the same column: all become model dates.
+            var (mixed, _, _) = DateModel(t =>
+            {
+                t.AddRow(new DateOnly(2025, 1, 1), 2025, "January");
+                t.AddRow(new DateTime(2025, 1, 2), 2025, "January");
+                t.AddRow(new DateTimeOffset(2025, 1, 3, 0, 0, 0, TimeSpan.FromHours(2)), 2025, "January");
+            });
+            using (mixed) { mixed.MarkAsDateTable("Dates", "Date"); Saves(mixed); }
+
+            // A typed source with a DateOnly property maps to the same column type.
+            using var typed = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            typed.AddTable("Dates", new[] { new DateRow(new DateOnly(2025, 1, 1), 2025, "January"), new DateRow(new DateOnly(2025, 1, 2), 2025, "January") });
+            Check.Equal(ColumnDataType.DateTime, ColumnDefinition.FromClrType(typeof(DateOnly)), "DateOnly maps to DateTime");
+            Check.Equal(ColumnDataType.DateTime, ColumnDefinition.FromClrType(typeof(DateTimeOffset)), "DateTimeOffset maps to DateTime");
+            var sales = typed.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2025, 1, 1));
+            typed.AddRelationship("Sales", "Date", "Dates", "Date");
+            typed.AddHierarchy("Dates", "Calendar", "Year", "Month");
+            typed.MarkAsDateTable("Dates", "Date");
+            Saves(typed);
+        }
+
+        /// <summary>
+        /// February year end, data for 2025: FiscalYear 2025 holds only Q4 (Jan, Feb), FiscalYear 2026 holds Q1..Q4 (Mar..Dec).
+        /// Q4 is the first quarter that appears in the data, but under 2026 our tree lists it after Q3. Excel's pivot showed Q4 first
+        /// (data-id order), so this pins what we write, not what Excel displays: see SPEC section 7, "Open".
+        /// </summary>
+        public static void FiscalHierarchyOrder()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 2, CompleteYears = false });
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2025, 1, 1));
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            var m = ModelReader.Read(ms.ToArray());
+            var ids = DecodeTree(m, "Dates", "Fiscal Calendar", "MULTI_LEVEL_ID", 0);
+            // Level 0: two years (2 nodes). Level 1: Q4 of 2025, then Q1..Q4 of 2026. Quarter ids by first appearance: Q4=3, Q1=4, Q2=5, Q3=6.
+            Check.Equal("3,4,5,6,3", string.Join(",", ids.Skip(2).Take(5)), "quarter nodes: 2025 Q4, then 2026 Q1, Q2, Q3, Q4");
+        }
+
+        // Excel writes StructureType Unnatural when a level member has more than one parent (H5_sort_reapplied.xlsx: Q4 under
+        // FiscalYear 2025 and 2026) and Natural otherwise; with Natural, Excel's pivot ignored the sort order of such levels.
+        public static void HierarchyStructureType()
+        {
+            string Types(DateOnly from, DateOnly to, int yearEnd)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+                model.AddDateTable("Dates", from, to, new DateTableOptions { YearEndMonth = yearEnd, CompleteYears = false });
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+                sales.AddRow(from);
+                model.AddRelationship("Sales", "Date", "Dates", "Date");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+                var found = System.Text.RegularExpressions.Regex.Matches(dim, @"<Hierarchy><Name>([^<]+)</Name>.*?<ddl300:StructureType>(\w+)</ddl300:StructureType>");
+                return string.Join(",", found.Select(m => m.Groups[1].Value + "=" + m.Groups[2].Value));
+            }
+            Check.Equal("Calendar=Natural", Types(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), 12), "one calendar year, December year end");
+            Check.Equal("Calendar=Unnatural", Types(new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), 12), "Q1 under two years");
+            Check.Equal("Calendar=Natural,Fiscal Calendar=Unnatural", Types(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), 2), "Q4 under FiscalYear 2025 and 2026");
+            Check.Equal("Calendar=Unnatural,Fiscal Calendar=Natural", Types(new DateOnly(2025, 3, 1), new DateOnly(2026, 2, 28), 2), "one whole fiscal year spans two calendar years: Q1 under 2025 and 2026, but one FiscalYear");
+        }
+
+        public static void FiscalDateTable()
+        {
+            // June year end: July 2024 starts FiscalYear 2025; the fiscal year is named by the year in which it ends.
+            (int, int, int) F(int y, int m, int d, int fye) => DataModelWriter.FiscalPeriod(new DateOnly(y, m, d), fye);
+            Check.Equal((2025, 1, 1), F(2024, 7, 1, 6), "July 2024, June year end");
+            Check.Equal((2025, 3, 1), F(2024, 9, 30, 6), "September is fiscal month 3, quarter 1");
+            Check.Equal((2025, 4, 2), F(2024, 10, 1, 6), "October starts quarter 2");
+            Check.Equal((2025, 12, 4), F(2025, 6, 30, 6), "June 30 closes the year");
+            Check.Equal((2026, 1, 1), F(2025, 7, 1, 6), "next year");
+            Check.Equal((2024, 1, 1), F(2024, 1, 15, 12), "December year end equals the calendar year");
+            Check.Equal((2025, 1, 1), F(2024, 12, 31, 11), "November year end: December 2024 is fiscal month 1 of 2025");
+            Check.Equal((2024, 12, 4), F(2024, 1, 31, 1), "January year end: January is the last month");
+
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 6 });
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
+                string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
+            Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
+            sales.AddRow(new DateTime(2024, 8, 5), 1);
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);   // sort-by columns validate that each name maps to one number
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.Equal(6, System.Text.RegularExpressions.Regex.Matches(dim, "<OrderBy>AttributeKey</OrderBy>").Count, "six sorted columns");
+            Check.True(dim.Contains("<Hierarchy><Name>Fiscal Calendar</Name>"), "fiscal hierarchy");
+
+            using var dec = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            Check.Equal(11, dec.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
+            Check.Equal(1, dec.HierarchyCount, "only Calendar");
+            // Invalid settings are rejected when the options are created, before any table work.
+            foreach (int month in new[] { 0, 13, -1 })
+            {
+                try { _ = new DateTableOptions { YearEndMonth = month }; throw new Exception("Expected ArgumentOutOfRangeException for month " + month); }
+                catch (ArgumentOutOfRangeException) { }
+            }
+        }
+
+        // Names of the attributes marked AttributeHierarchyVisible=false in a dimension (Name) or in the cube's dimension list (AttributeID).
+        private static string HiddenAttributes(string xml, string dimensionId = "")
+        {
+            System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/analysisservices/2003/engine";
+            var doc = System.Xml.Linq.XDocument.Parse(xml);
+            IEnumerable<System.Xml.Linq.XElement> attributes = dimensionId.Length == 0
+                ? doc.Descendants(ns + "Attributes").First().Elements(ns + "Attribute")
+                : doc.Descendants(ns + "Dimension").First(d => (d.Element(ns + "ID")?.Value ?? "").StartsWith(dimensionId, StringComparison.Ordinal)).Element(ns + "Attributes")!.Elements(ns + "Attribute");
+            return string.Join(",", attributes.Where(a => a.Element(ns + "AttributeHierarchyVisible")?.Value == "false")
+                .Select(a => (a.Element(ns + "Name") ?? a.Element(ns + "AttributeID"))!.Value));
+        }
+
+        // A model without hierarchies or relationships stays in the base profile (SPEC 5.1) when columns are hidden:
+        // only AttributeHierarchyVisible changes, in the dimension and in the cube.
+        public static void HiddenColumnsPlainTable()
+        {
+            void Build(bool hide, out string dim, out string cube, out string[] names)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var t = model.CreateTable("T", new[]
+                {
+                    new ColumnDefinition("A", ColumnDataType.Int64),
+                    new ColumnDefinition("B", ColumnDataType.String) { IsHidden = hide },
+                    new ColumnDefinition("C", ColumnDataType.Double) { IsHidden = hide },
+                });
+                t.AddRow(1, "x", 1.5); t.AddRow(2, "y", 2.5);
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                dim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\T_G\.1\.dim\.xml$"));
+                cube = Encoding.UTF8.GetString(m.Find(@"Model\.1\.cub\.xml$"));
+                names = m.Files.Keys.Select(k => System.Text.RegularExpressions.Regex.Replace(ModelReader.Normalize(k), "[0-9A-F]{20}", "DB")).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            }
+            Build(true, out var dimH, out var cubeH, out var namesH);
+            Build(false, out var dimV, out var cubeV, out var namesV);
+            Check.Equal("__XL_RowNumber,B,C", HiddenAttributes(dimH), "hidden attributes in the dimension");
+            Check.Equal("__XL_RowNumber,B,C", HiddenAttributes(cubeH, "T_"), "hidden attributes in the cube");
+            Check.Equal("__XL_RowNumber", HiddenAttributes(dimV), "nothing else hidden by default (dimension)");
+            Check.Equal("__XL_RowNumber", HiddenAttributes(cubeV, "T_"), "nothing else hidden by default (cube)");
+            Check.True(namesH.SequenceEqual(namesV), "hiding adds, removes or renames no file");
+        }
+
+        // The columns Matthew hid in Excel for H1_hidden_columns.xlsx: keys, hierarchy levels and sort columns. In the model they stay
+        // usable (relationships, hierarchies, sorting), only the attribute hierarchies are marked invisible.
+        public static void HiddenColumnsKeysAndLevels()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64) { IsHidden = true },
+                new ColumnDefinition("Category", ColumnDataType.String) { SortByColumn = "CategoryOrder", IsHidden = true },
+                new ColumnDefinition("CategoryOrder", ColumnDataType.Int64) { IsHidden = true },
+                new ColumnDefinition("Product", ColumnDataType.String) { IsHidden = true },
+            });
+            products.AddRow(1, "Bikes", 1, "Road"); products.AddRow(2, "Clothing", 2, "Jersey");
+            var sales = model.CreateTable("Sales", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64) { IsHidden = true },
+                new ColumnDefinition("Qty", ColumnDataType.Int64),
+            });
+            sales.AddRow(1, 3); sales.AddRow(2, 4);
+            model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+            model.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
+            model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);   // saves: hidden keys still pass the relationship checks, hidden levels the hierarchy and sort checks
+            var m = ModelReader.Read(ms.ToArray());
+            string pDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$"));
+            string sDim = Encoding.UTF8.GetString(m.Find(@"\.0\.db\\Sales_G\.4\.dim\.xml$"));
+            string cube = Encoding.UTF8.GetString(m.Find(@"Model\.21\.cub\.xml$"));
+            Check.Equal("__XL_RowNumber,ProductKey,Category,CategoryOrder,Product", HiddenAttributes(pDim), "Products attributes hidden");
+            Check.Equal("__XL_RowNumber,ProductKey", HiddenAttributes(sDim), "Sales attributes hidden");
+            Check.Equal("__XL_RowNumber,ProductKey,Category,CategoryOrder,Product", HiddenAttributes(cube, "Products_"), "Products hidden in the cube");
+            Check.Equal("__XL_RowNumber,ProductKey", HiddenAttributes(cube, "Sales_"), "Sales hidden in the cube");
+            Check.True(pDim.Contains("<Hierarchy><Name>Product Hierarchy</Name>") && cube.Contains("<HierarchyID>Product Hierarchy</HierarchyID><Enabled>true</Enabled><Visible>true</Visible>"), "the hierarchy stays visible");
+            Check.True(pDim.Contains("<OrderByAttributeID>CategoryOrder</OrderByAttributeID>"), "sort by a hidden column still works");
+            Check.True(sDim.Contains("<ddl300_300:Relationship>"), "relationship on a hidden key");
+        }
+
+        // After a hide operation Excel advances the counters (H8_hide_one_column.xlsx, H9_hide_one_hierarchy_level.xlsx):
+        // cube +3 (structure +1), measure groups +2, the dimension of a table with hidden columns +1, or +2 if it holds a hierarchy.
+        // Without them Excel loaded such a model but failed every later edit in ASDetail::OnClone2.
+        public static void HiddenColumnsProfile()
+        {
+            ModelReader Save(bool hide, bool hierarchy, bool hideLevel = false)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[]
+                {
+                    new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                    new ColumnDefinition("Category", ColumnDataType.String),
+                    new ColumnDefinition("Product", ColumnDataType.String) { IsHidden = hide && hideLevel },
+                });
+                products.AddRow(1, "Bikes", "Road"); products.AddRow(2, "Clothing", "Jersey");
+                var sales = model.CreateTable("Sales", new[]
+                {
+                    new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                    new ColumnDefinition("Qty", ColumnDataType.Int64) { IsHidden = hide && !hideLevel },
+                });
+                sales.AddRow(1, 3); sales.AddRow(2, 4);
+                model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+                if (hierarchy) model.AddHierarchy("Products", "Browse", "Category", "Product");
+                model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                return ModelReader.Read(ms.ToArray());
+            }
+            // One hidden plain column (H8): Sales dimension 3 -> 4 (info file follows), cube 21, measure groups 20, cube structure 12.
+            var plain = Save(hide: true, hierarchy: true);
+            plain.Find(@"Sales_G\.0\.dim\\info\.4\.xml$");
+            plain.Find(@"\.0\.db\\Sales_G\.4\.dim\.xml$");
+            plain.Find(@"\.0\.db\\Products_G\.5\.dim\.xml$");   // no hidden column there
+            Check.True(Encoding.UTF8.GetString(plain.Find(@"Model\.21\.cub\.xml$")).Contains("<StructureVersion>12</StructureVersion>"), "cube structure 12");
+            plain.Find(@"Sales_G\.20\.det\.xml$"); plain.Find(@"Products_G\.20\.det\.xml$");
+            Check.True(Encoding.UTF8.GetString(plain.Find(@"Model\.21\.cub\.xml$")).Contains("Sales_") && Encoding.UTF8.GetString(plain.Find(@"Model\.21\.cub\.xml$")).Contains(".20.det.xml"), "cube lists the .20. measure groups");
+            // One hidden hierarchy level (H9): Products dimension 5 -> 7, no info file for a table with a hierarchy.
+            var level = Save(hide: true, hierarchy: true, hideLevel: true);
+            level.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$");
+            level.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$");
+            // Timestamps as in H9: only the edited dimension and the cube are stamped after their creation, the cube's LastUpdate a bit later.
+            string Stamp(string xml, string tag) => System.Text.RegularExpressions.Regex.Match(xml, "<" + tag + ">([^<]*)</" + tag + ">").Groups[1].Value;
+            string pDim = Encoding.UTF8.GetString(level.Find(@"\.0\.db\\Products_G\.7\.dim\.xml$"));
+            string sDim = Encoding.UTF8.GetString(level.Find(@"\.0\.db\\Sales_G\.3\.dim\.xml$"));
+            string cubeXml = Encoding.UTF8.GetString(level.Find(@"Model\.21\.cub\.xml$"));
+            string detXml = Encoding.UTF8.GetString(level.Find(@"Products_G\.20\.det\.xml$"));
+            Check.True(string.CompareOrdinal(Stamp(pDim, "LastSchemaUpdate"), Stamp(pDim, "CreatedTimestamp")) > 0, "edited dimension stamped after creation");
+            Check.Equal(Stamp(sDim, "CreatedTimestamp"), Stamp(sDim, "LastSchemaUpdate"), "untouched dimension keeps its creation time");
+            Check.Equal(Stamp(detXml, "CreatedTimestamp"), Stamp(detXml, "LastSchemaUpdate"), "measure groups are not stamped");
+            Check.Equal(Stamp(pDim, "LastSchemaUpdate"), Stamp(cubeXml, "LastSchemaUpdate"), "cube stamped with the edit time");
+            Check.True(string.CompareOrdinal(Stamp(cubeXml, "LastUpdate"), Stamp(cubeXml, "LastSchemaUpdate")) > 0, "cube LastUpdate after LastSchemaUpdate");
+            Check.Equal(Stamp(pDim, "CreatedTimestamp"), Stamp(pDim, "LastProcessed"), "processed at creation");
+            // Nothing hidden, or no hierarchy: the earlier profiles are unchanged.
+            Save(hide: false, hierarchy: true).Find(@"Model\.18\.cub\.xml$");
+            Save(hide: true, hierarchy: false).Find(@"Model\.1\.cub\.xml$");
+        }
+
+        // With every Ordinal 0 the engine told the measure groups apart only by hash order of their ids: whether Create Hierarchy and
+        // Sort by Column worked in Excel depended on the random ids (ASDetail::OnClone2). Excel numbers them distinctly.
+        public static void DistinctOrdinals()
+        {
+            ModelReader Save(bool hierarchy)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var a = model.CreateTable("A", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
+                a.AddRow(1, "x");
+                var b = model.CreateTable("B", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                b.AddRow(1, 2);
+                var c = model.CreateTable("C", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
+                c.AddRow(1, "y");
+                model.AddRelationship("B", "K", "A", "K");
+                if (hierarchy) model.AddHierarchy("A", "H", "K", "Name");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                return ModelReader.Read(ms.ToArray());
+            }
+            string[] Ordinals(ModelReader m, string pattern) =>
+                m.Files.Where(kv => System.Text.RegularExpressions.Regex.IsMatch(kv.Key, pattern))
+                    .Select(kv => System.Text.RegularExpressions.Regex.Match(Encoding.UTF8.GetString(kv.Value), "<Ordinal>(\\d+)</Ordinal>").Groups[1].Value)
+                    .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            var with = Save(hierarchy: true);
+            Check.Equal("1,2,3", string.Join(",", Ordinals(with, @"\.det\.xml$")), "measure group Ordinals are distinct");
+            Check.Equal("1,1,1", string.Join(",", Ordinals(with, @"\.prt\.xml$")), "partition Ordinals");
+            Check.Equal("1", string.Join(",", Ordinals(with, @"\.scr\.xml$")), "script Ordinal");
+            // Models without a hierarchy get them too: a hierarchy can be added in Excel later.
+            var without = Save(hierarchy: false);
+            Check.Equal("1,2,3", string.Join(",", Ordinals(without, @"\.det\.xml$")), "no hierarchy: distinct Ordinals as well");
+        }
+
+        public static void DateTableFlags()
+        {
+            (DateOnly, DateOnly) C(DateOnly f, DateOnly t, int ye) => DataModelWriter.CompleteYears(f, t, ye);
+            Check.Equal((new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31)), C(new DateOnly(2025, 3, 15), new DateOnly(2025, 9, 10), 12), "calendar year");
+            Check.Equal((new DateOnly(2023, 7, 1), new DateOnly(2026, 6, 30)), C(new DateOnly(2024, 2, 1), new DateOnly(2025, 9, 10), 6), "June year end");
+            Check.Equal((new DateOnly(2024, 3, 1), new DateOnly(2026, 2, 28)), C(new DateOnly(2025, 1, 15), new DateOnly(2025, 12, 31), 2), "February year end");
+            Check.Equal((new DateOnly(2022, 3, 1), new DateOnly(2024, 2, 29)), C(new DateOnly(2022, 3, 1), new DateOnly(2023, 6, 1), 2), "ends on 29 February of a leap year");
+            Check.Equal((new DateOnly(2024, 2, 1), new DateOnly(2025, 1, 31)), C(new DateOnly(2024, 2, 1), new DateOnly(2025, 1, 31), 1), "January year end, already whole");
+
+            // completeYears
+            Check.Equal(365L, new DataModelWriter().AddDateTable("A", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16)).RowCount, "extended to 2025 by default");
+            Check.Equal(2L, new DataModelWriter().AddDateTable("B", new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16), new DateTableOptions { CompleteYears = false }).RowCount, "exact range when off");
+            Check.Equal(366L, new DataModelWriter().AddDateTable("C", new DateOnly(2024, 2, 1), new DateOnly(2024, 2, 2), new DateTableOptions { YearEndMonth = 6 }).RowCount, "July 2023 to June 2024 (leap)");
+
+            // includeYearMonth and hideSortColumns: each flag on its own
+            string[] Names(TableWriter t, bool hidden) => t.Columns.Where(c => c.IsHidden == hidden).Select(c => c.Name).ToArray();
+            var range = (new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31));
+            var all = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6 });
+            Check.Equal("QuarterNumber,MonthNumber,YearMonthNumber,DayOfWeekNumber,FiscalQuarterNumber,FiscalMonthNumber", string.Join(",", Names(all, true)), "defaults hide the sort keys");
+            Check.True(all.Columns.Any(c => c.Name == "YearMonth"), "YearMonth by default");
+            var noHide = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6, HideSortColumns = false });
+            Check.Equal(0, noHide.Columns.Count(c => c.IsHidden), "nothing hidden when off");
+            var noYm = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { IncludeYearMonth = false });
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", noYm.Columns.Select(c => c.Name)), "no YearMonth when off");
+            Check.Equal("QuarterNumber,MonthNumber,DayOfWeekNumber", string.Join(",", Names(noYm, true)), "hidden without YearMonth");
+
+            // The hidden attributes reach the dimension, and the model saves (every YearMonth label maps to one number across years).
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            model.AddDateTable("Dates", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6 });
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2024, 1, 1));
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.Equal(1 + 6, System.Text.RegularExpressions.Regex.Matches(dim, "<AttributeHierarchyVisible>false</AttributeHierarchyVisible>").Count, "row number plus six hidden attributes");
+        }
+
+        public static void DateTableYearLabel()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 6, YearLabel = "Financial" });
+            Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FinancialYear,FinancialQuarterNumber,FinancialQuarter,FinancialMonthNumber,FinancialMonth",
+                string.Join(",", dates.Columns.Select(c => c.Name)), "columns use the label");
+            Check.True(dates.Columns.Single(c => c.Name == "FinancialQuarter").SortByColumn == "FinancialQuarterNumber", "sort-by follows the label");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2024, 1, 1));
+            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
+            Check.True(dim.Contains("<Hierarchy><Name>Financial Calendar</Name>") && !dim.Contains("Fiscal"), "hierarchy named after the label, no Fiscal left");
+
+            // The default label is unchanged, and an invalid label is rejected before anything is added.
+            using var def = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            Check.True(def.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), new DateTableOptions { YearEndMonth = 6 }).Columns.Any(c => c.Name == "FiscalYear"), "default label Fiscal");
+            foreach (var label in new[] { "", " ", "1Fiscal", "Fin Year", "Fin-Year", "Year.End" })
+            {
+                try { _ = new DateTableOptions { YearLabel = label }; throw new Exception("Expected ArgumentException for label '" + label + "'"); }
+                catch (ArgumentException) { }
+            }
+            Check.Equal("Fiscal", new DateTableOptions().YearLabel, "default label");
+            Check.Equal(12, new DateTableOptions().YearEndMonth, "default year end");
+            var defaults = new DateTableOptions();
+            Check.True(defaults.CompleteYears && defaults.IncludeYearMonth && defaults.HideSortColumns, "features on by default");
+        }
+
+        public static void DateTableValidation()
+        {
+            void Rejects<T>(Action a, string what) where T : Exception
+            {
+                try { a(); } catch (T) { return; }
+                throw new Exception("Expected " + typeof(T).Name + ": " + what);
+            }
+            void Saves(DataModelWriter model) { using var ms = new MemoryStream(); model.SaveModelPart(ms); }
+
+            var (model, _, _) = DateModel();
+            using (model)
+            {
+                Rejects<ArgumentException>(() => model.MarkAsDateTable("Nope", "Date"), "unknown table");
+                Rejects<ArgumentException>(() => model.MarkAsDateTable("Dates", "Nope"), "unknown column");
+                Rejects<ArgumentException>(() => model.MarkAsDateTable("Dates", "Year"), "not a date column");
+                Check.True(model.DateTableName is null, "nothing marked yet");
+                model.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => model.MarkAsDateTable("Sales", "Date"), "second date table");
+                Saves(model);
+            }
+
+            // Hierarchy and relationship are required: no Excel sample of the other cases exists.
+            using (var noHierarchy = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
+            {
+                var d = noHierarchy.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+                d.AddRow(new DateTime(2025, 1, 1));
+                var s = noHierarchy.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+                s.AddRow(new DateTime(2025, 1, 1));
+                noHierarchy.AddRelationship("Sales", "Date", "Dates", "Date");
+                noHierarchy.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(noHierarchy), "no hierarchy on the date table");
+            }
+            using (var noRelationship = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
+            {
+                var d = noRelationship.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                d.AddRow(new DateTime(2025, 1, 1), 2025, "January");
+                noRelationship.AddHierarchy("Dates", "Calendar", "Year", "Month");
+                noRelationship.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(noRelationship), "no relationship uses the date column");
+            }
+            var (blank, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); t.AddRow(null, 2025, "January"); });
+            using (blank)
+            {
+                blank.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(blank), "blank date");
+            }
+            var (partial, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1, 6, 0, 0), 2025, "January"); });
+            using (partial)
+            {
+                partial.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(partial), "date with a time part");
+            }
+            var (dup, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); });
+            using (dup)
+            {
+                dup.MarkAsDateTable("Dates", "Date");
+                Rejects<InvalidOperationException>(() => Saves(dup), "duplicate date");
             }
         }
 

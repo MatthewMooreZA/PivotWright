@@ -38,8 +38,34 @@ internal sealed class ModelSerializer
 
     private static readonly UTF8Encoding Utf8 = new(false);
 
+    // Date tables are written the way Excel saves them right after "Mark as Date Table" on a model with hierarchies and
+    // a relationship to the date column (SPEC section 9). Anything else was never seen in an Excel-written file, so it is refused.
+    private void ValidateDateTables()
+    {
+        foreach (var t in _tables.Where(t => t.DateColumn is not null))
+        {
+            var col = t.DateColumn!;
+            string what = $"'{t.Name}[{col.Definition.Name}]'";
+            if (!_hierarchies.Any(h => h.Table == t))
+                throw new InvalidOperationException($"{what} is marked as date table, which is only supported for tables that have a hierarchy (no Excel sample of the other case exists yet). Add a hierarchy such as Year > Month to '{t.Name}'.");
+            if (!_relationships.Any(r => r.To == t && r.ToColumn == col))
+                throw new InvalidOperationException($"{what} is marked as date table, which is only supported when a relationship uses it as its primary key (AddRelationship(..., \"{t.Name}\", \"{col.Definition.Name}\")).");
+            long row = 0;
+            foreach (var key in col.Keys())
+            {
+                row++;
+                if (key is null)
+                    throw new InvalidOperationException($"{what} is marked as date table but row {row} has no date; a date table needs a date on every row.");
+                double d = (double)key;
+                if (d != Math.Floor(d))
+                    throw new InvalidOperationException($"{what} is marked as date table but row {row} ({DateTime.FromOADate(d):yyyy-MM-dd HH:mm:ss}) is not a whole day; Excel requires dates without a time part.");
+            }
+        }
+    }
+
     public void Write(Stream output)
     {
+        ValidateDateTables();
         var now = DateTime.UtcNow;
         // Excel names the database with 20 upper-case hex digits. A GUID here loads and pivots fine, but Excel
         // then fails to edit the model (Create Hierarchy -> "ASDetail::OnClone2") once a table has two relationships.
@@ -52,8 +78,12 @@ internal sealed class ModelSerializer
 
         var tableIds = new Dictionary<string, TableIds>();
         foreach (var t in _tables)
-            tableIds[t.Id] = new TableIds { DimensionObjectId = Xml.Guid(), MeasureGroupObjectId = Xml.Guid(), PartitionObjectId = Xml.Guid() };
+            tableIds[t.Id] = new TableIds { DimensionObjectId = Xml.Guid(), MeasureGroupObjectId = Xml.Guid(), PartitionObjectId = Xml.Guid(), Ordinal = tableIds.Count + 1 };
 
+        var hiddenTables = _tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden)).Select(t => t.Id).ToHashSet();
+        bool hiddenProfile = hiddenTables.Count > 0 && _hierarchies.Count > 0 && !_tables.Any(t => t.DateColumn is not null);
+        // In the hidden profile the model looks like one that was created a little earlier and edited just now (see ModelInfo.EditedAt).
+        var created = hiddenProfile ? now.AddMinutes(-1) : now;
         Info = new ModelInfo
         {
             DatabaseId = dbId,
@@ -67,13 +97,17 @@ internal sealed class ModelSerializer
             Lcid = _options.Lcid,
             CultureName = string.IsNullOrEmpty(_options.Culture.Name) ? "en-US" : _options.Culture.Name,
             Culture = _options.Culture,
-            Created = now,
-            Processed = now,
+            Created = created,
+            Processed = created,
+            EditedAt = now,
             EncryptedConnectionString = crypt.Encrypt(_options.ConnectionString, ModelCryptKey.ConnectionStringFlags),
             EncryptedDatabasePassword = crypt.Encrypt(string.Empty, ModelCryptKey.DatabasePasswordFlags),
             EncryptedDataSourcePassword = crypt.Encrypt(string.Empty, ModelCryptKey.EmptyPasswordFlags),
             TableIds = tableIds,
             HierarchyTables = _hierarchies.Select(h => h.Table.Id).ToHashSet(),
+            DateTables = _tables.Where(t => t.DateColumn is not null).Select(t => t.Id).ToHashSet(),
+            HiddenTables = hiddenTables,
+            DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);
@@ -93,7 +127,10 @@ internal sealed class ModelSerializer
         {
             var sink = new DimensionSink(_abf, dbFolder + "\\" + t.Id + ".0.dim");
             var et = t.Encode(sink, _options.SegmentRowCount);
+            et.Version = Info.TableVersion(t.Id);
             encoded.Add(et);
+            if (t.DateColumn is not null && !et.Columns.First(c => c.IsDateKey).IsValueEncoded)
+                throw new InvalidOperationException($"The date column of '{t.Name}' is not value-encoded (a very wide range of dates); Excel's file for a date table was only seen with value-encoded dates.");
 
             // Relationships in which this table is the many side: one index table each.
             foreach (var rel in _relationships.Where(r => r.From == t))
@@ -109,8 +146,8 @@ internal sealed class ModelSerializer
 
             // Hierarchy tables and the table metadata.
             foreach (var c in et.Columns)
-                sink.WriteText(FileNames.HierarchyTableXml(et.Id, c.Id), TableXmlWriter.HierarchyTable(et, c));
-            sink.WriteText(FileNames.TableXml(et.Id, et.Hierarchies.Count > 0 ? FileNames.HierarchyVersion : 0), TableXmlWriter.MainTable(et, _options.Lcid));
+                sink.WriteText(FileNames.HierarchyTableXml(et.Id, c.Id, c.AttributeHierarchyVersion), TableXmlWriter.HierarchyTable(et, c));
+            sink.WriteText(FileNames.TableXml(et.Id, et.Version), TableXmlWriter.MainTable(et, _options.Lcid));
             // Excel reports the size of the table's .tbl.xml documents as the dimension's EstimatedSize.
             dimensionFiles[t.Id] = (sink.Files, sink.Files.Where(f => f.Path.EndsWith(".tbl.xml", StringComparison.Ordinal)).Sum(f => f.Size));
         }
@@ -131,8 +168,8 @@ internal sealed class ModelSerializer
         {
             var ids = tableIds[t.Id];
             string detFolder = cubeFolder + "\\" + t.Id + ".0.det";
-            var mg = Group(BackupLog.ClassMeasureGroup, t.Id, t.Name, Info.CubeVersion, detFolder, ids.MeasureGroupObjectId);
-            AddText(mg, cubeFolder + "\\" + t.Id + "." + Info.CubeVersion + ".det.xml", AsslWriter.MeasureGroup(Info, t, encodedById));
+            var mg = Group(BackupLog.ClassMeasureGroup, t.Id, t.Name, Info.MeasureGroupVersion, detFolder, ids.MeasureGroupObjectId);
+            AddText(mg, cubeFolder + "\\" + t.Id + "." + Info.MeasureGroupVersion + ".det.xml", AsslWriter.MeasureGroup(Info, t, encodedById));
             string prtFolder = detFolder + "\\" + t.Id + ".0.prt";
             var prt = Group(BackupLog.ClassPartition, t.Id, t.Name, Info.PartitionVersion, prtFolder, ids.PartitionObjectId);
             AddText(prt, detFolder + "\\" + t.Id + "." + Info.PartitionVersion + ".prt.xml", partitionXml[t.Id]);

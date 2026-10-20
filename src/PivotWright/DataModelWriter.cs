@@ -210,6 +210,136 @@ public sealed class DataModelWriter : IDisposable
     /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
     public void AddHierarchy(TableWriter table, string name, params string[] levels) => AddHierarchy(table.Name, name, levels);
 
+    /// <summary>Name of the table marked with <see cref="MarkAsDateTable(string, string)"/>, or null.</summary>
+    public string? DateTableName => _tables.FirstOrDefault(t => t.DateColumn is not null)?.Name;
+
+    /// <summary>
+    /// Marks a table as the model's date table, like Power Pivot's "Mark as Date Table": the date column becomes the
+    /// table's key, which Excel's time intelligence functions (TOTALYTD, SAMEPERIODLASTYEAR, ...) need.
+    /// </summary>
+    /// <remarks>
+    /// Written the way Excel saves a model it just marked; only that case has been seen in an Excel-written file, so
+    /// <see cref="Save(string)"/> requires a hierarchy on the table, a relationship that uses the date column as its
+    /// primary key, and a date on every row (whole days, no duplicates). One date table per model.
+    /// </remarks>
+    /// <param name="table">Table that holds the dates (for example Dates).</param>
+    /// <param name="dateColumn">Column of type <see cref="ColumnDataType.DateTime"/> with one row per day.</param>
+    /// <exception cref="ArgumentException">The table or column is unknown, the column is not a date column, or it is sorted by another column.</exception>
+    /// <exception cref="InvalidOperationException">A date table was already marked.</exception>
+    public void MarkAsDateTable(string table, string dateColumn)
+    {
+        ThrowIfDisposed();
+        var t = FindTable(table);
+        var c = FindColumn(t, dateColumn);
+        if (c.Definition.DataType != ColumnDataType.DateTime)
+            throw new ArgumentException($"'{t.Name}[{c.Definition.Name}]' is {c.Definition.DataType}; a date table needs a DateTime column.", nameof(dateColumn));
+        if (c.SortBy is not null || t.Columns.Any(o => o.SortBy == c))
+            throw new ArgumentException($"'{t.Name}[{c.Definition.Name}]' takes part in Sort by Column, so it cannot be the date column.", nameof(dateColumn));
+        if (DateTableName is { } existing)
+            throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
+        t.DateColumn = c;
+        c.IsDateKey = true;
+    }
+
+    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
+    public void MarkAsDateTable(TableWriter table, string dateColumn) => MarkAsDateTable(table.Name, dateColumn);
+
+    /// <summary>
+    /// Generates a standard calendar table with one row per day and marks it as the model's date table
+    /// (<see cref="MarkAsDateTable(string, string)"/> still works for tables you load yourself).
+    /// </summary>
+    /// <remarks>
+    /// Columns: Date, Year, QuarterNumber, Quarter ("Q1", sorted by QuarterNumber), MonthNumber, Month (name in the model
+    /// culture, sorted by MonthNumber), YearMonthNumber (202503), YearMonth ("Mar 2025", sorted by YearMonthNumber, so a month
+    /// is not ambiguous across years), Day, DayOfWeekNumber (1 = Monday), DayOfWeek (name, sorted by DayOfWeekNumber).
+    /// A hierarchy named "Calendar" (Year, Quarter, Month) is added.
+    /// With a <see cref="DateTableOptions.YearEndMonth"/> other than 12 the table also gets FiscalYear (the calendar year in which
+    /// the year ends, so a June year end makes July 2024 part of FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter,
+    /// FiscalMonthNumber (1 = first month of that year), FiscalMonth (sorted by FiscalMonthNumber) and a hierarchy
+    /// "Fiscal Calendar" (FiscalYear, FiscalQuarter, FiscalMonth). <see cref="DateTableOptions.YearLabel"/> replaces "Fiscal" in these
+    /// names, for a year that is not a fiscal year (for example "Financial": FinancialYear, "Financial Calendar").
+    /// Relate the table to your fact table yourself:
+    /// <c>AddRelationship("Sales", "Date", name, "Date")</c>; marking as date table is only accepted when a relationship
+    /// uses the Date column, which is checked when saving.
+    /// </remarks>
+    /// <param name="name">Table name, for example Dates.</param>
+    /// <param name="from">A day in the first year to include.</param>
+    /// <param name="to">A day in the last year to include, not before <paramref name="from"/>.</param>
+    /// <param name="options">Year end, labels and the optional features (whole-year range, YearMonth, hidden sort columns); defaults when null.</param>
+    /// <returns>The table, which is complete; do not add rows.</returns>
+    public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, DateTableOptions? options = null)
+    {
+        ThrowIfDisposed();
+        options ??= new DateTableOptions();
+        int yearEndMonth = options.YearEndMonth;
+        string yearLabel = options.YearLabel;
+        bool hideSortColumns = options.HideSortColumns;
+        if (to < from) throw new ArgumentException("The last day must not be before the first day.", nameof(to));
+        if (DateTableName is { } existing)
+            throw new InvalidOperationException($"'{existing}' is already marked as date table; only one date table per model is supported.");
+        if (options.CompleteYears) (from, to) = CompleteYears(from, to, yearEndMonth);
+        if (to.DayNumber - from.DayNumber > 3_660_000) throw new ArgumentException("A date table can hold at most about 10,000 years.", nameof(to));
+        bool fiscal = yearEndMonth != 12;
+        var culture = _options.Culture;
+        var dtf = culture.DateTimeFormat;
+
+        // Every column with the function that computes its value from the date.
+        var spec = new List<(ColumnDefinition column, Func<DateOnly, object> value)>();
+        void Add(string column, ColumnDataType type, Func<DateOnly, object> value, string? sortBy = null, bool sortKey = false)
+            => spec.Add((new ColumnDefinition(column, type) { SortByColumn = sortBy, IsHidden = sortKey && hideSortColumns }, value));
+        Add("Date", ColumnDataType.DateTime, d => d);
+        Add("Year", ColumnDataType.Int64, d => (long)d.Year);
+        Add("QuarterNumber", ColumnDataType.Int64, d => (long)((d.Month - 1) / 3 + 1), sortKey: true);
+        Add("Quarter", ColumnDataType.String, d => "Q" + ((d.Month - 1) / 3 + 1), "QuarterNumber");
+        Add("MonthNumber", ColumnDataType.Int64, d => (long)d.Month, sortKey: true);
+        Add("Month", ColumnDataType.String, d => dtf.GetMonthName(d.Month), "MonthNumber");
+        if (options.IncludeYearMonth)
+        {
+            Add("YearMonthNumber", ColumnDataType.Int64, d => (long)(d.Year * 100 + d.Month), sortKey: true);
+            Add("YearMonth", ColumnDataType.String, d => dtf.GetAbbreviatedMonthName(d.Month) + " " + d.Year, "YearMonthNumber");
+        }
+        Add("Day", ColumnDataType.Int64, d => (long)d.Day);
+        Add("DayOfWeekNumber", ColumnDataType.Int64, d => d.DayOfWeek == System.DayOfWeek.Sunday ? 7L : (long)d.DayOfWeek, sortKey: true);
+        Add("DayOfWeek", ColumnDataType.String, d => dtf.GetDayName(d.DayOfWeek), "DayOfWeekNumber");
+        if (fiscal)
+        {
+            Add(yearLabel + "Year", ColumnDataType.Int64, d => (long)FiscalPeriod(d, yearEndMonth).year);
+            Add(yearLabel + "QuarterNumber", ColumnDataType.Int64, d => (long)FiscalPeriod(d, yearEndMonth).quarter, sortKey: true);
+            Add(yearLabel + "Quarter", ColumnDataType.String, d => "Q" + FiscalPeriod(d, yearEndMonth).quarter, yearLabel + "QuarterNumber");
+            Add(yearLabel + "MonthNumber", ColumnDataType.Int64, d => (long)FiscalPeriod(d, yearEndMonth).month, sortKey: true);
+            // Name of the calendar month that is this fiscal month.
+            Add(yearLabel + "Month", ColumnDataType.String, d => dtf.GetMonthName(d.Month), yearLabel + "MonthNumber");
+        }
+
+        var table = CreateTable(name, spec.Select(c => c.column).ToList());
+        var row = new object?[spec.Count];
+        for (int n = from.DayNumber; n <= to.DayNumber; n++)
+        {
+            var d = DateOnly.FromDayNumber(n);
+            for (int i = 0; i < spec.Count; i++) row[i] = spec[i].value(d);
+            table.AddRow(row);
+        }
+        AddHierarchy(table.Name, "Calendar", "Year", "Quarter", "Month");
+        if (fiscal) AddHierarchy(table.Name, yearLabel + " Calendar", yearLabel + "Year", yearLabel + "Quarter", yearLabel + "Month");
+        MarkAsDateTable(table.Name, "Date");
+        return table;
+    }
+
+    /// <summary>First day of the year that contains <paramref name="from"/> to last day of the year that contains <paramref name="to"/>.</summary>
+    internal static (DateOnly from, DateOnly to) CompleteYears(DateOnly from, DateOnly to, int yearEndMonth)
+    {
+        if (yearEndMonth == 12) return (new DateOnly(from.Year, 1, 1), new DateOnly(to.Year, 12, 31));
+        int first = FiscalPeriod(from, yearEndMonth).year, last = FiscalPeriod(to, yearEndMonth).year;
+        return (new DateOnly(first - 1, yearEndMonth + 1, 1), new DateOnly(last, yearEndMonth, DateTime.DaysInMonth(last, yearEndMonth)));
+    }
+
+    /// <summary>Financial year (the calendar year in which it ends), month (1 = first month) and quarter of a date.</summary>
+    internal static (int year, int month, int quarter) FiscalPeriod(DateOnly d, int yearEndMonth)
+    {
+        int month = (d.Month - yearEndMonth - 1 + 12) % 12 + 1;
+        return (d.Month > yearEndMonth ? d.Year + 1 : d.Year, month, (month - 1) / 3 + 1);
+    }
+
     /// <summary>Number of measures added so far.</summary>
     public int MeasureCount => _measures.Count;
 

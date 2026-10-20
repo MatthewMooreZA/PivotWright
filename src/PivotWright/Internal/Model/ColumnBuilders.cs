@@ -54,6 +54,9 @@ internal abstract class ColumnBuilder : IDisposable
     /// <summary>Set when the column is the one-side key of a relationship (flagged unique in the model).</summary>
     public bool IsPrimaryKey { get; set; }
 
+    /// <summary>Set when the column is the date column of a table marked as date table.</summary>
+    public bool IsDateKey { get; set; }
+
     /// <summary>Largest span of value-encoded data ids for a foreign key column.</summary>
     protected const long MaxForeignKeyIdRange = 1 << 22;
 
@@ -90,6 +93,7 @@ internal abstract class ColumnBuilder : IDisposable
         IsHidden = Definition.IsHidden,
         IsPrimaryKey = IsPrimaryKey,
         IsForeignKey = IsForeignKey,
+        IsDateKey = IsDateKey,
         DbType = dbType,
         XmType = xmType,
         Rows = Rows,
@@ -153,14 +157,14 @@ internal abstract class ColumnBuilder : IDisposable
 
         var allPos = new uint[records];
         posToId.CopyTo(allPos, 0);
-        using (var s = sink.Create(FileNames.PosToId(tableId, col.Id)))
+        using (var s = sink.Create(FileNames.PosToId(tableId, col.Id, col.AttributeHierarchyVersion)))
             WriteSegments(s, allPos, segments);
 
         if (col.IsValueEncoded)
         {
             var pairs = new (uint, uint)[distinct];
             for (int p = 0; p < distinct; p++) pairs[p] = (posToId[p], (uint)p);
-            using var s = sink.Create(FileNames.Hidx(tableId, col.Id));
+            using var s = sink.Create(FileNames.Hidx(tableId, col.Id, col.AttributeHierarchyVersion));
             HashIndexWriter.Write(s, pairs);
         }
         else
@@ -168,7 +172,7 @@ internal abstract class ColumnBuilder : IDisposable
             var idToPos = new uint[records];
             idToPos[1] = (uint)distinct;
             for (int p = 0; p < distinct; p++) idToPos[posToId[p]] = (uint)p;
-            using var s = sink.Create(FileNames.IdToPos(tableId, col.Id));
+            using var s = sink.Create(FileNames.IdToPos(tableId, col.Id, col.AttributeHierarchyVersion));
             WriteSegments(s, idToPos, segments);
         }
     }

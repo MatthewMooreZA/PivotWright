@@ -59,6 +59,37 @@ model.AddHierarchy("Dates", "Calendar", "Year", "Month");
 
 A hierarchy is an ordered drill-down path over two or more columns of one table; PivotTables offer it as a single field with expandable levels. The name must be unique within the table and different from its column names. The tree is built and sorted when saving (levels sort like the columns do, BLANK first), so memory use grows with the number of distinct value paths. The file layout matches what Excel writes byte for byte for the same data. BLANK values inside a level (sorted first) and values that differ only in case (merged) were confirmed in Excel.
 
+### Date table
+
+```csharp
+model.AddRelationship("Sales", "Date", "Dates", "Date");
+model.AddHierarchy("Dates", "Calendar", "Year", "Month");
+model.MarkAsDateTable("Dates", "Date");
+```
+
+Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*, which time intelligence functions such as `TOTALYTD` and `SAMEPERIODLASTYEAR` rely on. The column must be a date column (`ColumnDataType.DateTime`, which is what `DateOnly`, `DateTime` and `DateTimeOffset` sources all map to) with one whole day per row (no BLANK, no time part, no duplicates; checked when saving). The file layout follows what Excel writes after marking a date table in a model like the one above; that is the only case seen so far, so for now saving requires **a hierarchy on the date table, a relationship that uses the date column as its primary key, and a single date table per model**. Verified in Excel: the model loads, the date table works in a PivotTable, and adding a hierarchy or a Sort by Column afterwards works.
+
+#### Generated date table
+
+```csharp
+model.AddDateTable("Dates", new DateOnly(2020, 1, 1), new DateOnly(2030, 12, 31));   // also marks it as date table
+// or, for a financial year ending in June:
+// model.AddDateTable("Dates", new DateOnly(2020, 7, 1), new DateOnly(2030, 6, 30), new DateTableOptions { YearEndMonth = 6 });
+model.AddRelationship("Sales", "Date", "Dates", "Date");
+```
+
+Alternatively `AddDateTable` builds a standard calendar for you, one row per day, with the columns Date, Year, QuarterNumber, Quarter, MonthNumber, Month, Day, DayOfWeekNumber (1 = Monday) and DayOfWeek. Quarter, Month and DayOfWeek are sorted by their number columns, a `Calendar` hierarchy (Year, Quarter, Month) is added, and the table is marked as date table. Settings go in a `DateTableOptions` object. Set `YearEndMonth` (1 to 12, default 12 = December) when the year does not end in December: the table then also gets FiscalYear (the calendar year in which the fiscal year ends, so with a June year end July 2024 belongs to FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter, FiscalMonthNumber (1 = first month of the fiscal year) and FiscalMonth, sorted by their numbers, plus a `Fiscal Calendar` hierarchy (FiscalYear, FiscalQuarter, FiscalMonth). The year does not have to be a fiscal one: set `YearLabel = "Financial"` (letters and digits, default `"Fiscal"`) to get FinancialYear, FinancialQuarter, FinancialMonth and a `Financial Calendar` hierarchy instead. The calendar columns stay in the table either way, because Month and FiscalMonth need different sort orders and reports often need both.
+
+Three more behaviours are on by default and each has its own flag in `DateTableOptions`: `CompleteYears` extends the range to whole years (calendar years, or years ending in `yearEndMonth`) as DAX's `CALENDARAUTO` does and as Microsoft's date table guidance asks, so `from` and `to` only need to be a day inside the first and last year; `IncludeYearMonth` adds `YearMonth` ("Mar 2025", sorted by `YearMonthNumber`) so a month can be told apart across years; `HideSortColumns` hides the number columns that exist only to sort other columns (`QuarterNumber`, `MonthNumber`, `YearMonthNumber`, `DayOfWeekNumber` and the fiscal ones) from the field list, as is usual practice. Set a flag to `false` to switch it off, for example `new DateTableOptions { HideSortColumns = false }`. Invalid values (a year end outside 1 to 12, a label with other than letters and digits) are rejected as soon as the options are created. Month and day names use the model culture. You still add the relationship to your fact table yourself, and `MarkAsDateTable` keeps working for tables you load yourself. The Excel-verified case is a hand-built table (above); the generated table uses the same mechanism with extra sort columns and a three-level hierarchy and was verified in Excel (loads, works as date table in a PivotTable, accepts a new hierarchy and a new Sort by Column). The non-December `yearEndMonth` variant (February year end) was verified in Excel the same way.
+
+### Hidden columns
+
+```csharp
+new ColumnDefinition("MonthNumber", ColumnDataType.Int64) { IsHidden = true }
+```
+
+A hidden column stays in the model (relationships, sorting, hierarchies and DAX can still use it) but does not appear in the PivotTable field list, the usual treatment for keys and sort-order columns. `AddDateTable` hides its sort-order columns this way. Confirmed in Excel: the model loads, the fields are hidden, and hierarchies, sorting and measures keep working. Confirmed in Excel on freshly generated files, including all ten columns of Excel's own H1 sample (keys, hierarchy levels and sort columns) hidden: after hiding a column, adding a hierarchy and a Sort by Column still work.
+
 ### Sort by column
 
 ```csharp
@@ -192,6 +223,8 @@ In a model with relationships, Excel's *Sort by Column* and *Create Hierarchy* f
 4. **For *Create Hierarchy*: the cube, the measure groups and the calculation script are at object version 1** (as in a model Excel saved), or the partitions have data version 0. Models with cube version 0 and partition data version 1 sorted but could not create hierarchies; the library writes both.
 5. **Models with user hierarchies are written the way Excel saves them after *Create Hierarchy*** (confirmed: further hierarchies and Sort by Column work, and saving and refreshing the PivotTable works). Version counters must match the file names: hierarchy (`U$`) files and the table that holds them are version 2 (`2.U$...idf`, `<Table>.2.tbl.xml`, dimension data/structure version 2, object version 5, no `info` file), the relationship (many-side) table is version 3, measure groups and the cube are version 18 (structure 8 and 11), the script and the partitions are version 9 (partition data version 1 on tables with hierarchies), key columns of those tables have EncodingHint 0, and each measure group's `PartitionFileList` must name the renamed partition file (otherwise Excel reports "Measure group must have at least one partition"). Setting counters without renaming files makes the model fail to load.
 
+6. **Every measure group has its own `Ordinal` (1, 2, 3 in table order; partitions and the calculation script 1)** in models with hierarchies or a date table. With all Ordinals 0 the engine tells the measure groups apart only by the hash order of their ids, so whether *Create Hierarchy* and *Sort by Column* worked depended on the random table ids, and one changed character in an id could flip the result.
+
 Models without relationships work without any of this. Several other combinations that looked plausible did not: normal or partly changed statistics behaved inconsistently (changing only XMType worked on one file and failed on another that already had sort columns), so the library copies the complete state Excel writes.
 
 What is not understood:
@@ -209,7 +242,7 @@ See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (worki
 
 These are not supported yet:
 
-- **Calculated columns, KPIs, date tables, hiding columns from client tools, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
+- **Calculated columns, KPIs, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
 - **Refresh.** The data is written directly. The model's data source is a placeholder OLE DB connection, stored encrypted the way Excel stores it, so *Refresh* in Excel reports a connection error and keeps the existing data. Set `ConnectionString` if you want it to point somewhere real.
 - **Excel 2010 PowerPivot add-in.** The model uses compatibility level 1103, the format of Excel 2013 and later.
 
