@@ -18,15 +18,16 @@ using var model = new DataModelWriter(new DataModelOptions
 });
 
 // 1. Straight from a database: rows are streamed, never materialised.
+TableWriter sales;
 using (var cmd = new SqlCommand("SELECT * FROM dbo.FactSales", connection))
 using (var reader = cmd.ExecuteReader())
-    model.AddTable("Sales", reader);
+    sales = model.AddTable("Sales", reader);
 
 // 2. From a DataTable.
-model.AddTable(productsDataTable);
+var products = model.AddTable(productsDataTable);
 
 // 3. From objects (public properties become columns).
-model.AddTable("Regions", regions);
+var regions = model.AddTable("Regions", regionList);
 
 // 4. Row by row, with explicit column types.
 var fx = model.CreateTable("FX", new[]
@@ -38,8 +39,12 @@ var fx = model.CreateTable("FX", new[]
 fx.AddRow(new DateTime(2026, 10, 1), "ZAR", 17.42);
 fx.AddRow(new DateTime(2026, 10, 1), "USD", 1.0);
 
+model.AddRelationship(sales, "ProductKey", products, "ProductKey");
+model.HideColumns(sales, "ProductKey");
 model.Save("Sales model.xlsx");
 ```
+
+Every `Add…`/`Create…` method that makes a table returns its `TableWriter`. Wherever a method takes a table you can pass that object or the table name (the name as you gave it, or as stored, ignoring case). Mistakes in names are reported at once, as `ArgumentException`, with the names that do exist; problems that depend on the data (a duplicate key, a month with two sort numbers) are reported by `Save`, as `InvalidOperationException`. A failed `Save(path)` leaves an existing file at that path untouched. The conventions behind the API are written down in [`docs/API-GUIDELINES.md`](docs/API-GUIDELINES.md).
 
 ### Measures
 
@@ -86,6 +91,8 @@ Three more behaviours are on by default and each has its own flag in `DateTableO
 
 ```csharp
 new ColumnDefinition("MonthNumber", ColumnDataType.Int64) { IsHidden = true }
+// or, for any table, including one loaded with AddTable:
+model.HideColumns("Sales", "ProductKey", "Date");
 ```
 
 A hidden column stays in the model (relationships, sorting, hierarchies and DAX can still use it) but does not appear in the PivotTable field list, the usual treatment for keys and sort-order columns. `AddDateTable` hides its sort-order columns this way. Confirmed in Excel: the model loads, the fields are hidden, and hierarchies, sorting and measures keep working. Confirmed in Excel on freshly generated files, including all ten columns of Excel's own H1 sample (keys, hierarchy levels and sort columns) hidden: after hiding a column, adding a hierarchy and a Sort by Column still work.
@@ -137,6 +144,7 @@ PivotTables can then slice `Sales` by any column of `Products` and `Customers`. 
 
 Behaviour to be aware of:
 
+- **Bad values.** A value that cannot be converted to its column's type (`"abc"` in a Whole Number column) makes `AddRow` throw an `ArgumentException` naming the row, column and value; the row is not added, so you can log it and carry on. When the same happens while loading from an `IDataReader`, the load stops and the table cannot be saved (the error names the row), because part of the row was already taken.
 - **Nulls.** `null` and `DBNull` become BLANK. `NaN` and ±∞ in `Double` columns also become BLANK, because the engine cannot store them.
 - **Text is case-insensitive.** As in Power Pivot, text values that differ only by case or width are the same value: `"Beta"` and `"beta"` become one value, and the first spelling seen wins. Accents are significant. Sorting and de-duplication use the culture from `Lcid`.
 - **Names.** Table and column names lose the characters Power Pivot forbids (`. , ; ' : / \ * | ? & % $ ! + = ( ) [ ] { } < > "` and control characters) and surrounding spaces. `"Sales (USD)"` becomes `"Sales USD"`.

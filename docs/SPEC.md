@@ -22,14 +22,18 @@ Supported and verified in Excel: tables, six data types, relationships (many-to-
 | Member | Notes |
 |---|---|
 | `DataModelWriter(DataModelOptions)` | entry point, `IDisposable` |
-| `AddTable(name, IDataReader / DataTable / IEnumerable<T>)`, `CreateTable(name, ColumnDefinition[])` → `TableWriter.AddRow(params object?[])` | tables |
+| `AddTable(name, IDataReader / DataTable / IEnumerable<T>)`, `CreateTable(name, ColumnDefinition[])` → `TableWriter` (`AddRow(params object?[])`, `AddRows`) | tables |
 | `AddRelationship(manyTable, manyColumn, oneTable, oneColumn)` | many-to-one, single column each side, no inactive relationships, one per pair of tables, no cycles |
 | `AddMeasure(table, name, daxExpression, MeasureFormat)` | DAX stored as written; names unique across model, no `[` `]` |
 | `AddHierarchy(table, name, params string[] levels)` | 2+ columns of one table; name unique within table and different from column names |
 | `SetSortByColumn(table, column, sortColumn)` (+ `TableWriter` overload); `ColumnDefinition.SortByColumn` | see section 7 |
+| `HideColumns(table, params string[] columns)`; `ColumnDefinition.IsHidden` | same output either way |
+| `MarkAsDateTable(table, dateColumn)`, `AddDateTable(name, from, to, DateTableOptions)` → read-only `TableWriter` | see section 9 |
 | `ColumnDefinition { Name, DataType, SortByColumn, IsHidden }` | `IsHidden` writes `AttributeHierarchyVisible=false` |
 | `DataModelOptions` | `Lcid` (1033 default; the user's files use 7177 = en-ZA), `SegmentRowCount` (2^20), `SpillThresholdBytes`, `TempDirectory`, `XpressCompression`, `CompressModelPart`, `DecimalAsCurrency`, `DataSourceName`, `ConnectionString`, `WorksheetName`, `AddHelperMeasure` (default true) |
-| `Save(path)`, `Save(Stream)`, `SaveModelPart(Stream)` | |
+| `Save(path)`, `Save(Stream)`, `SaveModelPart(Stream)` | `Save(path)` writes a temp file beside the target and moves it over only on success |
+
+Every method that takes a table accepts its name (given or sanitised, ignoring case) or its `TableWriter` (`AddTable`, `CreateTable` and `AddDateTable` all return one). Conventions: `docs/API-GUIDELINES.md`.
 | `MeasureFormat` | General, WholeNumber, Decimal(n), Currency(n), Percentage(n), Date |
 
 Data types: Int64, Double, Currency, DateTime, Boolean, String (see README table for encodings). Names lose `. , ; ' : / \ * | ? & % $ ! + = ( ) [ ] { } < > "` and control characters.

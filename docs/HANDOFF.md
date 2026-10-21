@@ -16,13 +16,14 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | Hidden columns | `ColumnDefinition.IsHidden`; **Excel-verified 2026-10-19/20**: the ten columns of Excel's `H1` (keys, hierarchy levels, sort columns) and a single hidden hierarchy level, in freshly generated models, load, display correctly, and accept hide, add hierarchy and add Sort by Column. The long-standing `OnClone2` failure after a hide was the all-zero `Ordinal` values (SPEC §8): every model now writes distinct Ordinals (measure groups 1..n, partitions and script 1), rechecked on a plain model, a two-table model without a measure, a generated date table and the standard hierarchy model. The hidden-column counters/timestamps of `ModelInfo.HiddenProfile` reproduce H8/H9 but were never shown to be needed. Not tested in Excel: hiding columns in a model with no hierarchy and no relationships beyond the `plain` and `twotable` cases |
 | Generated date table (`AddDateTable`) | **Excel-verified 2026-10-12**: standard calendar with `Calendar` hierarchy, marked as date table; one calendar year (December), several years (December and June year ends), February year end, and the defaults (whole-year range, YearMonth, hidden sort columns) with `datetbl_gen_defaults_v1`. Options `yearEndMonth`, `yearLabel` (default "Fiscal"), `completeYears`, `includeYearMonth`, `hideSortColumns`. Needed a fix found with `H5`: hierarchy StructureType must be Unnatural when a member has several parents (SPEC §7). `datagen <dir> <name> gendate [yearEnd firstYear lastYear label flags]`, flags `exact,noym,nohide`. Not tested in Excel: a non-default `yearLabel` |
 | Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel-tested 2026-10-11: loads, date table works in the PivotTable, adding a hierarchy and a Sort by Column work** (the first attempt failed in `OnClone2` until `Ordinal` matched Excel, SPEC §9). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
+| API usability pass (2026-10-21) | `docs/API-USABILITY-REVIEW.md`: atomic `Save(path)` and `AddRow`, `AddTable` returns `TableWriter` (breaking), `HideColumns`, lookups by the given table name, better messages. Output bytes unchanged. Conventions for new API: `docs/API-GUIDELINES.md` |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
 | CI (GitHub Actions), editorconfig, global.json, session hook | done |
 | License | MIT (LICENSE, csproj) |
 | NuGet packaging | **`0.1.0-preview.1` (2026-10-11) and `0.1.0-preview.2` (2026-10-20, tag on `830111f`: hidden columns, the date table, `AddDateTable`, distinct Ordinals) published on nuget.org**, id `PivotWright`. Metadata, README, snupkg symbols and SourceLink set up. `release.yml` publishes on `v*` tags via nuget.org trusted publishing (environment `nuget` with required reviewer, secret `NUGET_USER` = nuget.org username; no API key) |
 
-Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 42 tests, all pass. Nothing but the .NET 8 SDK is needed.
+Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 46 tests, all pass. Nothing but the .NET 8 SDK is needed.
 
 ## 2. Immediate next steps, in order
 
@@ -67,7 +68,7 @@ When a failure is baffling, bisect with hybrids of an Excel sample and a generat
 
 ## 5. Source map
 
-- `DataModelWriter.cs`, `TableWriter.cs`, `ColumnDefinition.cs`, `DataModelOptions.cs`, `MeasureFormat.cs`: public API.
+- `DataModelWriter.cs`, `TableWriter.cs`, `ColumnDefinition.cs`, `DataModelOptions.cs`, `MeasureFormat.cs`: public API Conventions: `docs/API-GUIDELINES.md`.
 - `Internal/ModelSerializer.cs`: the ABF assembly: file order, backup-log groups, version selection (`Info.CubeVersion` etc.), helper measure.
 - `Internal/Metadata/AsslWriter.cs`: ASSL (database, cube, dimension, measure group, partition, script, data source view); `ModelInfo` with the version counters.
 - `Internal/Metadata/TableXmlWriter.cs`: tbl.xml for main tables, `H$` column tables, `R$` relationship tables, `U$` hierarchy tables.

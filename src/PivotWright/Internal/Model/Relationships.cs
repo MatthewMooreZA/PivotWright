@@ -67,7 +67,7 @@ internal static class RelationshipEncoder
                     $"The relationship '{rel.From.Name}[{rel.FromColumn.Definition.Name}]' -> '{rel.To.Name}[{rel.ToColumn.Definition.Name}]' needs a primary key without blanks, but row {row + 1} of '{rel.To.Name}' has none.");
             if (!rows.TryAdd(key, row))
                 throw new InvalidOperationException(
-                    $"The relationship '{rel.From.Name}[{rel.FromColumn.Definition.Name}]' -> '{rel.To.Name}[{rel.ToColumn.Definition.Name}]' needs unique primary keys, but '{rel.To.Name}[{rel.ToColumn.Definition.Name}]' contains the value '{key}' more than once.");
+                    $"The relationship '{rel.From.Name}[{rel.FromColumn.Definition.Name}]' -> '{rel.To.Name}[{rel.ToColumn.Definition.Name}]' needs unique primary keys, but '{rel.To.Name}[{rel.ToColumn.Definition.Name}]' contains the value '{key}' more than once. AddRelationship takes the many side (for example Sales) first and the one side, whose key is unique (for example Products), second.");
             row++;
         }
 

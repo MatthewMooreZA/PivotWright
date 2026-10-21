@@ -15,9 +15,12 @@ namespace PivotWright;
 /// <example>
 /// <code>
 /// using var model = new DataModelWriter();
-/// model.AddTable("Sales", sqlCommand.ExecuteReader());
+/// var sales = model.AddTable("Sales", sqlCommand.ExecuteReader());
+/// model.AddMeasure(sales, "Total Qty", "SUM(Sales[Qty])");
 /// model.Save("sales.xlsx");
 /// </code>
+/// Every method that takes a table accepts either its name (as given or as stored, ignoring case) or the
+/// <see cref="TableWriter"/> returned when the table was added.
 /// </example>
 public sealed class DataModelWriter : IDisposable
 {
@@ -50,10 +53,14 @@ public sealed class DataModelWriter : IDisposable
     public IEnumerable<string> TableNames => _tables.Select(t => t.Name);
 
     /// <summary>Creates an empty table; add rows through the returned <see cref="TableWriter"/>.</summary>
+    /// <param name="name">Table name. Characters Power Pivot rejects are removed (see <see cref="TableWriter.Name"/>); later
+    /// calls may use either form.</param>
+    /// <param name="columns">The columns, in order.</param>
     public TableWriter CreateTable(string name, IEnumerable<ColumnDefinition> columns)
     {
         ThrowIfDisposed();
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Table name is required.", nameof(name));
+        ArgumentNullException.ThrowIfNull(columns);
         string modelName = Identifiers.SanitizeName(name, "Table");
         if (_tables.Any(t => string.Equals(t.Name, modelName, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"A table named '{modelName}' already exists.", nameof(name));
@@ -71,8 +78,8 @@ public sealed class DataModelWriter : IDisposable
     /// <param name="name">Table name.</param>
     /// <param name="reader">Source rows; read to the end but not closed.</param>
     /// <param name="typeOverrides">Optional per-column data types, keyed by column name.</param>
-    /// <returns>The number of rows loaded.</returns>
-    public long AddTable(string name, IDataReader reader, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
+    /// <returns>The table, with every row loaded (<see cref="TableWriter.RowCount"/>); pass it to the other methods in place of its name.</returns>
+    public TableWriter AddTable(string name, IDataReader reader, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
     {
         ArgumentNullException.ThrowIfNull(reader);
         var defs = new List<ColumnDefinition>(reader.FieldCount);
@@ -87,11 +94,12 @@ public sealed class DataModelWriter : IDisposable
         }
         var table = CreateTable(name, defs);
         table.AddRows(reader);
-        return table.RowCount;
+        return table;
     }
 
-    /// <summary>Adds a table from a <see cref="DataTable"/>.</summary>
-    public long AddTable(DataTable table, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
+    /// <summary>Adds a table from a <see cref="DataTable"/>, named after <see cref="DataTable.TableName"/> (Table1, Table2, ... when empty).</summary>
+    /// <returns>The table, with every row loaded.</returns>
+    public TableWriter AddTable(DataTable table, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
     {
         ArgumentNullException.ThrowIfNull(table);
         using var reader = table.CreateDataReader();
@@ -101,13 +109,14 @@ public sealed class DataModelWriter : IDisposable
     /// <summary>
     /// Adds a table from a sequence of objects; every public readable property becomes a column.
     /// </summary>
-    public long AddTable<T>(string name, IEnumerable<T> rows, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
+    /// <returns>The table, with every row loaded.</returns>
+    public TableWriter AddTable<T>(string name, IEnumerable<T> rows, IReadOnlyDictionary<string, ColumnDataType>? typeOverrides = null)
     {
         ArgumentNullException.ThrowIfNull(rows);
         var props = typeof(T).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
             .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
             .ToArray();
-        if (props.Length == 0) throw new ArgumentException($"Type {typeof(T).Name} has no public properties.");
+        if (props.Length == 0) throw new ArgumentException($"Type {typeof(T).Name} has no public properties.", nameof(rows));
         var defs = props.Select(p => new ColumnDefinition(p.Name,
             typeOverrides is not null && typeOverrides.TryGetValue(p.Name, out var t)
                 ? t
@@ -120,7 +129,7 @@ public sealed class DataModelWriter : IDisposable
             for (int i = 0; i < getters.Length; i++) values[i] = item is null ? null : getters[i](item);
             table.AddRow(values);
         }
-        return table.RowCount;
+        return table;
     }
 
     /// <summary>Number of relationships added so far.</summary>
@@ -139,11 +148,11 @@ public sealed class DataModelWriter : IDisposable
     public void AddRelationship(string manyTable, string manyColumn, string oneTable, string oneColumn)
     {
         ThrowIfDisposed();
-        var many = FindTable(manyTable);
-        var one = FindTable(oneTable);
+        var many = FindTable(manyTable, nameof(manyTable));
+        var one = FindTable(oneTable, nameof(oneTable));
         if (many == one) throw new ArgumentException("A relationship needs two different tables.", nameof(oneTable));
-        var fk = FindColumn(many, manyColumn);
-        var pk = FindColumn(one, oneColumn);
+        var fk = many.FindColumn(manyColumn, nameof(manyColumn));
+        var pk = one.FindColumn(oneColumn, nameof(oneColumn));
         if (fk.Definition.DataType != pk.Definition.DataType)
             throw new ArgumentException(
                 $"'{many.Name}[{fk.Definition.Name}]' is {fk.Definition.DataType} but '{one.Name}[{pk.Definition.Name}]' is {pk.Definition.DataType}; related columns need the same data type.");
@@ -169,11 +178,33 @@ public sealed class DataModelWriter : IDisposable
     public void SetSortByColumn(string table, string column, string sortColumn)
     {
         ThrowIfDisposed();
-        FindTable(table).SetSortBy(column, sortColumn);
+        FindTable(table, nameof(table)).SetSortBy(column, sortColumn);
     }
 
-    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
-    public void SetSortByColumn(TableWriter table, string column, string sortColumn) => SetSortByColumn(table.Name, column, sortColumn);
+    /// <summary>Overload taking the table returned when it was added.</summary>
+    public void SetSortByColumn(TableWriter table, string column, string sortColumn) => SetSortByColumn(NameOf(table), column, sortColumn);
+
+    /// <summary>
+    /// Hides columns from client tools, like Power Pivot's "Hide from Client Tools": they stay in the model (relationships,
+    /// sorting, hierarchies and DAX can still use them) but are not listed in the PivotTable field list. The usual treatment
+    /// for keys and sort-order columns. Same as <see cref="ColumnDefinition.IsHidden"/>, for tables loaded with
+    /// <see cref="AddTable(string, IDataReader, IReadOnlyDictionary{string, ColumnDataType}?)"/>.
+    /// </summary>
+    /// <param name="table">Table that holds the columns.</param>
+    /// <param name="columns">One or more column names.</param>
+    /// <exception cref="ArgumentException">The table or a column is unknown, or no column is given.</exception>
+    public void HideColumns(string table, params string[] columns)
+    {
+        ThrowIfDisposed();
+        var t = FindTable(table, nameof(table));
+        ArgumentNullException.ThrowIfNull(columns);
+        if (columns.Length == 0) throw new ArgumentException("Name at least one column to hide.", nameof(columns));
+        foreach (var c in columns) t.FindColumn(c, nameof(columns));
+        foreach (var c in columns) t.SetHidden(c, hidden: true);
+    }
+
+    /// <summary>Overload taking the table returned when it was added.</summary>
+    public void HideColumns(TableWriter table, params string[] columns) => HideColumns(NameOf(table), columns);
 
     /// <summary>Number of hierarchies added so far.</summary>
     public int HierarchyCount => _hierarchies.Count;
@@ -188,7 +219,7 @@ public sealed class DataModelWriter : IDisposable
     public void AddHierarchy(string table, string name, params string[] levels)
     {
         ThrowIfDisposed();
-        var t = FindTable(table);
+        var t = FindTable(table, nameof(table));
         ArgumentNullException.ThrowIfNull(levels);
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Hierarchy name is required.", nameof(name));
         string modelName = Identifiers.SanitizeName(name, "Hierarchy");
@@ -200,15 +231,15 @@ public sealed class DataModelWriter : IDisposable
         var columns = new List<ColumnBuilder>();
         foreach (var level in levels)
         {
-            var c = FindColumn(t, level);
+            var c = t.FindColumn(level, nameof(levels));
             if (columns.Contains(c)) throw new ArgumentException($"Column '{c.Definition.Name}' is used twice in the hierarchy.", nameof(levels));
             columns.Add(c);
         }
         _hierarchies.Add(new HierarchyDefinition { Name = modelName, Table = t, Columns = columns });
     }
 
-    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
-    public void AddHierarchy(TableWriter table, string name, params string[] levels) => AddHierarchy(table.Name, name, levels);
+    /// <summary>Overload taking the table returned when it was added.</summary>
+    public void AddHierarchy(TableWriter table, string name, params string[] levels) => AddHierarchy(NameOf(table), name, levels);
 
     /// <summary>Name of the table marked with <see cref="MarkAsDateTable(string, string)"/>, or null.</summary>
     public string? DateTableName => _tables.FirstOrDefault(t => t.DateColumn is not null)?.Name;
@@ -229,8 +260,8 @@ public sealed class DataModelWriter : IDisposable
     public void MarkAsDateTable(string table, string dateColumn)
     {
         ThrowIfDisposed();
-        var t = FindTable(table);
-        var c = FindColumn(t, dateColumn);
+        var t = FindTable(table, nameof(table));
+        var c = t.FindColumn(dateColumn, nameof(dateColumn));
         if (c.Definition.DataType != ColumnDataType.DateTime)
             throw new ArgumentException($"'{t.Name}[{c.Definition.Name}]' is {c.Definition.DataType}; a date table needs a DateTime column.", nameof(dateColumn));
         if (c.SortBy is not null || t.Columns.Any(o => o.SortBy == c))
@@ -241,8 +272,8 @@ public sealed class DataModelWriter : IDisposable
         c.IsDateKey = true;
     }
 
-    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
-    public void MarkAsDateTable(TableWriter table, string dateColumn) => MarkAsDateTable(table.Name, dateColumn);
+    /// <summary>Overload taking the table returned when it was added.</summary>
+    public void MarkAsDateTable(TableWriter table, string dateColumn) => MarkAsDateTable(NameOf(table), dateColumn);
 
     /// <summary>
     /// Generates a standard calendar table with one row per day and marks it as the model's date table
@@ -266,7 +297,7 @@ public sealed class DataModelWriter : IDisposable
     /// <param name="from">A day in the first year to include.</param>
     /// <param name="to">A day in the last year to include, not before <paramref name="from"/>.</param>
     /// <param name="options">Year end, labels and the optional features (whole-year range, YearMonth, hidden sort columns); defaults when null.</param>
-    /// <returns>The table, which is complete; do not add rows.</returns>
+    /// <returns>The table, which is complete: adding rows to it throws <see cref="InvalidOperationException"/>.</returns>
     public TableWriter AddDateTable(string name, DateOnly from, DateOnly to, DateTableOptions? options = null)
     {
         ThrowIfDisposed();
@@ -322,6 +353,8 @@ public sealed class DataModelWriter : IDisposable
         AddHierarchy(table.Name, "Calendar", "Year", "Quarter", "Month");
         if (fiscal) AddHierarchy(table.Name, yearLabel + " Calendar", yearLabel + "Year", yearLabel + "Quarter", yearLabel + "Month");
         MarkAsDateTable(table.Name, "Date");
+        FindTable(table.Name, nameof(name)).ReadOnlyReason =
+            $"Table '{table.Name}' was generated by AddDateTable and is complete; widen its range with the from and to arguments instead of adding rows.";
         return table;
     }
 
@@ -356,7 +389,7 @@ public sealed class DataModelWriter : IDisposable
     public void AddMeasure(string table, string name, string expression, MeasureFormat? format = null, bool hidden = false)
     {
         ThrowIfDisposed();
-        var t = FindTable(table);
+        var t = FindTable(table, nameof(table));
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Measure name is required.", nameof(name));
         name = name.Trim();
         if (name.IndexOfAny(new[] { '[', ']' }) >= 0 || name.Any(char.IsControl))
@@ -379,13 +412,13 @@ public sealed class DataModelWriter : IDisposable
         });
     }
 
-    /// <summary>Overload taking the writer returned by <see cref="CreateTable"/>.</summary>
+    /// <summary>Overload taking the table returned when it was added.</summary>
     public void AddMeasure(TableWriter table, string name, string expression, MeasureFormat? format = null, bool hidden = false)
-        => AddMeasure(table.Name, name, expression, format, hidden);
+        => AddMeasure(NameOf(table), name, expression, format, hidden);
 
-    /// <summary>Overload taking the writers returned by <see cref="CreateTable"/>.</summary>
+    /// <summary>Overload taking the tables returned when they were added.</summary>
     public void AddRelationship(TableWriter manyTable, string manyColumn, TableWriter oneTable, string oneColumn)
-        => AddRelationship(manyTable.Name, manyColumn, oneTable.Name, oneColumn);
+        => AddRelationship(NameOf(manyTable, nameof(manyTable)), manyColumn, NameOf(oneTable, nameof(oneTable)), oneColumn);
 
     // True if the graph of relationships (treated as undirected) connects the two tables.
     private bool Reaches(TableBuilder from, TableBuilder target)
@@ -406,33 +439,55 @@ public sealed class DataModelWriter : IDisposable
         return false;
     }
 
-    private TableBuilder FindTable(string name)
+    // Finds a table by its model name or by the name it was given (before characters Power Pivot rejects were removed).
+    private TableBuilder FindTable(string name, string paramName)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(name, paramName);
+        string modelName = Identifiers.SanitizeName(name, "Table");
         return _tables.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ArgumentException($"There is no table named '{name}'.", nameof(name));
+            ?? _tables.FirstOrDefault(t => string.Equals(t.Name, modelName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"There is no table named '{name}'. The model's tables are: {Identifiers.List(TableNames)}.", paramName);
     }
 
-    private static ColumnBuilder FindColumn(TableBuilder table, string name)
+    // The name of a table passed as a TableWriter, which must belong to this model.
+    private string NameOf(TableWriter table, string paramName = "table")
     {
-        ArgumentNullException.ThrowIfNull(name);
-        return table.Columns.FirstOrDefault(c => string.Equals(c.Definition.Name, name, StringComparison.OrdinalIgnoreCase)
-                                                 || string.Equals(c.ModelName, name, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'.", nameof(name));
+        ArgumentNullException.ThrowIfNull(table, paramName);
+        if (!_tables.Contains(table.Builder))
+            throw new ArgumentException($"Table '{table.Name}' belongs to another DataModelWriter.", paramName);
+        return table.Name;
     }
 
     /// <summary>Encodes the model and writes the workbook to a file.</summary>
+    /// <remarks>
+    /// The workbook is written to a temporary file in the same directory and moved over <paramref name="path"/> only when it is
+    /// complete, so a failed save (for example a duplicate key, reported as <see cref="InvalidOperationException"/>) leaves an
+    /// existing file untouched.
+    /// </remarks>
     public void Save(string path)
     {
-        using var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 16);
-        Save(fs);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        string full = Path.GetFullPath(path);
+        string temp = Path.Combine(Path.GetDirectoryName(full)!, "~" + Path.GetFileName(full) + "." + Guid.NewGuid().ToString("N")[..8] + ".tmp");
+        try
+        {
+            using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16))
+                Save(fs);
+            File.Move(temp, full, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
     }
 
     /// <summary>Encodes the model and writes the workbook to a stream.</summary>
+    /// <remarks>Nothing is written to <paramref name="output"/> unless the model is valid; the stream is left open.</remarks>
     public void Save(Stream output)
     {
         ThrowIfDisposed();
-        if (_tables.Count == 0) throw new InvalidOperationException("Add at least one table before saving.");
+        ArgumentNullException.ThrowIfNull(output);
+        ThrowIfEmpty();
         string dir = _options.TempDirectory ?? Path.GetTempPath();
         string tempPath = Path.Combine(dir, "ppw-model-" + Guid.NewGuid().ToString("N") + ".tmp");
         using var model = new FileStream(tempPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
@@ -449,8 +504,15 @@ public sealed class DataModelWriter : IDisposable
     public void SaveModelPart(Stream output)
     {
         ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(output);
         if (!output.CanSeek) throw new ArgumentException("The output stream must be seekable.", nameof(output));
+        ThrowIfEmpty();
         new ModelSerializer(_options, _tables, _relationships, _ctx.StringComparer, _measures, _hierarchies).Write(output);
+    }
+
+    private void ThrowIfEmpty()
+    {
+        if (_tables.Count == 0) throw new InvalidOperationException("Add at least one table before saving.");
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

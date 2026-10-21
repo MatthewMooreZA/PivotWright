@@ -52,6 +52,10 @@ var tests = new (string Name, Action Body)[]
     ("Hidden columns: counters after a hide operation (H8, H9)", Tests.HiddenColumnsProfile),
     ("Measure groups get distinct Ordinals in every model", Tests.DistinctOrdinals),
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
+    ("API: tables are found by the name given and returned by AddTable", Tests.ApiTableHandles),
+    ("API: a value that does not fit leaves the table consistent", Tests.ApiRowsAreAtomic),
+    ("API: HideColumns writes the same model as ColumnDefinition.IsHidden", Tests.ApiHideColumns),
+    ("API: a failed Save leaves an existing file untouched", Tests.ApiSaveIsAtomic),
 };
 
 int failed = 0;
@@ -1290,6 +1294,128 @@ namespace PivotWright.Tests
             Check.True(!s.Contains("CREATE MEASURE") && s.Contains("__No measures defined"), "helper can be turned off");
             s = Build(helper: true, measure: true, out _);
             Check.True(s.Contains("CREATE MEASURE 'Many'[Mine]") && !s.Contains("PivotWright helper"), "no helper next to a real measure");
+        }
+            private static void Throws<T>(Action a, string what, string? messagePart = null) where T : Exception
+        {
+            try { a(); }
+            catch (T e)
+            {
+                if (messagePart is not null && !e.Message.Contains(messagePart, StringComparison.Ordinal))
+                    throw new Exception($"{what}: message '{e.Message}' does not contain '{messagePart}'");
+                return;
+            }
+            throw new Exception("Expected " + typeof(T).Name + ": " + what);
+        }
+
+        public static void ApiTableHandles()
+        {
+            using var model = new DataModelWriter();
+            var sales = model.AddTable("Sales (USD)", new[] { new { ProductKey = 1L, Qty = 2L } });
+            Check.Equal("Sales USD", sales.Name, "AddTable returns the table under its model name");
+            Check.Equal(1L, sales.RowCount, "rows loaded");
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64) });
+            products.AddRow(1);
+            model.AddRelationship("Sales (USD)", "ProductKey", "Products", "ProductKey");   // the name as given still works
+            model.AddMeasure(sales, "Total Qty", "SUM('Sales USD'[Qty])");
+            Throws<ArgumentException>(() => model.AddMeasure("Sale", "X", "1"), "unknown table", "'Products'");
+            Throws<ArgumentException>(() => model.AddHierarchy("Products", "H", "Nope", "ProductKey"), "unknown column", "Its columns are: 'ProductKey'");
+            using var other = new DataModelWriter();
+            var foreign = other.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64) });
+            Throws<ArgumentException>(() => model.HideColumns(foreign, "ProductKey"), "a table of another model", "another DataModelWriter");
+            var dates = model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 31));
+            Throws<InvalidOperationException>(() => dates.AddRow(new object?[dates.Columns.Count]), "rows added to a generated date table", "AddDateTable");
+            Check.Equal(365L, dates.RowCount, "generated table unchanged");
+        }
+
+        public static void ApiRowsAreAtomic()
+        {
+            using (var model = new DataModelWriter())
+            {
+                var t = model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.Int64), new ColumnDefinition("B", ColumnDataType.DateTime) });
+                Throws<ArgumentException>(() => t.AddRow(1, "not a date"), "unconvertible value", "Row 1 of table 'T': column 'B' (DateTime)");
+                Throws<ArgumentException>(() => t.AddRow(1), "too few values", "has 1 values, but the table has 2 columns");
+                t.AddRow(2, new DateTime(2025, 1, 1));
+                Check.Equal(1L, t.RowCount, "only the good row counts");
+                string tbl = Encoding.UTF8.GetString(ModelReader.Read(Save(model)).Find(@"\.0\.dim\\T_G\.0\.tbl\.xml$"));
+                Check.True(tbl.Contains("<Records xsi:type=\"xsd:long\">1</Records>"), "the model saves with the good row only");
+            }
+            using (var model = new DataModelWriter())
+            {
+                var source = new System.Data.DataTable("T");
+                source.Columns.Add("A", typeof(long));
+                source.Columns.Add("B", typeof(string));
+                source.Rows.Add(1L, "1");
+                source.Rows.Add(2L, "x");
+                var t = model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.Int64), new ColumnDefinition("B", ColumnDataType.Int64) });
+                Throws<ArgumentException>(() => t.AddRows(source.CreateDataReader()), "reader value that does not fit", "Row 2 of table 'T': column 'B'");
+                Throws<InvalidOperationException>(() => Save(model), "a table left incomplete cannot be saved", "loading row 2");
+            }
+        }
+
+        private static byte[] Save(DataModelWriter model)
+        {
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            return ms.ToArray();
+        }
+
+        public static void ApiHideColumns()
+        {
+            (string dim, string[] names) Build(bool late)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var t = model.CreateTable("T", new[]
+                {
+                    new ColumnDefinition("A", ColumnDataType.Int64),
+                    new ColumnDefinition("B", ColumnDataType.String) { IsHidden = !late },
+                    new ColumnDefinition("C", ColumnDataType.Double) { IsHidden = !late },
+                });
+                t.AddRow(1, "x", 1.5);
+                if (late) model.HideColumns("T", "B", "c");
+                Check.True(t.Columns[1].IsHidden && t.Columns[2].IsHidden && !t.Columns[0].IsHidden, "Columns reflects the hidden state");
+                var m = ModelReader.Read(Save(model));
+                return (HiddenAttributes(Encoding.UTF8.GetString(m.Find(@"\.0\.db\\T_G\.1\.dim\.xml$"))),
+                        m.Files.Keys.Select(k => System.Text.RegularExpressions.Regex.Replace(ModelReader.Normalize(k), "[0-9A-F]{20}", "DB")).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+            }
+            var early = Build(late: false);
+            var late = Build(late: true);
+            Check.Equal("__XL_RowNumber,B,C", late.dim, "hidden attributes");
+            Check.Equal(early.dim, late.dim, "same hidden attributes either way");
+            Check.True(early.names.SequenceEqual(late.names), "same files either way");
+            using var model = new DataModelWriter();
+            model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.Int64) });
+            Throws<ArgumentException>(() => model.HideColumns("T"), "no column given");
+            Throws<ArgumentException>(() => model.HideColumns("T", "A", "Nope"), "unknown column", "'Nope'");
+        }
+
+        public static void ApiSaveIsAtomic()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "pw-save-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string path = Path.Combine(dir, "model.xlsx");
+                File.WriteAllText(path, "previous");
+                using (var model = new DataModelWriter())
+                {
+                    var one = model.CreateTable("One", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                    one.AddRow(1); one.AddRow(1);
+                    var many = model.CreateTable("Many", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                    many.AddRow(1);
+                    model.AddRelationship("Many", "K", "One", "K");
+                    Throws<InvalidOperationException>(() => model.Save(path), "duplicate key", "many side");
+                }
+                Check.Equal("previous", File.ReadAllText(path), "existing file untouched");
+                Check.Equal(1, Directory.GetFiles(dir).Length, "no temporary file left behind");
+                using (var model = new DataModelWriter())
+                {
+                    model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.Int64) }).AddRow(1);
+                    model.Save(path);
+                }
+                Check.True(new FileInfo(path).Length > 1000, "a valid save replaces the file");
+                Check.Equal(1, Directory.GetFiles(dir).Length, "no temporary file left behind after success");
+            }
+            finally { Directory.Delete(dir, recursive: true); }
         }
     }
 }
