@@ -21,19 +21,20 @@ Supported and verified in Excel: tables, six data types, relationships (many-to-
 
 | Member | Notes |
 |---|---|
-| `DataModelWriter(DataModelOptions)` | entry point, `IDisposable` |
-| `AddTable(name, IDataReader / DataTable / IEnumerable<T>)`, `CreateTable(name, ColumnDefinition[])` → `TableWriter` (`AddRow(params object?[])`, `AddRows`) | tables |
-| `AddRelationship(manyTable, manyColumn, oneTable, oneColumn)` | many-to-one, single column each side, no inactive relationships, one per pair of tables, no cycles |
-| `AddMeasure(table, name, daxExpression, MeasureFormat)` | DAX stored as written; names unique across model, no `[` `]` |
-| `AddHierarchy(table, name, params string[] levels)` | 2+ columns of one table; name unique within table and different from column names |
-| `SetSortByColumn(table, column, sortColumn)` (+ `TableWriter` overload); `ColumnDefinition.SortByColumn` | see section 7 |
-| `HideColumns(table, params string[] columns)`; `ColumnDefinition.IsHidden` | same output either way |
-| `MarkAsDateTable(table, dateColumn)`, `AddDateTable(name, from, to, DateTableOptions)` → read-only `TableWriter` | see section 9 |
+| `DataModelWriter(DataModelOptions)` | entry point, `IDisposable`; `Tables` (`ModelCollection<ModelTable>`, by position or name), `Relationships`, `DateTable` |
+| `AddTable(name, IDataReader / DataTable / IEnumerable<T>)`, `CreateTable(name, ColumnDefinition[])` → `ModelTable` (`AddRow(params object?[])`, `AddRows`, `Columns`, `this[column]`) | tables |
+| `AddRelationship(ModelColumn many, ModelColumn one)` → `ModelRelationship` | many-to-one, single column each side, no inactive relationships, one per pair of tables, no cycles |
+| `ModelTable.AddMeasure(name, daxExpression, MeasureFormat)` → `ModelMeasure` (`IsHidden`) | DAX stored as written; names unique across model, no `[` `]` |
+| `ModelTable.AddHierarchy(name, params string[] levels)` → `ModelHierarchy` | 2+ columns of one table; name unique within table and different from column names |
+| `ModelColumn.SortByColumn` (settable, null clears); `ColumnDefinition.SortByColumn` | see section 7 |
+| `ModelColumn.IsHidden` (settable); `ColumnDefinition.IsHidden` | same output either way |
+| `ModelTable.MarkAsDateTable(dateColumn)`, `AddDateTable(name, from, to, DateTableOptions)` → read-only `ModelTable` | see section 9 |
 | `ColumnDefinition { Name, DataType, SortByColumn, IsHidden }` | `IsHidden` writes `AttributeHierarchyVisible=false` |
-| `DataModelOptions` | `Lcid` (1033 default; the user's files use 7177 = en-ZA), `SegmentRowCount` (2^20), `SpillThresholdBytes`, `TempDirectory`, `XpressCompression`, `CompressModelPart`, `DecimalAsCurrency`, `DataSourceName`, `ConnectionString`, `WorksheetName`, `AddHelperMeasure` (default true) |
+| `DataModelOptions` | `Culture` (en-US default; the user's files use en-ZA, LCID 7177), `SegmentRowCount` (2^20), `SpillThresholdBytes`, `TempDirectory`, `XpressCompression`, `CompressModelPart`, `DecimalAsCurrency`, `DataSourceName`, `ConnectionString`, `WorksheetName`, `AddHelperMeasure` (default true) |
 | `Save(path)`, `Save(Stream)`, `SaveModelPart(Stream)` | `Save(path)` writes a temp file beside the target and moves it over only on success |
+| `MeasureFormat` | General, WholeNumber, Decimal(n), Currency(n), Percentage(n), Date |
 
-Every method that takes a table accepts its name (given or sanitised, ignoring case) or its `TableWriter` (`AddTable`, `CreateTable` and `AddDateTable` all return one). Conventions: `docs/API-GUIDELINES.md`.
+Unknown names in an indexer (`Tables["X"]`, `table["X"]`) throw `KeyNotFoundException` listing the names that exist. Conventions: `docs/API-GUIDELINES.md`.
 | `MeasureFormat` | General, WholeNumber, Decimal(n), Currency(n), Percentage(n), Date |
 
 Data types: Int64, Double, Currency, DateTime, Boolean, String (see README table for encodings). Names lose `. , ; ' : / \ * | ? & % $ ! + = ( ) [ ] { } < > "` and control characters.
@@ -168,7 +169,7 @@ Marking `Dates[Date]` as the date table, compared with `V2b_pivotwright_hierarch
 - Every dimension object version goes up by one (Products 5 → 6, Dates 5 → 6, Sales 3 → 4). Dates dimension: StructureVersion 3, DataIDVersion 2, IncDataIDVersion 2, CacheVersion 2, DataVersion 3. Sales dimension: DataVersion 0 → 1; Sales partition DataVersion 0 → 1. Products is unchanged apart from the object version.
 - H2 vs H3 (date table + hidden columns) differ only in the hidden attributes.
 
-Implementation: `DataModelWriter.MarkAsDateTable(table, dateColumn)` extends the hierarchy profile (`ModelInfo.DateTables`, `DateReferencingTables`, `TableVersion`; `EncodedColumn.IsDateKey`/`AttributeHierarchyVersion`; `EncodedRelationship.Version`). The output was diffed against `H2` (counters, file names, tbl.xml and dim.xml all equal; only list order, `<Value/>` elements and data-dependent sizes differ).
+Implementation: `ModelTable.MarkAsDateTable(dateColumn)` extends the hierarchy profile (`ModelInfo.DateTables`, `DateReferencingTables`, `TableVersion`; `EncodedColumn.IsDateKey`/`AttributeHierarchyVersion`; `EncodedRelationship.Version`). The output was diffed against `H2` (counters, file names, tbl.xml and dim.xml all equal; only list order, `<Value/>` elements and data-dependent sizes differ).
 
 Only the configuration of `H2` has been seen, so `ModelSerializer.ValidateDateTables` refuses everything else: the date table needs a hierarchy, a relationship must use the date column as primary key, one date table per model, dates must be whole days without BLANK or duplicates, and the date column must be value-encoded. Unknown: a date table without hierarchy or relationship (ColumnFlags of a date key that is no primary key, probably 12), a model without hierarchies, several date tables, per-table counters for tables that are neither in a hierarchy nor on the many side.
 

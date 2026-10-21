@@ -1,3 +1,4 @@
+using System.Globalization;
 using PivotWright;
 string dir = args[0];
 // Modes that hide the columns of Excel's samples: "hidden" = H1_hidden_columns.xlsx (ten columns), "h8" = H8_hide_one_column.xlsx
@@ -10,14 +11,14 @@ var hiddenSet = (args.Length > 2 ? args[2] : "") switch
     _ => new HashSet<string>(),
 };
 ColumnDefinition Col(string table, string name, ColumnDataType type, string? sortBy = null) => new(name, type) { SortByColumn = sortBy, IsHidden = hiddenSet.Contains(table + "." + name) };
-using var m = new DataModelWriter(new DataModelOptions { Lcid = 7177 });
+using var m = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(7177) });
 if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship, no measure, no hierarchy
 {
     var pr = m.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Product", ColumnDataType.String) });
     for (int i = 1; i <= 12; i++) pr.AddRow(i, $"Item {i}");
     var sl = m.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
     for (int i = 0; i < 500; i++) sl.AddRow(1 + i % 12, 1 + i % 5);
-    m.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+    m.AddRelationship(sl["ProductKey"], pr["ProductKey"]);
     m.Save(Path.Combine(dir, args[1] + ".xlsx"));
     return;
 }
@@ -44,11 +45,12 @@ else
 }
 var s = m.CreateTable("Sales", new[] { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) });
 for (int i = 0; i < 1000; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
-m.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
-m.AddRelationship("Sales", "Date", "Dates", "Date");
+var dates = m.Tables["Dates"];
+m.AddRelationship(s["ProductKey"], p["ProductKey"]);
+m.AddRelationship(s["Date"], dates["Date"]);
 bool plain = args.Length > 2 && args[2] == "plain";   // no hierarchies at all
-if (!plain) m.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
-if (!generated && !plain) m.AddHierarchy("Dates", "Calendar", "Year", "Month");
-m.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
-if (args.Length > 2 && args[2] == "date") m.MarkAsDateTable("Dates", "Date");
+if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
+if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
+s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+if (args.Length > 2 && args[2] == "date") dates.MarkAsDateTable("Date");
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

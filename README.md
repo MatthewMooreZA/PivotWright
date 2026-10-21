@@ -9,16 +9,17 @@ The format follows Microsoft's open specification [MS-XLDM] (Spreadsheet Data Mo
 ## Quick start
 
 ```csharp
+using System.Globalization;
 using PivotWright;
 
 using var model = new DataModelWriter(new DataModelOptions
 {
-    Lcid = 2057,                 // en-GB collation and currency format
+    Culture = CultureInfo.GetCultureInfo("en-GB"),   // collation, currency format, month names
     DecimalAsCurrency = true,    // decimal -> Fixed Decimal (Currency) instead of Double
 });
 
 // 1. Straight from a database: rows are streamed, never materialised.
-TableWriter sales;
+ModelTable sales;
 using (var cmd = new SqlCommand("SELECT * FROM dbo.FactSales", connection))
 using (var reader = cmd.ExecuteReader())
     sales = model.AddTable("Sales", reader);
@@ -39,18 +40,26 @@ var fx = model.CreateTable("FX", new[]
 fx.AddRow(new DateTime(2026, 10, 1), "ZAR", 17.42);
 fx.AddRow(new DateTime(2026, 10, 1), "USD", 1.0);
 
-model.AddRelationship(sales, "ProductKey", products, "ProductKey");
-model.HideColumns(sales, "ProductKey");
+model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+sales["ProductKey"].IsHidden = true;
+sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
 model.Save("Sales model.xlsx");
 ```
 
-Every `Add…`/`Create…` method that makes a table returns its `TableWriter`. Wherever a method takes a table you can pass that object or the table name (the name as you gave it, or as stored, ignoring case). Mistakes in names are reported at once, as `ArgumentException`, with the names that do exist; problems that depend on the data (a duplicate key, a month with two sort numbers) are reported by `Save`, as `InvalidOperationException`. A failed `Save(path)` leaves an existing file at that path untouched. The conventions behind the API are written down in [`docs/API-GUIDELINES.md`](docs/API-GUIDELINES.md).
+### How the API is organised
+
+- `DataModelWriter` owns the **tables** and the **relationships**. A `ModelTable` owns its **columns**, **measures** and **hierarchies**, and takes rows.
+- Every `Add…` method returns the object it added (`ModelTable`, `ModelRelationship`, `ModelMeasure`, `ModelHierarchy`).
+- Find objects by name with `model.Tables["Sales"]` and `sales["Qty"]` (short for `sales.Columns["Qty"]`). A table can be found by the name you gave it or by its stored name, ignoring case. A wrong name throws `KeyNotFoundException`, which lists the names that do exist.
+- Settings that can change after an object is added are properties: `column.IsHidden`, `column.SortByColumn`, `measure.IsHidden`.
+- Other mistakes in a call throw `ArgumentException` at once. Problems that depend on the data (a duplicate key, a month with two sort numbers) are reported by `Save`, as `InvalidOperationException`. A failed `Save(path)` leaves an existing file at that path untouched. The conventions behind the API are written down in [`docs/API-GUIDELINES.md`](docs/API-GUIDELINES.md).
 
 ### Measures
 
 ```csharp
-model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
-model.AddMeasure("Sales", "Revenue", "SUMX(Sales, Sales[Qty] * Sales[Price])", MeasureFormat.Currency());
+sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+sales.AddMeasure("Revenue", "SUMX(Sales, Sales[Qty] * Sales[Price])", MeasureFormat.Currency());
+sales.AddMeasure("Base Rate", "0.15").IsHidden = true;   // used only by other measures
 ```
 
 A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. Formats: `General`, `WholeNumber`, `Decimal(n)`, `Currency(n)`, `Percentage(n)`, `Date`. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
@@ -58,8 +67,8 @@ A measure is a DAX expression attached to a table, shown in the PivotTable field
 ### Hierarchies
 
 ```csharp
-model.AddHierarchy("Products", "Product Hierarchy", "Category", "Subcategory", "Product");
-model.AddHierarchy("Dates", "Calendar", "Year", "Month");
+products.AddHierarchy("Product Hierarchy", "Category", "Subcategory", "Product");
+dates.AddHierarchy("Calendar", "Year", "Month");
 ```
 
 A hierarchy is an ordered drill-down path over two or more columns of one table; PivotTables offer it as a single field with expandable levels. The name must be unique within the table and different from its column names. The tree is built and sorted when saving (levels sort like the columns do, BLANK first), so memory use grows with the number of distinct value paths. The file layout matches what Excel writes byte for byte for the same data. BLANK values inside a level (sorted first) and values that differ only in case (merged) were confirmed in Excel.
@@ -67,9 +76,9 @@ A hierarchy is an ordered drill-down path over two or more columns of one table;
 ### Date table
 
 ```csharp
-model.AddRelationship("Sales", "Date", "Dates", "Date");
-model.AddHierarchy("Dates", "Calendar", "Year", "Month");
-model.MarkAsDateTable("Dates", "Date");
+model.AddRelationship(sales["Date"], dates["Date"]);
+dates.AddHierarchy("Calendar", "Year", "Month");
+dates.MarkAsDateTable("Date");
 ```
 
 Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*, which time intelligence functions such as `TOTALYTD` and `SAMEPERIODLASTYEAR` rely on. The column must be a date column (`ColumnDataType.DateTime`, which is what `DateOnly`, `DateTime` and `DateTimeOffset` sources all map to) with one whole day per row (no BLANK, no time part, no duplicates; checked when saving). The file layout follows what Excel writes after marking a date table in a model like the one above; that is the only case seen so far, so for now saving requires **a hierarchy on the date table, a relationship that uses the date column as its primary key, and a single date table per model**. Verified in Excel: the model loads, the date table works in a PivotTable, and adding a hierarchy or a Sort by Column afterwards works.
@@ -77,10 +86,10 @@ Marks a table as the model's date table, like Power Pivot's *Mark as Date Table*
 #### Generated date table
 
 ```csharp
-model.AddDateTable("Dates", new DateOnly(2020, 1, 1), new DateOnly(2030, 12, 31));   // also marks it as date table
+var dates = model.AddDateTable("Dates", new DateOnly(2020, 1, 1), new DateOnly(2030, 12, 31));   // also marks it as date table
 // or, for a financial year ending in June:
-// model.AddDateTable("Dates", new DateOnly(2020, 7, 1), new DateOnly(2030, 6, 30), new DateTableOptions { YearEndMonth = 6 });
-model.AddRelationship("Sales", "Date", "Dates", "Date");
+// var dates = model.AddDateTable("Dates", new DateOnly(2020, 7, 1), new DateOnly(2030, 6, 30), new DateTableOptions { YearEndMonth = 6 });
+model.AddRelationship(sales["Date"], dates["Date"]);
 ```
 
 Alternatively `AddDateTable` builds a standard calendar for you, one row per day, with the columns Date, Year, QuarterNumber, Quarter, MonthNumber, Month, Day, DayOfWeekNumber (1 = Monday) and DayOfWeek. Quarter, Month and DayOfWeek are sorted by their number columns, a `Calendar` hierarchy (Year, Quarter, Month) is added, and the table is marked as date table. Settings go in a `DateTableOptions` object. Set `YearEndMonth` (1 to 12, default 12 = December) when the year does not end in December: the table then also gets FiscalYear (the calendar year in which the fiscal year ends, so with a June year end July 2024 belongs to FiscalYear 2025), FiscalQuarterNumber, FiscalQuarter, FiscalMonthNumber (1 = first month of the fiscal year) and FiscalMonth, sorted by their numbers, plus a `Fiscal Calendar` hierarchy (FiscalYear, FiscalQuarter, FiscalMonth). The year does not have to be a fiscal one: set `YearLabel = "Financial"` (letters and digits, default `"Fiscal"`) to get FinancialYear, FinancialQuarter, FinancialMonth and a `Financial Calendar` hierarchy instead. The calendar columns stay in the table either way, because Month and FiscalMonth need different sort orders and reports often need both.
@@ -92,7 +101,7 @@ Three more behaviours are on by default and each has its own flag in `DateTableO
 ```csharp
 new ColumnDefinition("MonthNumber", ColumnDataType.Int64) { IsHidden = true }
 // or, for any table, including one loaded with AddTable:
-model.HideColumns("Sales", "ProductKey", "Date");
+sales["ProductKey"].IsHidden = true;
 ```
 
 A hidden column stays in the model (relationships, sorting, hierarchies and DAX can still use it) but does not appear in the PivotTable field list, the usual treatment for keys and sort-order columns. `AddDateTable` hides its sort-order columns this way. Confirmed in Excel: the model loads, the fields are hidden, and hierarchies, sorting and measures keep working. Confirmed in Excel on freshly generated files, including all ten columns of Excel's own H1 sample (keys, hierarchy levels and sort columns) hidden: after hiding a column, adding a hierarchy and a Sort by Column still work.
@@ -106,8 +115,8 @@ var dates = model.CreateTable("Dates", new[]
     new ColumnDefinition("Month", ColumnDataType.String) { SortByColumn = "MonthNumber" },
     new ColumnDefinition("MonthNumber", ColumnDataType.Int64),
 });
-// or, after creating the table:
-model.SetSortByColumn("Products", "Category", "CategoryOrder");
+// or, after creating the table (null restores the column's own order):
+products["Category"].SortByColumn = products["CategoryOrder"];
 ```
 
 Like Power Pivot's *Sort by Column*: Month lists January to December instead of April, August, ... in PivotTables, slicers and hierarchies. Every value of the column must belong to exactly one value of the sort column (several months may share a quarter number, but one month may not have two numbers); this is checked when saving. Values with equal sort values keep their own order and BLANK stays first. A column that is sorted cannot itself be a sort column. Hierarchy trees follow the sorted order.
@@ -119,8 +128,8 @@ Confirmed in Excel: sorted columns show in the right order in a PivotTable, and 
 Relate tables the way Power Pivot's diagram view does: many-to-one, from a foreign key column to a unique key column. Add both tables first, then:
 
 ```csharp
-model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");   // many table, column, one table, column
-model.AddRelationship("Sales", "CustomerKey", "Customers", "CustomerKey");
+model.AddRelationship(sales["ProductKey"], products["ProductKey"]);     // many side first, then the one side
+model.AddRelationship(sales["CustomerKey"], customers["CustomerKey"]);
 ```
 
 PivotTables can then slice `Sales` by any column of `Products` and `Customers`. Rules, all enforced:
@@ -146,14 +155,14 @@ Behaviour to be aware of:
 
 - **Bad values.** A value that cannot be converted to its column's type (`"abc"` in a Whole Number column) makes `AddRow` throw an `ArgumentException` naming the row, column and value; the row is not added, so you can log it and carry on. When the same happens while loading from an `IDataReader`, the load stops and the table cannot be saved (the error names the row), because part of the row was already taken.
 - **Nulls.** `null` and `DBNull` become BLANK. `NaN` and ±∞ in `Double` columns also become BLANK, because the engine cannot store them.
-- **Text is case-insensitive.** As in Power Pivot, text values that differ only by case or width are the same value: `"Beta"` and `"beta"` become one value, and the first spelling seen wins. Accents are significant. Sorting and de-duplication use the culture from `Lcid`.
+- **Text is case-insensitive.** As in Power Pivot, text values that differ only by case or width are the same value: `"Beta"` and `"beta"` become one value, and the first spelling seen wins. Accents are significant. Sorting and de-duplication use `DataModelOptions.Culture`.
 - **Names.** Table and column names lose the characters Power Pivot forbids (`. , ; ' : / \ * | ? & % $ ! + = ( ) [ ] { } < > "` and control characters) and surrounding spaces. `"Sales (USD)"` becomes `"Sales USD"`.
 
 ## Options (`DataModelOptions`)
 
 | Option | Default | Meaning |
 |---|---|---|
-| `Lcid` | 1033 | Model locale: collation, currency format, string hash algorithm. |
+| `Culture` | en-US | Model locale: collation, currency format, month and day names, string hash algorithm. Needs a culture with a Windows LCID (not the invariant culture). |
 | `SegmentRowCount` | 1,048,576 | Rows per column segment. Must be a power of two from 16,384 to 16,777,216. Excel uses 2²⁰. |
 | `SpillThresholdBytes` | 32 MiB | In-memory buffer per column before values spill to a temp file. |
 | `TempDirectory` | system temp | Location of spill files and the temporary model stream. |
@@ -286,7 +295,7 @@ Workbook (.xlsx, OPC zip)
 Source layout:
 
 - `src/PivotWright/`
-  - `DataModelWriter`, `TableWriter`, `ColumnDefinition`, `DataModelOptions`: the public API.
+  - `DataModelWriter`, `ModelTable`, `ModelColumn`, `ModelMeasure`, `ModelHierarchy`, `ModelRelationship`, `ModelCollection`, `ColumnDefinition`, `DataModelOptions`: the public API.
   - `Internal/Abf`: container, chunking, CRC, Xpress compressor, backup log.
   - `Internal/VertiPaq`: segment encoder, bit packing, dictionaries, hash index.
   - `Internal/Model`: per-type column builders, encoding decisions, hierarchies.

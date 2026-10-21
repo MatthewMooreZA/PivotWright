@@ -1,6 +1,6 @@
 # Handoff — moving from the claude.ai session to Claude Code
 
-Owner: Matthew (accounting/actuarial practice, Johannesburg; tests in desktop Excel 365 on Windows, locale en-ZA, `Lcid = 7177`). Repo: `MatthewMooreZA/PivotWright` (renamed from `PowerPivotWriter`; the name was settled on 2026-10-10).
+Owner: Matthew (accounting/actuarial practice, Johannesburg; tests in desktop Excel 365 on Windows, locale en-ZA, `Culture = CultureInfo.GetCultureInfo("en-ZA")`, LCID 7177). Repo: `MatthewMooreZA/PivotWright` (renamed from `PowerPivotWriter`; the name was settled on 2026-10-10).
 
 Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, verification, open questions). This file is the working context.
 
@@ -15,8 +15,8 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | Sort by Column | done, verified |
 | Hidden columns | `ColumnDefinition.IsHidden`; **Excel-verified 2026-10-19/20**: the ten columns of Excel's `H1` (keys, hierarchy levels, sort columns) and a single hidden hierarchy level, in freshly generated models, load, display correctly, and accept hide, add hierarchy and add Sort by Column. The long-standing `OnClone2` failure after a hide was the all-zero `Ordinal` values (SPEC §8): every model now writes distinct Ordinals (measure groups 1..n, partitions and script 1), rechecked on a plain model, a two-table model without a measure, a generated date table and the standard hierarchy model. The hidden-column counters/timestamps of `ModelInfo.HiddenProfile` reproduce H8/H9 but were never shown to be needed. Not tested in Excel: hiding columns in a model with no hierarchy and no relationships beyond the `plain` and `twotable` cases |
 | Generated date table (`AddDateTable`) | **Excel-verified 2026-10-12**: standard calendar with `Calendar` hierarchy, marked as date table; one calendar year (December), several years (December and June year ends), February year end, and the defaults (whole-year range, YearMonth, hidden sort columns) with `datetbl_gen_defaults_v1`. Options `yearEndMonth`, `yearLabel` (default "Fiscal"), `completeYears`, `includeYearMonth`, `hideSortColumns`. Needed a fix found with `H5`: hierarchy StructureType must be Unnatural when a member has several parents (SPEC §7). `datagen <dir> <name> gendate [yearEnd firstYear lastYear label flags]`, flags `exact,noym,nohide`. Not tested in Excel: a non-default `yearLabel` |
-| Date table, mark an existing table | `DataModelWriter.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel-tested 2026-10-11: loads, date table works in the PivotTable, adding a hierarchy and a Sort by Column work** (the first attempt failed in `OnClone2` until `Ordinal` matched Excel, SPEC §9). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
-| API usability pass (2026-10-21) | `docs/API-USABILITY-REVIEW.md`: atomic `Save(path)` and `AddRow`, `AddTable` returns `TableWriter` (breaking), `HideColumns`, lookups by the given table name, better messages. Output bytes unchanged. Conventions for new API: `docs/API-GUIDELINES.md` |
+| Date table, mark an existing table | `ModelTable.MarkAsDateTable`; output diffed against `H2_date_table.xlsx` (matches except for list order and data size); **Excel-tested 2026-10-11: loads, date table works in the PivotTable, adding a hierarchy and a Sort by Column work** (the first attempt failed in `OnClone2` until `Ordinal` matched Excel, SPEC §9). Requires a hierarchy on the date table and a relationship on the date column (the only case seen in Excel) |
+| API redesign (2026-10-21) | `docs/API-USABILITY-REVIEW.md`: object model (`ModelTable`, `ModelColumn`, `ModelMeasure`, `ModelHierarchy`, `ModelRelationship`; table-scoped methods on the table, settable `IsHidden`/`SortByColumn`, `AddRelationship(column, column)`, `DataModelOptions.Culture`), atomic `Save(path)` and `AddRow`, better messages. Breaking for preview users; output bytes unchanged. Conventions for new API: `docs/API-GUIDELINES.md` |
 | Calculated columns, KPIs, perspectives | not started |
 | Refresh with a real data source | not supported (placeholder connection; credentials prompt is expected) |
 | CI (GitHub Actions), editorconfig, global.json, session hook | done |
@@ -68,7 +68,7 @@ When a failure is baffling, bisect with hybrids of an Excel sample and a generat
 
 ## 5. Source map
 
-- `DataModelWriter.cs`, `TableWriter.cs`, `ColumnDefinition.cs`, `DataModelOptions.cs`, `MeasureFormat.cs`: public API Conventions: `docs/API-GUIDELINES.md`.
+- `DataModelWriter.cs`, `ModelTable.cs`, `ModelColumn.cs`, `ModelMeasure.cs`, `ModelHierarchy.cs`, `ModelRelationship.cs`, `ModelCollection.cs`, `ColumnDefinition.cs`, `DataModelOptions.cs`, `MeasureFormat.cs`: public API. Conventions: `docs/API-GUIDELINES.md`.
 - `Internal/ModelSerializer.cs`: the ABF assembly: file order, backup-log groups, version selection (`Info.CubeVersion` etc.), helper measure.
 - `Internal/Metadata/AsslWriter.cs`: ASSL (database, cube, dimension, measure group, partition, script, data source view); `ModelInfo` with the version counters.
 - `Internal/Metadata/TableXmlWriter.cs`: tbl.xml for main tables, `H$` column tables, `R$` relationship tables, `U$` hierarchy tables.

@@ -4,7 +4,7 @@ using System.Globalization;
 using PivotWright;
 
 // Usage:
-//   demo csv <input.csv> <output.xlsx> <type,type,...> [lcid]   load a CSV with explicit column types
+//   demo csv <input.csv> <output.xlsx> <type,type,...> [culture] load a CSV with explicit column types (culture e.g. en-ZA)
 //   demo synthetic <rows> <output.xlsx> [segmentRows]           generate a multi-type table of N rows
 //   demo sales <rows> <output.xlsx>                             two tables built from DataTables
 string mode = args.Length > 0 ? args[0] : "synthetic";
@@ -15,7 +15,7 @@ switch (mode)
     case "csv":
     {
         var types = args[3].Split(',').Select(Enum.Parse<ColumnDataType>).ToArray();
-        using var model = new DataModelWriter(new DataModelOptions { Lcid = args.Length > 4 ? int.Parse(args[4]) : 1033 });
+        using var model = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(args.Length > 4 ? args[4] : "en-US") });
         var lines = File.ReadAllLines(args[1]);
         var header = lines[0].Split(',');
         var table = model.CreateTable(Path.GetFileNameWithoutExtension(args[1]),
@@ -101,7 +101,7 @@ switch (mode)
         products.Columns.Add("ListPrice", typeof(decimal));
         for (int p = 1; p <= 50; p++)
             products.Rows.Add(p, "Product " + p, p % 3 == 0 ? "Red" : p % 3 == 1 ? "Blue" : null, 10m + p * 1.25m);
-        model.AddTable(products);
+        var productTable = model.AddTable(products);
 
         var sales = new DataTable("Sales");
         sales.Columns.Add("SaleId", typeof(long));
@@ -112,8 +112,8 @@ switch (mode)
         var rnd = new Random(7);
         for (long i = 0; i < rows; i++)
             sales.Rows.Add(i + 1, rnd.Next(1, 51), new DateTime(2024, 1, 1).AddDays(rnd.Next(0, 365)), rnd.Next(1, 10), rnd.Next(0, 4) * 0.05);
-        model.AddTable(sales);
-        model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
+        var salesTable = model.AddTable(sales);
+        model.AddRelationship(salesTable["ProductKey"], productTable["ProductKey"]);
 
         model.Save(output);
         Console.WriteLine($"products + {rows} sales -> {output} in {sw.Elapsed}");

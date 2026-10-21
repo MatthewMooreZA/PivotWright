@@ -54,7 +54,7 @@ var tests = new (string Name, Action Body)[]
     ("MarkAsDateTable accepts DateOnly, DateTime and DateTimeOffset sources", Tests.DateTableSourceTypes),
     ("API: tables are found by the name given and returned by AddTable", Tests.ApiTableHandles),
     ("API: a value that does not fit leaves the table consistent", Tests.ApiRowsAreAtomic),
-    ("API: HideColumns writes the same model as ColumnDefinition.IsHidden", Tests.ApiHideColumns),
+    ("API: ModelColumn.IsHidden writes the same model as ColumnDefinition.IsHidden", Tests.ApiHideColumns),
     ("API: a failed Save leaves an existing file untouched", Tests.ApiSaveIsAtomic),
 };
 
@@ -150,7 +150,7 @@ namespace PivotWright.Tests
             var header = lines[0].Split(',');
             var rows = lines.Skip(1).Select(l => l.Split(',')).ToList();
             if (sortedByA) rows = rows.OrderBy(r => long.Parse(r[0], CultureInfo.InvariantCulture)).ToList();
-            using var model = new DataModelWriter(new DataModelOptions { Lcid = 2057, XpressCompression = compressed });
+            using var model = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(2057), XpressCompression = compressed });
             var table = model.CreateTable("TheTable", header.Select((h, i) => new ColumnDefinition(h, types[i])));
             foreach (var r in rows)
             {
@@ -291,7 +291,7 @@ namespace PivotWright.Tests
             Check.Equal("2,0,3,4,5,0,2,0,0,0,0,0", string.Join(",", Words("Three")), "3 distinct: segments 3,3");
         }
 
-        private static (DataModelWriter model, TableWriter many, TableWriter one) Pair(ColumnDataType type)
+        private static (DataModelWriter model, ModelTable many, ModelTable one) Pair(ColumnDataType type)
         {
             var model = new DataModelWriter();
             var one = model.CreateTable("One", new[] { new ColumnDefinition("K", type), new ColumnDefinition("V", ColumnDataType.String) });
@@ -326,7 +326,7 @@ namespace PivotWright.Tests
             {
                 foreach (var k in new[] { 10, 20, 30, 40 }) one.AddRow(k, "v" + k);
                 foreach (var k in new[] { 30, 10, 40, 10, 30 }) many.AddRow(k, 1);
-                model.AddRelationship("Many", "K", "One", "K");
+                model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var (values, width, records, xml) = DecodeIndex(ModelReader.Read(ms.ToArray()));
@@ -349,7 +349,7 @@ namespace PivotWright.Tests
                 one.AddRow("b", "Bob"); one.AddRow("A", "Ann"); one.AddRow("c", "Cy");
                 foreach (var k in new[] { "a", "B", "C", "z", "zz", "a" }) many.AddRow(k, 1);
                 many.AddRow(null, 2);
-                model.AddRelationship("Many", "K", "One", "K");
+                model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var (values, _, records, xml) = DecodeIndex(ModelReader.Read(ms.ToArray()));
@@ -366,7 +366,7 @@ namespace PivotWright.Tests
             using (model)
             {
                 one.AddRow(1, "x"); many.AddRow(1, 1);
-                model.AddRelationship(many, "K", one, "K");
+                model.AddRelationship(many["K"], one["K"]);
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var m = ModelReader.Read(ms.ToArray());
@@ -394,7 +394,7 @@ namespace PivotWright.Tests
             {
                 one.AddRow(1L, "a"); one.AddRow(100_000_000L, "b");
                 many.AddRow(100_000_000L, 1); many.AddRow(1L, 2);
-                model.AddRelationship("Many", "K", "One", "K");
+                model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var m = ModelReader.Read(ms.ToArray());
@@ -418,19 +418,19 @@ namespace PivotWright.Tests
             var (m1, many1, one1) = Pair(ColumnDataType.Int64);
             using (m1)
             {
-                Throws(() => m1.AddRelationship("Nope", "K", "One", "K"), "unknown table");
-                Throws(() => m1.AddRelationship("Many", "Nope", "One", "K"), "unknown column");
-                Throws(() => m1.AddRelationship("Many", "K", "Many", "K"), "same table");
-                Throws(() => m1.AddRelationship("Many", "K", "One", "V"), "type mismatch");
-                m1.AddRelationship("Many", "K", "One", "K");
-                Throws(() => m1.AddRelationship("One", "K", "Many", "K"), "already related");
+                Tests.Throws<KeyNotFoundException>(() => m1.AddRelationship(m1.Tables["Nope"]["K"], m1.Tables["One"]["K"]), "unknown table");
+                Tests.Throws<KeyNotFoundException>(() => m1.AddRelationship(m1.Tables["Many"]["Nope"], m1.Tables["One"]["K"]), "unknown column");
+                Throws(() => m1.AddRelationship(m1.Tables["Many"]["K"], m1.Tables["Many"]["K"]), "same table");
+                Throws(() => m1.AddRelationship(m1.Tables["Many"]["K"], m1.Tables["One"]["V"]), "type mismatch");
+                m1.AddRelationship(m1.Tables["Many"]["K"], m1.Tables["One"]["K"]);
+                Throws(() => m1.AddRelationship(m1.Tables["One"]["K"], m1.Tables["Many"]["K"]), "already related");
             }
 
             var (m2, many2, one2) = Pair(ColumnDataType.Int64);
             using (m2)
             {
                 one2.AddRow(1, "a"); one2.AddRow(1, "b"); many2.AddRow(1, 1);
-                m2.AddRelationship("Many", "K", "One", "K");
+                m2.AddRelationship(m2.Tables["Many"]["K"], m2.Tables["One"]["K"]);
                 Throws(() => Save(m2), "duplicate primary key");
             }
 
@@ -438,7 +438,7 @@ namespace PivotWright.Tests
             using (m3)
             {
                 one3.AddRow("a", "x"); one3.AddRow("A", "y"); many3.AddRow("a", 1);
-                m3.AddRelationship("Many", "K", "One", "K");
+                m3.AddRelationship(m3.Tables["Many"]["K"], m3.Tables["One"]["K"]);
                 Throws(() => Save(m3), "keys that differ only by case are duplicates");
             }
 
@@ -446,7 +446,7 @@ namespace PivotWright.Tests
             using (m4)
             {
                 one4.AddRow(null, "x"); many4.AddRow(1, 1);
-                m4.AddRelationship("Many", "K", "One", "K");
+                m4.AddRelationship(m4.Tables["Many"]["K"], m4.Tables["One"]["K"]);
                 Throws(() => Save(m4), "blank primary key");
             }
 
@@ -454,12 +454,12 @@ namespace PivotWright.Tests
             m5.CreateTable("A", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
             m5.CreateTable("B", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
             m5.CreateTable("C", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
-            m5.AddRelationship("A", "K", "B", "K");
-            m5.AddRelationship("B", "K", "C", "K");
-            Throws(() => m5.AddRelationship("A", "K", "C", "K"), "A-B-C-A is circular");
+            m5.AddRelationship(m5.Tables["A"]["K"], m5.Tables["B"]["K"]);
+            m5.AddRelationship(m5.Tables["B"]["K"], m5.Tables["C"]["K"]);
+            Throws(() => m5.AddRelationship(m5.Tables["A"]["K"], m5.Tables["C"]["K"]), "A-B-C-A is circular");
         }
 
-        private static DataModelWriter ProductsModel(out TableWriter products)
+        private static DataModelWriter ProductsModel(out ModelTable products)
         {
             var model = new DataModelWriter();
             products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Subcategory", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
@@ -489,7 +489,7 @@ namespace PivotWright.Tests
         public static void HierarchyTree()
         {
             using var model = ProductsModel(out _);
-            model.AddHierarchy("Products", "Product Hierarchy", "Category", "Subcategory", "Product");
+            model.Tables["Products"].AddHierarchy("Product Hierarchy", "Category", "Subcategory", "Product");
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             var m = ModelReader.Read(ms.ToArray());
@@ -503,8 +503,8 @@ namespace PivotWright.Tests
         public static void HierarchyMetadata()
         {
             using var model = ProductsModel(out _);
-            model.AddHierarchy("Products", "Product Hierarchy", "Category", "Subcategory", "Product");
-            Check.Equal(1, model.HierarchyCount, "count");
+            model.Tables["Products"].AddHierarchy("Product Hierarchy", "Category", "Subcategory", "Product");
+            Check.Equal(1, model.Tables.Sum(t => t.Hierarchies.Count), "count");
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             var m = ModelReader.Read(ms.ToArray());
@@ -525,7 +525,7 @@ namespace PivotWright.Tests
             {
                 var t = model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.String), new ColumnDefinition("B", ColumnDataType.Int64) });
                 t.AddRow("x", 1); t.AddRow("X", 1); t.AddRow("x", 2); t.AddRow(null, 5); t.AddRow("y", null); t.AddRow("y", 7);
-                model.AddHierarchy("T", "H", "A", "B");
+                model.Tables["T"].AddHierarchy("H", "A", "B");
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var m = ModelReader.Read(ms.ToArray());
@@ -548,14 +548,14 @@ namespace PivotWright.Tests
                 try { a(); } catch (ArgumentException) { return; }
                 throw new Exception("Expected ArgumentException: " + what);
             }
-            Rejects(() => model.AddHierarchy("Nope", "H", "Category", "Product"), "unknown table");
-            Rejects(() => model.AddHierarchy("Products", "H", "Category"), "one level");
-            Rejects(() => model.AddHierarchy("Products", "H", "Category", "Nope"), "unknown column");
-            Rejects(() => model.AddHierarchy("Products", "H", "Category", "category"), "same column twice");
-            Rejects(() => model.AddHierarchy("Products", "Category", "Category", "Product"), "name of a column");
-            Rejects(() => model.AddHierarchy("Products", "", "Category", "Product"), "empty name");
-            model.AddHierarchy("Products", "H", "Category", "Product");
-            Rejects(() => model.AddHierarchy("Products", "h", "Subcategory", "Product"), "duplicate name");
+            Tests.Throws<KeyNotFoundException>(() => model.Tables["Nope"].AddHierarchy("H", "Category", "Product"), "unknown table");
+            Rejects(() => model.Tables["Products"].AddHierarchy("H", "Category"), "one level");
+            Rejects(() => model.Tables["Products"].AddHierarchy("H", "Category", "Nope"), "unknown column");
+            Rejects(() => model.Tables["Products"].AddHierarchy("H", "Category", "category"), "same column twice");
+            Rejects(() => model.Tables["Products"].AddHierarchy("Category", "Category", "Product"), "name of a column");
+            Rejects(() => model.Tables["Products"].AddHierarchy("", "Category", "Product"), "empty name");
+            model.Tables["Products"].AddHierarchy("H", "Category", "Product");
+            Rejects(() => model.Tables["Products"].AddHierarchy("h", "Subcategory", "Product"), "duplicate name");
         }
 
         private static string Script(DataModelWriter model)
@@ -575,10 +575,10 @@ namespace PivotWright.Tests
             using (model)
             {
                 one.AddRow(1, "x"); many.AddRow(1, 1);
-                model.AddMeasure("Many", "Total N", "=SUM(Many[N])", MeasureFormat.WholeNumber);
-                model.AddMeasure(many, "Plain", "[Total N] * 2 & \"<x>\"");
-                model.AddMeasure("One", "O'Rate", "DIVIDE([Total N],2)", MeasureFormat.Percentage(1), hidden: true);
-                Check.Equal(3, model.MeasureCount, "count");
+                model.Tables["Many"].AddMeasure("Total N", "=SUM(Many[N])", MeasureFormat.WholeNumber);
+                many.AddMeasure("Plain", "[Total N] * 2 & \"<x>\"");
+                model.Tables["One"].AddMeasure("O'Rate", "DIVIDE([Total N],2)", MeasureFormat.Percentage(1)).IsHidden = true;
+                Check.Equal(3, model.Tables.Sum(t => t.Measures.Count), "count");
                 string x = Script(model);
                 Check.True(x.Contains("[__XL_Count of Models] AS 1, VISIBLE = 0;"), "default member");
                 Check.True(!x.Contains("__No measures defined"), "placeholder gone");
@@ -592,8 +592,8 @@ namespace PivotWright.Tests
                 Check.True(x.Contains("<FormatString>''</FormatString>"), "general format string");
                 Check.True(x.Contains("<Format Format=\"General\"/>"), "general format");
                 Check.True(x.Contains("<FormatString>'0.0%'</FormatString>"), "percentage");
-                model.AddMeasure("Many", "When", "MAX(Many[N])", MeasureFormat.Date);
-                model.AddMeasure("Many", "Money", "SUM(Many[N])", MeasureFormat.Currency());
+                model.Tables["Many"].AddMeasure("When", "MAX(Many[N])", MeasureFormat.Date);
+                model.Tables["Many"].AddMeasure("Money", "SUM(Many[N])", MeasureFormat.Currency());
                 string y = Script(model);
                 Check.True(y.Contains("<FormatString>'Short Date'</FormatString>") && y.Contains("<Format Format=\"DateTimeShortDatePattern\"/>"), "short date");
                 Check.True(y.Contains("<FormatString>'\"$\"#,0.00;-\"$\"#,0.00;\"$\"#,0.00'</FormatString>"), "currency (en-US default)");
@@ -621,25 +621,25 @@ namespace PivotWright.Tests
             var (model, many, one) = Pair(ColumnDataType.Int64);
             using (model)
             {
-                model.AddMeasure("Many", "M1", "1");
+                model.Tables["Many"].AddMeasure("M1", "1");
                 void Rejects(Action a, string what)
                 {
                     try { a(); } catch (ArgumentException) { return; }
                     throw new Exception("Expected ArgumentException: " + what);
                 }
-                Rejects(() => model.AddMeasure("Nope", "M2", "1"), "unknown table");
-                Rejects(() => model.AddMeasure("Many", "m1", "1"), "duplicate name (case-insensitive)");
-                Rejects(() => model.AddMeasure("One", "m1", "1"), "duplicate name in another table");
-                Rejects(() => model.AddMeasure("Many", "A[B]", "1"), "brackets");
-                Rejects(() => model.AddMeasure("Many", "", "1"), "empty name");
-                Rejects(() => model.AddMeasure("Many", "M3", "  "), "empty expression");
-                Rejects(() => model.AddMeasure("Many", "N", "1"), "name of a column in the same table");
-                Rejects(() => model.AddMeasure("Many", "__x", "1"), "reserved prefix");
+                Tests.Throws<KeyNotFoundException>(() => model.Tables["Nope"].AddMeasure("M2", "1"), "unknown table");
+                Rejects(() => model.Tables["Many"].AddMeasure("m1", "1"), "duplicate name (case-insensitive)");
+                Rejects(() => model.Tables["One"].AddMeasure("m1", "1"), "duplicate name in another table");
+                Rejects(() => model.Tables["Many"].AddMeasure("A[B]", "1"), "brackets");
+                Rejects(() => model.Tables["Many"].AddMeasure("", "1"), "empty name");
+                Rejects(() => model.Tables["Many"].AddMeasure("M3", "  "), "empty expression");
+                Rejects(() => model.Tables["Many"].AddMeasure("N", "1"), "name of a column in the same table");
+                Rejects(() => model.Tables["Many"].AddMeasure("__x", "1"), "reserved prefix");
             }
         }
 
         // Dates(Date, Year, Month) with a Calendar hierarchy, related to Sales[Date]: the shape of Excel's H2_date_table.xlsx.
-        private static (DataModelWriter model, TableWriter dates, TableWriter sales) DateModel(Action<TableWriter>? fillDates = null)
+        private static (DataModelWriter model, ModelTable dates, ModelTable sales) DateModel(Action<ModelTable>? fillDates = null)
         {
             var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             var dates = model.CreateTable("Dates", new[]
@@ -652,8 +652,8 @@ namespace PivotWright.Tests
             else for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", CultureInfo.InvariantCulture)); }
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
             sales.AddRow(new DateTime(2025, 1, 2), 1);
-            model.AddRelationship("Sales", "Date", "Dates", "Date");
-            model.AddHierarchy("Dates", "Calendar", "Year", "Month");
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
+            model.Tables["Dates"].AddHierarchy("Calendar", "Year", "Month");
             return (model, dates, sales);
         }
 
@@ -663,8 +663,8 @@ namespace PivotWright.Tests
             var (model, _, _) = DateModel();
             using (model)
             {
-                model.MarkAsDateTable("Dates", "Date");
-                Check.Equal("Dates", model.DateTableName, "DateTableName");
+                model.Tables["Dates"].MarkAsDateTable("Date");
+                Check.Equal("Dates", model.DateTable?.Name, "DateTableName");
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var m = ModelReader.Read(ms.ToArray());
@@ -715,15 +715,15 @@ namespace PivotWright.Tests
 
         public static void GeneratedDateTable()
         {
-            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = CultureInfo.GetCultureInfo(1033) });
             var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2024, 12, 31));
             Check.Equal(366L, dates.RowCount, "leap year has 366 rows");
-            Check.Equal("Dates", model.DateTableName, "marked by default");
-            Check.Equal(1, model.HierarchyCount, "Calendar hierarchy");
+            Check.Equal("Dates", model.DateTable?.Name, "marked by default");
+            Check.Equal(1, model.Tables.Sum(t => t.Hierarchies.Count), "Calendar hierarchy");
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek", string.Join(",", dates.Columns.Select(c => c.Name)), "columns");
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
             sales.AddRow(new DateTime(2024, 3, 5), 1);
-            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             var m = ModelReader.Read(ms.ToArray());
@@ -739,7 +739,7 @@ namespace PivotWright.Tests
             }
             Rejects<ArgumentException>(() => model.AddDateTable("Bad", new DateOnly(2025, 2, 1), new DateOnly(2025, 1, 1)), "to before from");
             Rejects<InvalidOperationException>(() => model.AddDateTable("Second", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)), "second date table");
-            Check.Equal(2, model.TableNames.Count(), "rejected calls add no table");
+            Check.Equal(2, model.Tables.Count, "rejected calls add no table");
         }
 
         private sealed record DateRow(DateOnly Date, long Year, string Month);
@@ -755,7 +755,7 @@ namespace PivotWright.Tests
                 t.AddRow(new DateTime(2025, 1, 2), 2025, "January");
                 t.AddRow(new DateTimeOffset(2025, 1, 3, 0, 0, 0, TimeSpan.FromHours(2)), 2025, "January");
             });
-            using (mixed) { mixed.MarkAsDateTable("Dates", "Date"); Saves(mixed); }
+            using (mixed) { mixed.Tables["Dates"].MarkAsDateTable("Date"); Saves(mixed); }
 
             // A typed source with a DateOnly property maps to the same column type.
             using var typed = new DataModelWriter(new DataModelOptions { XpressCompression = false });
@@ -764,9 +764,9 @@ namespace PivotWright.Tests
             Check.Equal(ColumnDataType.DateTime, ColumnDefinition.FromClrType(typeof(DateTimeOffset)), "DateTimeOffset maps to DateTime");
             var sales = typed.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2025, 1, 1));
-            typed.AddRelationship("Sales", "Date", "Dates", "Date");
-            typed.AddHierarchy("Dates", "Calendar", "Year", "Month");
-            typed.MarkAsDateTable("Dates", "Date");
+            typed.AddRelationship(typed.Tables["Sales"]["Date"], typed.Tables["Dates"]["Date"]);
+            typed.Tables["Dates"].AddHierarchy("Calendar", "Year", "Month");
+            typed.Tables["Dates"].MarkAsDateTable("Date");
             Saves(typed);
         }
 
@@ -777,11 +777,11 @@ namespace PivotWright.Tests
         /// </summary>
         public static void FiscalHierarchyOrder()
         {
-            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = CultureInfo.GetCultureInfo(1033) });
             model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 2, CompleteYears = false });
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2025, 1, 1));
-            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             var m = ModelReader.Read(ms.ToArray());
@@ -796,11 +796,11 @@ namespace PivotWright.Tests
         {
             string Types(DateOnly from, DateOnly to, int yearEnd)
             {
-                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = CultureInfo.GetCultureInfo(1033) });
                 model.AddDateTable("Dates", from, to, new DateTableOptions { YearEndMonth = yearEnd, CompleteYears = false });
                 var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
                 sales.AddRow(from);
-                model.AddRelationship("Sales", "Date", "Dates", "Date");
+                model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
@@ -826,14 +826,14 @@ namespace PivotWright.Tests
             Check.Equal((2025, 1, 1), F(2024, 12, 31, 11), "November year end: December 2024 is fiscal month 1 of 2025");
             Check.Equal((2024, 12, 4), F(2024, 1, 31, 1), "January year end: January is the last month");
 
-            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = CultureInfo.GetCultureInfo(1033) });
             var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 6 });
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FiscalYear,FiscalQuarterNumber,FiscalQuarter,FiscalMonthNumber,FiscalMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns with fiscal ones");
-            Check.Equal(2, model.HierarchyCount, "Calendar and Fiscal Calendar");
+            Check.Equal(2, model.Tables.Sum(t => t.Hierarchies.Count), "Calendar and Fiscal Calendar");
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("N", ColumnDataType.Int64) });
             sales.AddRow(new DateTime(2024, 8, 5), 1);
-            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
             var ms = new MemoryStream();
             model.SaveModelPart(ms);   // sort-by columns validate that each name maps to one number
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
@@ -842,7 +842,7 @@ namespace PivotWright.Tests
 
             using var dec = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             Check.Equal(11, dec.AddDateTable("D", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2)).Columns.Count, "December year end adds no fiscal columns");
-            Check.Equal(1, dec.HierarchyCount, "only Calendar");
+            Check.Equal(1, dec.Tables.Sum(t => t.Hierarchies.Count), "only Calendar");
             // Invalid settings are rejected when the options are created, before any table work.
             foreach (int month in new[] { 0, 13, -1 })
             {
@@ -912,9 +912,9 @@ namespace PivotWright.Tests
                 new ColumnDefinition("Qty", ColumnDataType.Int64),
             });
             sales.AddRow(1, 3); sales.AddRow(2, 4);
-            model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
-            model.AddHierarchy("Products", "Product Hierarchy", "Category", "Product");
-            model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            model.AddRelationship(model.Tables["Sales"]["ProductKey"], model.Tables["Products"]["ProductKey"]);
+            model.Tables["Products"].AddHierarchy("Product Hierarchy", "Category", "Product");
+            model.Tables["Sales"].AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
             var ms = new MemoryStream();
             model.SaveModelPart(ms);   // saves: hidden keys still pass the relationship checks, hidden levels the hierarchy and sort checks
             var m = ModelReader.Read(ms.ToArray());
@@ -951,9 +951,9 @@ namespace PivotWright.Tests
                     new ColumnDefinition("Qty", ColumnDataType.Int64) { IsHidden = hide && !hideLevel },
                 });
                 sales.AddRow(1, 3); sales.AddRow(2, 4);
-                model.AddRelationship("Sales", "ProductKey", "Products", "ProductKey");
-                if (hierarchy) model.AddHierarchy("Products", "Browse", "Category", "Product");
-                model.AddMeasure("Sales", "Total Qty", "SUM(Sales[Qty])");
+                model.AddRelationship(model.Tables["Sales"]["ProductKey"], model.Tables["Products"]["ProductKey"]);
+                if (hierarchy) model.Tables["Products"].AddHierarchy("Browse", "Category", "Product");
+                model.Tables["Sales"].AddMeasure("Total Qty", "SUM(Sales[Qty])");
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 return ModelReader.Read(ms.ToArray());
@@ -1000,8 +1000,8 @@ namespace PivotWright.Tests
                 b.AddRow(1, 2);
                 var c = model.CreateTable("C", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
                 c.AddRow(1, "y");
-                model.AddRelationship("B", "K", "A", "K");
-                if (hierarchy) model.AddHierarchy("A", "H", "K", "Name");
+                model.AddRelationship(model.Tables["B"]["K"], model.Tables["A"]["K"]);
+                if (hierarchy) model.Tables["A"].AddHierarchy("H", "K", "Name");
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 return ModelReader.Read(ms.ToArray());
@@ -1034,7 +1034,7 @@ namespace PivotWright.Tests
             Check.Equal(366L, new DataModelWriter().AddDateTable("C", new DateOnly(2024, 2, 1), new DateOnly(2024, 2, 2), new DateTableOptions { YearEndMonth = 6 }).RowCount, "July 2023 to June 2024 (leap)");
 
             // includeYearMonth and hideSortColumns: each flag on its own
-            string[] Names(TableWriter t, bool hidden) => t.Columns.Where(c => c.IsHidden == hidden).Select(c => c.Name).ToArray();
+            string[] Names(ModelTable t, bool hidden) => t.Columns.Where(c => c.IsHidden == hidden).Select(c => c.Name).ToArray();
             var range = (new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31));
             var all = new DataModelWriter().AddDateTable("D", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6 });
             Check.Equal("QuarterNumber,MonthNumber,YearMonthNumber,DayOfWeekNumber,FiscalQuarterNumber,FiscalMonthNumber", string.Join(",", Names(all, true)), "defaults hide the sort keys");
@@ -1046,11 +1046,11 @@ namespace PivotWright.Tests
             Check.Equal("QuarterNumber,MonthNumber,DayOfWeekNumber", string.Join(",", Names(noYm, true)), "hidden without YearMonth");
 
             // The hidden attributes reach the dimension, and the model saves (every YearMonth label maps to one number across years).
-            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = CultureInfo.GetCultureInfo(1033) });
             model.AddDateTable("Dates", range.Item1, range.Item2, new DateTableOptions { YearEndMonth = 6 });
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2024, 1, 1));
-            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
@@ -1059,14 +1059,14 @@ namespace PivotWright.Tests
 
         public static void DateTableYearLabel()
         {
-            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Lcid = 1033 });
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = CultureInfo.GetCultureInfo(1033) });
             var dates = model.AddDateTable("Dates", new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31), new DateTableOptions { YearEndMonth = 6, YearLabel = "Financial" });
             Check.Equal("Date,Year,QuarterNumber,Quarter,MonthNumber,Month,YearMonthNumber,YearMonth,Day,DayOfWeekNumber,DayOfWeek,FinancialYear,FinancialQuarterNumber,FinancialQuarter,FinancialMonthNumber,FinancialMonth",
                 string.Join(",", dates.Columns.Select(c => c.Name)), "columns use the label");
-            Check.True(dates.Columns.Single(c => c.Name == "FinancialQuarter").SortByColumn == "FinancialQuarterNumber", "sort-by follows the label");
+            Check.True(dates["FinancialQuarter"].SortByColumn?.Name == "FinancialQuarterNumber", "sort-by follows the label");
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
             sales.AddRow(new DateOnly(2024, 1, 1));
-            model.AddRelationship("Sales", "Date", "Dates", "Date");
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
@@ -1098,12 +1098,12 @@ namespace PivotWright.Tests
             var (model, _, _) = DateModel();
             using (model)
             {
-                Rejects<ArgumentException>(() => model.MarkAsDateTable("Nope", "Date"), "unknown table");
-                Rejects<ArgumentException>(() => model.MarkAsDateTable("Dates", "Nope"), "unknown column");
-                Rejects<ArgumentException>(() => model.MarkAsDateTable("Dates", "Year"), "not a date column");
-                Check.True(model.DateTableName is null, "nothing marked yet");
-                model.MarkAsDateTable("Dates", "Date");
-                Rejects<InvalidOperationException>(() => model.MarkAsDateTable("Sales", "Date"), "second date table");
+                Rejects<KeyNotFoundException>(() => model.Tables["Nope"].MarkAsDateTable("Date"), "unknown table");
+                Rejects<ArgumentException>(() => model.Tables["Dates"].MarkAsDateTable("Nope"), "unknown column");
+                Rejects<ArgumentException>(() => model.Tables["Dates"].MarkAsDateTable("Year"), "not a date column");
+                Check.True(model.DateTable?.Name is null, "nothing marked yet");
+                model.Tables["Dates"].MarkAsDateTable("Date");
+                Rejects<InvalidOperationException>(() => model.Tables["Sales"].MarkAsDateTable("Date"), "second date table");
                 Saves(model);
             }
 
@@ -1114,34 +1114,34 @@ namespace PivotWright.Tests
                 d.AddRow(new DateTime(2025, 1, 1));
                 var s = noHierarchy.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
                 s.AddRow(new DateTime(2025, 1, 1));
-                noHierarchy.AddRelationship("Sales", "Date", "Dates", "Date");
-                noHierarchy.MarkAsDateTable("Dates", "Date");
+                noHierarchy.AddRelationship(noHierarchy.Tables["Sales"]["Date"], noHierarchy.Tables["Dates"]["Date"]);
+                noHierarchy.Tables["Dates"].MarkAsDateTable("Date");
                 Rejects<InvalidOperationException>(() => Saves(noHierarchy), "no hierarchy on the date table");
             }
             using (var noRelationship = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
             {
                 var d = noRelationship.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
                 d.AddRow(new DateTime(2025, 1, 1), 2025, "January");
-                noRelationship.AddHierarchy("Dates", "Calendar", "Year", "Month");
-                noRelationship.MarkAsDateTable("Dates", "Date");
+                noRelationship.Tables["Dates"].AddHierarchy("Calendar", "Year", "Month");
+                noRelationship.Tables["Dates"].MarkAsDateTable("Date");
                 Rejects<InvalidOperationException>(() => Saves(noRelationship), "no relationship uses the date column");
             }
             var (blank, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); t.AddRow(null, 2025, "January"); });
             using (blank)
             {
-                blank.MarkAsDateTable("Dates", "Date");
+                blank.Tables["Dates"].MarkAsDateTable("Date");
                 Rejects<InvalidOperationException>(() => Saves(blank), "blank date");
             }
             var (partial, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1, 6, 0, 0), 2025, "January"); });
             using (partial)
             {
-                partial.MarkAsDateTable("Dates", "Date");
+                partial.Tables["Dates"].MarkAsDateTable("Date");
                 Rejects<InvalidOperationException>(() => Saves(partial), "date with a time part");
             }
             var (dup, _, _) = DateModel(t => { t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); t.AddRow(new DateTime(2025, 1, 1), 2025, "January"); });
             using (dup)
             {
-                dup.MarkAsDateTable("Dates", "Date");
+                dup.Tables["Dates"].MarkAsDateTable("Date");
                 Rejects<InvalidOperationException>(() => Saves(dup), "duplicate date");
             }
         }
@@ -1152,7 +1152,7 @@ namespace PivotWright.Tests
             using (model)
             {
                 one.AddRow(1, "x"); many.AddRow(1, 1);
-                model.AddRelationship("Many", "K", "One", "K");
+                model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
                 var ms = new MemoryStream();
                 model.Save(ms);
                 ms.Position = 0;
@@ -1174,7 +1174,7 @@ namespace PivotWright.Tests
             using (model)
             {
                 one.AddRow(1, "x"); many.AddRow(1, 1);
-                model.AddRelationship("Many", "K", "One", "K");
+                model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
                 var m = ModelReader.Read(ms.ToArray());
@@ -1218,7 +1218,7 @@ namespace PivotWright.Tests
         public static void SortByColumn()
         {
             using var model = SortedProducts();
-            model.AddHierarchy("Products", "Browse", "Category", "Product");
+            model.Tables["Products"].AddHierarchy("Browse", "Category", "Product");
             var ms = new MemoryStream();
             model.SaveModelPart(ms);
             var m = ModelReader.Read(ms.ToArray());
@@ -1242,11 +1242,11 @@ namespace PivotWright.Tests
             }
             using (var model = SortedProducts())
             {
-                Rejects<ArgumentException>(() => model.SetSortByColumn("Products", "Product", "Product"), "itself");
-                Rejects<ArgumentException>(() => model.SetSortByColumn("Products", "Product", "Nope"), "unknown column");
-                Rejects<ArgumentException>(() => model.SetSortByColumn("Products", "Product", "Category"), "sort column that is itself sorted");
-                Rejects<ArgumentException>(() => model.SetSortByColumn("Products", "CategoryOrder", "ProductKey"), "sorted column used as sort column");
-                Rejects<ArgumentException>(() => model.SetSortByColumn("Nope", "Product", "ProductKey"), "unknown table");
+                Rejects<ArgumentException>(() => model.Tables["Products"]["Product"].SortByColumn = model.Tables["Products"]["Product"], "itself");
+                Rejects<KeyNotFoundException>(() => model.Tables["Products"]["Product"].SortByColumn = model.Tables["Products"]["Nope"], "unknown column");
+                Rejects<ArgumentException>(() => model.Tables["Products"]["Product"].SortByColumn = model.Tables["Products"]["Category"], "sort column that is itself sorted");
+                Rejects<ArgumentException>(() => model.Tables["Products"]["CategoryOrder"].SortByColumn = model.Tables["Products"]["ProductKey"], "sorted column used as sort column");
+                Rejects<KeyNotFoundException>(() => model.Tables["Nope"]["Product"].SortByColumn = model.Tables["Nope"]["ProductKey"], "unknown table");
             }
             using (var model = new DataModelWriter())
             {
@@ -1264,8 +1264,8 @@ namespace PivotWright.Tests
                 using (model)
                 {
                     one.AddRow(1, "x"); many.AddRow(1, 1);
-                    model.AddRelationship("Many", "K", "One", "K");
-                    if (measure) model.AddMeasure("Many", "Mine", "SUM(Many[N])");
+                    model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
+                    if (measure) model.Tables["Many"].AddMeasure("Mine", "SUM(Many[N])");
                     var ms = new MemoryStream();
                     var opts = new DataModelOptions { AddHelperMeasure = helper, XpressCompression = false };
                     using var m2 = new DataModelWriter(opts);
@@ -1273,8 +1273,8 @@ namespace PivotWright.Tests
                     var o = m2.CreateTable("One", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("V", ColumnDataType.String) });
                     var mn = m2.CreateTable("Many", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("N", ColumnDataType.Int64) });
                     o.AddRow(1, "x"); mn.AddRow(1, 1);
-                    m2.AddRelationship("Many", "K", "One", "K");
-                    if (measure) m2.AddMeasure("Many", "Mine", "SUM(Many[N])");
+                    m2.AddRelationship(m2.Tables["Many"]["K"], m2.Tables["One"]["K"]);
+                    if (measure) m2.Tables["Many"].AddMeasure("Mine", "SUM(Many[N])");
                     m2.SaveModelPart(ms);
                     var r = ModelReader.Read(ms.ToArray());
                     dimName = r.Find(@"\.0\.db\\Many_G\.2\.dim\.xml$").Length > 0 ? "Many v2" : "?";
@@ -1313,18 +1313,41 @@ namespace PivotWright.Tests
             var sales = model.AddTable("Sales (USD)", new[] { new { ProductKey = 1L, Qty = 2L } });
             Check.Equal("Sales USD", sales.Name, "AddTable returns the table under its model name");
             Check.Equal(1L, sales.RowCount, "rows loaded");
-            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64) });
-            products.AddRow(1);
-            model.AddRelationship("Sales (USD)", "ProductKey", "Products", "ProductKey");   // the name as given still works
-            model.AddMeasure(sales, "Total Qty", "SUM('Sales USD'[Qty])");
-            Throws<ArgumentException>(() => model.AddMeasure("Sale", "X", "1"), "unknown table", "'Products'");
-            Throws<ArgumentException>(() => model.AddHierarchy("Products", "H", "Nope", "ProductKey"), "unknown column", "Its columns are: 'ProductKey'");
+            Check.True(model.Tables["Sales (USD)"] == sales && model.Tables["sales usd"] == sales && model.Tables[0] == sales, "found by the name given, the model name and position");
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("CategoryOrder", ColumnDataType.Int64) });
+            products.AddRow(1, "Bikes", 1);
+
+            var rel = model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            Check.Equal("'Sales USD'[ProductKey] -> 'Products'[ProductKey]", rel.ToString(), "relationship returned");
+            Check.True(model.Relationships.Single() == rel, "listed");
+            var measure = sales.AddMeasure("Total Qty", "=SUM('Sales USD'[Qty])", MeasureFormat.WholeNumber);
+            Check.Equal("SUM('Sales USD'[Qty])", measure.Expression, "leading = removed");
+            measure.IsHidden = true;
+            Check.True(sales.Measures.Single().IsHidden, "measure hidden through its property");
+            var hierarchy = products.AddHierarchy("Product Hierarchy", "Category", "ProductKey");
+            Check.Equal("Product Hierarchy (Category > ProductKey)", hierarchy.ToString(), "hierarchy returned");
+
+            products["Category"].SortByColumn = products["CategoryOrder"];
+            Check.True(products["Category"].SortByColumn == products["CategoryOrder"], "sort column set");
+            products["Category"].SortByColumn = null;
+            Check.True(products["Category"].SortByColumn is null, "sort column cleared");
+            Throws<ArgumentException>(() => products["Category"].SortByColumn = sales["Qty"], "sort column of another table", "'Products'");
+
+            Throws<KeyNotFoundException>(() => _ = model.Tables["Sale"], "unknown table", "The model's tables are: 'Sales USD', 'Products'");
+            Throws<KeyNotFoundException>(() => _ = products["Nope"], "unknown column", "Its columns are: 'ProductKey', 'Category', 'CategoryOrder'");
+            Throws<ArgumentException>(() => products.AddHierarchy("H", "Nope", "ProductKey"), "unknown level", "Its columns are");
+            Check.True(model.Tables.Contains("Products") && !model.Tables.Contains("Nope"), "Contains");
+
             using var other = new DataModelWriter();
-            var foreign = other.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64) });
-            Throws<ArgumentException>(() => model.HideColumns(foreign, "ProductKey"), "a table of another model", "another DataModelWriter");
+            var foreign = other.CreateTable("Customers", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64) });
+            Throws<ArgumentException>(() => model.AddRelationship(sales["ProductKey"], foreign["ProductKey"]), "a column of another model", "another DataModelWriter");
+
             var dates = model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 31));
+            Check.True(model.DateTable == dates && dates.IsDateTable, "date table");
             Throws<InvalidOperationException>(() => dates.AddRow(new object?[dates.Columns.Count]), "rows added to a generated date table", "AddDateTable");
+            Throws<ArgumentException>(() => dates["Date"].SortByColumn = dates["Day"], "date column sorted", "date column");
             Check.Equal(365L, dates.RowCount, "generated table unchanged");
+            Throws<ArgumentException>(() => new DataModelOptions { Culture = CultureInfo.InvariantCulture }, "culture without LCID", "Windows locale id");
         }
 
         public static void ApiRowsAreAtomic()
@@ -1371,7 +1394,7 @@ namespace PivotWright.Tests
                     new ColumnDefinition("C", ColumnDataType.Double) { IsHidden = !late },
                 });
                 t.AddRow(1, "x", 1.5);
-                if (late) model.HideColumns("T", "B", "c");
+                if (late) { t["B"].IsHidden = true; t["c"].IsHidden = true; }
                 Check.True(t.Columns[1].IsHidden && t.Columns[2].IsHidden && !t.Columns[0].IsHidden, "Columns reflects the hidden state");
                 var m = ModelReader.Read(Save(model));
                 return (HiddenAttributes(Encoding.UTF8.GetString(m.Find(@"\.0\.db\\T_G\.1\.dim\.xml$"))),
@@ -1384,8 +1407,7 @@ namespace PivotWright.Tests
             Check.True(early.names.SequenceEqual(late.names), "same files either way");
             using var model = new DataModelWriter();
             model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.Int64) });
-            Throws<ArgumentException>(() => model.HideColumns("T"), "no column given");
-            Throws<ArgumentException>(() => model.HideColumns("T", "A", "Nope"), "unknown column", "'Nope'");
+            Throws<KeyNotFoundException>(() => model.Tables["T"]["Nope"].IsHidden = true, "unknown column", "'Nope'");
         }
 
         public static void ApiSaveIsAtomic()
@@ -1402,7 +1424,7 @@ namespace PivotWright.Tests
                     one.AddRow(1); one.AddRow(1);
                     var many = model.CreateTable("Many", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
                     many.AddRow(1);
-                    model.AddRelationship("Many", "K", "One", "K");
+                    model.AddRelationship(model.Tables["Many"]["K"], model.Tables["One"]["K"]);
                     Throws<InvalidOperationException>(() => model.Save(path), "duplicate key", "many side");
                 }
                 Check.Equal("previous", File.ReadAllText(path), "existing file untouched");

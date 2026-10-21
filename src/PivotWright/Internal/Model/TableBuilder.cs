@@ -87,25 +87,38 @@ internal sealed class TableBuilder : IDisposable
     private object?[]? _scratch;
 
     /// <summary>Hides a column from client tools, or shows it again.</summary>
-    public void SetHidden(string column, bool hidden, string paramName = "columns")
+    public void SetHidden(ColumnBuilder c, bool hidden)
     {
-        var c = FindColumn(column, paramName);
         if (c.Definition.IsHidden != hidden) c.Definition = c.Definition.With(isHidden: hidden);
     }
 
-    /// <summary>Orders <paramref name="column"/> by <paramref name="sortColumn"/> (Power Pivot's Sort by Column).</summary>
+    /// <summary>Orders <paramref name="column"/> by <paramref name="sortColumn"/> (Power Pivot's Sort by Column), by name.</summary>
     public void SetSortBy(string column, string sortColumn)
+        => SetSortBy(FindColumn(column, "columns"), FindColumn(sortColumn, "columns"));
+
+    /// <summary>Orders <paramref name="c"/> by <paramref name="by"/> (Power Pivot's Sort by Column).</summary>
+    public void SetSortBy(ColumnBuilder c, ColumnBuilder by)
     {
-        var c = FindColumn(column, nameof(column));
-        var by = FindColumn(sortColumn, nameof(sortColumn));
-        if (c == by) throw new ArgumentException($"Column '{c.Definition.Name}' cannot be sorted by itself.");
+        const string param = "SortByColumn";
+        if (c == by) throw new ArgumentException($"Column '{c.Definition.Name}' cannot be sorted by itself.", param);
+        if (c.SortBy == by) return;
         if (by.SortBy is not null)
-            throw new ArgumentException($"Column '{by.Definition.Name}' is itself sorted by another column, so it cannot be a sort column.");
+            throw new ArgumentException($"Column '{by.Definition.Name}' is itself sorted by another column, so it cannot be a sort column.", param);
         if (_columns.Any(o => o.SortBy == c))
-            throw new ArgumentException($"Column '{c.Definition.Name}' is the sort column of another column, so it cannot be sorted itself.");
+            throw new ArgumentException($"Column '{c.Definition.Name}' is the sort column of another column, so it cannot be sorted itself.", param);
+        if (c.IsDateKey || by.IsDateKey)
+            throw new ArgumentException($"'{Name}[{(c.IsDateKey ? c : by).Definition.Name}]' is the date column of a date table, so it cannot take part in Sort by Column.", param);
         c.SortBy = by;
         if (!string.Equals(c.Definition.SortByColumn, by.Definition.Name, StringComparison.Ordinal))
             c.Definition = c.Definition.With(sortByColumn: by.Definition.Name);
+    }
+
+    /// <summary>Removes Sort by Column from a column, so it sorts by its own values.</summary>
+    public void ClearSortBy(ColumnBuilder c)
+    {
+        if (c.SortBy is null) return;
+        c.SortBy = null;
+        c.Definition = new ColumnDefinition(c.Definition.Name, c.Definition.DataType) { IsHidden = c.Definition.IsHidden };
     }
 
     // For every sorted column: checks that each of its values belongs to exactly one value of the sort column
