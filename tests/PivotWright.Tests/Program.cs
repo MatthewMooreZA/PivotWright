@@ -1357,6 +1357,8 @@ namespace PivotWright.Tests
                 var t = model.CreateTable("T", new[] { new ColumnDefinition("A", ColumnDataType.Int64), new ColumnDefinition("B", ColumnDataType.DateTime) });
                 Throws<ArgumentException>(() => t.AddRow(1, "not a date"), "unconvertible value", "Row 1 of table 'T': column 'B' (DateTime)");
                 Throws<ArgumentException>(() => t.AddRow(1), "too few values", "has 1 values, but the table has 2 columns");
+                Throws<ArgumentException>(() => t.AddRow(1, new DateTime(50, 1, 1)), "date before the year 100", "column 'B' (DateTime)");
+                Throws<ArgumentException>(() => t.AddRow(1L << 40, "x"), "second value fails after a first that needs no conversion", "column 'B'");
                 t.AddRow(2, new DateTime(2025, 1, 1));
                 Check.Equal(1L, t.RowCount, "only the good row counts");
                 string tbl = Encoding.UTF8.GetString(ModelReader.Read(Save(model)).Find(@"\.0\.dim\\T_G\.0\.tbl\.xml$"));

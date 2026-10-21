@@ -84,6 +84,9 @@ internal abstract class ColumnBuilder : IDisposable
     /// </summary>
     public virtual object Coerce(object value) => value;
 
+    /// <summary>True when <see cref="AppendObject"/> takes <paramref name="value"/> as it is and cannot fail on it.</summary>
+    public abstract bool Accepts(object value);
+
     /// <summary>Appends a boxed value, converting it to the column type.</summary>
     public abstract void AppendObject(object value);
 
@@ -255,6 +258,8 @@ internal sealed class StringColumnBuilder : ColumnBuilder
         Rows++;
     }
 
+    public override bool Accepts(object value) => value is string;
+
     public override void AppendObject(object value)
     {
         string s = value switch
@@ -330,6 +335,8 @@ internal sealed class BooleanColumnBuilder : ColumnBuilder
         Spool.WriteUInt32(id);
         Rows++;
     }
+
+    public override bool Accepts(object value) => value is bool;
 
     public override object Coerce(object value) => value switch
     {
@@ -415,6 +422,9 @@ internal sealed class Int64ColumnBuilder : ColumnBuilder
             throw new OverflowException($"Value {value} is outside the range of the Currency data type.");
         return (long)scaled;
     }
+
+    // Currency values are range-checked by Coerce, so they always take that path.
+    public override bool Accepts(object value) => !_currency && value is long or int or short or byte or sbyte or ushort or uint or bool;
 
     public override object Coerce(object value)
     {
@@ -591,15 +601,23 @@ internal sealed class DoubleColumnBuilder : ColumnBuilder
         _ => Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate(),
     };
 
+    public override bool Accepts(object value) => _date
+        ? value is DateTime { Year: >= 100 } or DateOnly { Year: >= 100 }
+        : value is double or float or decimal;
+
     public override object Coerce(object value)
     {
         if (_date)
-            return value switch
+        {
+            object date = value switch
             {
                 DateTime or DateTimeOffset or DateOnly or TimeOnly or TimeSpan => value,
                 string s => DateTime.Parse(s, CultureInfo.InvariantCulture),
                 _ => Convert.ToDateTime(value, CultureInfo.InvariantCulture),
             };
+            ToOADate(date);   // throws OverflowException for a date before the year 100
+            return date;
+        }
         return value switch
         {
             double or float or decimal => value,

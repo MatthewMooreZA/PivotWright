@@ -179,18 +179,22 @@ internal sealed class TableBuilder : IDisposable
         ThrowIfReadOnly();
         if (values.Length != _columns.Count)
             throw new ArgumentException($"Row {Rows + 1} of table '{Name}' has {values.Length} values, but the table has {_columns.Count} columns ({Identifiers.List(_columns.Select(c => c.Definition.Name))}).", nameof(values));
-        var row = _scratch ??= new object?[_columns.Count];
+        // Values the column takes as they are cannot fail; the others are converted into the scratch row first, so a value
+        // that does not fit throws before any column has taken a value of this row.
+        object?[]? converted = null;
         for (int i = 0; i < values.Length; i++)
         {
             object? v = values[i];
-            row[i] = v is null || v is DBNull ? null : Coerce(i, v, Rows + 1);
+            if (v is null || v is DBNull || _columns[i].Accepts(v)) continue;
+            (converted ??= _scratch ??= new object?[_columns.Count])[i] = Coerce(i, v, Rows + 1);
         }
-        for (int i = 0; i < row.Length; i++)
+        for (int i = 0; i < values.Length; i++)
         {
-            if (row[i] is { } v) _columns[i].AppendObject(v);
-            else _columns[i].AppendNull();
-            row[i] = null;
+            object? v = converted?[i] ?? values[i];
+            if (v is null || v is DBNull) _columns[i].AppendNull();
+            else _columns[i].AppendObject(v);
         }
+        if (converted is not null) Array.Clear(converted);
         Rows++;
     }
 

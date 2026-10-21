@@ -87,7 +87,7 @@ model.Save("t.xlsx");
 
 `AddRow` now converts the whole row before any column takes a value (`ColumnBuilder.Coerce`). When an `IDataReader` fails in the middle of a row, part of the row is already stored. The table is then marked, and `Save` reports `Table 'T' is incomplete: loading row 2 from the data reader failed at column 'B' (...)`.
 
-The cost is about 9% on a microbenchmark of `AddRow` alone: 2 million rows of 4 columns took 1.97 s before and 2.16 s after (Release build). The typed `IDataReader` path is unchanged.
+Values that already have their column's type (a `long` for Whole Number, a `string` for Text, and so on) cannot fail, so they are appended directly; only the others are converted up front. The cost, measured as the best of 5 runs of 2 million rows × 4 columns in a Release build, is 305–330 ms before and 320–370 ms after, within run-to-run noise. The typed `IDataReader` path is unchanged (about 1 s, half of it in `DataTableReader` itself). Adding rows in batches would not be faster: `AddRows(items, project)` costs the same as an `AddRow` loop, because the time goes into encoding each value (spooling, distinct-value tracking), not into the call.
 
 ### Errors say what exists
 
