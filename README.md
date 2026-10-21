@@ -12,11 +12,12 @@ The format follows Microsoft's open specification [MS-XLDM] (Spreadsheet Data Mo
 using System.Globalization;
 using PivotWright;
 
-using var model = new DataModelWriter(new DataModelOptions
-{
-    Culture = CultureInfo.GetCultureInfo("en-GB"),   // collation, currency format, month names
-    DecimalAsCurrency = true,    // decimal -> Fixed Decimal (Currency) instead of Double
-});
+using var model = new DataModelWriter();   // en-US and Excel's defaults; or set options:
+// using var model = new DataModelWriter(new DataModelOptions
+// {
+//     Culture = CultureInfo.GetCultureInfo("en-GB"),   // collation, currency format, month names
+//     DecimalAsCurrency = true,                        // decimal -> Fixed Decimal (Currency) instead of Double
+// });
 
 // 1. Straight from a database: rows are streamed, never materialised.
 ModelTable sales;
@@ -162,7 +163,7 @@ Behaviour to be aware of:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `Culture` | en-US | Model locale: collation, currency format, month and day names, string hash algorithm. Needs a culture with a Windows LCID (not the invariant culture). |
+| `Culture` | en-US | Model locale: collation, currency format, month and day names, string hash algorithm. Needs a culture with a Windows LCID (not the invariant culture). See below. |
 | `SegmentRowCount` | 1,048,576 | Rows per column segment. Must be a power of two from 16,384 to 16,777,216. Excel uses 2²⁰. |
 | `SpillThresholdBytes` | 32 MiB | In-memory buffer per column before values spill to a temp file. |
 | `TempDirectory` | system temp | Location of spill files and the temporary model stream. |
@@ -171,6 +172,15 @@ Behaviour to be aware of:
 | `DecimalAsCurrency` | `false` | Map `decimal` to Currency instead of Double. |
 | `DataSourceName`, `ConnectionString` | placeholder | The model's data source and connection. See [Limitations](#limitations). |
 | `WorksheetName` | `Sheet1` | Name of the single, empty worksheet. |
+| `AddHelperMeasure` | `true` | Add one hidden measure (`= 1`) when a model has relationships but no measures; Excel's *Sort by Column* needs it (see [Sort by column](#sort-by-column)). |
+
+Every option has a default, so `new DataModelWriter()` is enough when en-US suits you. The culture is not taken from the machine by default, so that the same code writes the same file everywhere: the culture decides how text is sorted and de-duplicated, the currency symbol of `MeasureFormat.Currency` and the month and day names of `AddDateTable`. To follow the machine's locale, ask for it explicitly:
+
+```csharp
+using var model = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.CurrentCulture });
+```
+
+This throws `ArgumentException` where the current culture is the invariant culture, which is usual in containers and CI with `LANG=C`; Excel needs a locale with a Windows LCID.
 
 ## Large data
 
