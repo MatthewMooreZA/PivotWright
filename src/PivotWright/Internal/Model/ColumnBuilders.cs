@@ -33,7 +33,8 @@ internal abstract class ColumnBuilder : IDisposable
         Spool = new Spool(ctx.SpillThreshold, ctx.TempDirectory);
     }
 
-    public ColumnDefinition Definition { get; }
+    /// <summary>The column's definition, replaced by a copy when a setting changes after the table was created.</summary>
+    public ColumnDefinition Definition { get; set; }
     public string Id { get; }
     /// <summary>Column name in the model (the definition's name without characters Power Pivot rejects).</summary>
     public string ModelName { get; set; } = string.Empty;
@@ -76,6 +77,15 @@ internal abstract class ColumnBuilder : IDisposable
     public long[]? IdRowCounts { get; private set; }
 
     public abstract void AppendNull();
+
+    /// <summary>
+    /// Returns <paramref name="value"/> converted to a type <see cref="AppendObject"/> accepts without failing, or the value
+    /// itself when it already is one; throws when it cannot be converted. Lets a row be checked before any column takes a value.
+    /// </summary>
+    public virtual object Coerce(object value) => value;
+
+    /// <summary>True when <see cref="AppendObject"/> takes <paramref name="value"/> as it is and cannot fail on it.</summary>
+    public abstract bool Accepts(object value);
 
     /// <summary>Appends a boxed value, converting it to the column type.</summary>
     public abstract void AppendObject(object value);
@@ -248,6 +258,8 @@ internal sealed class StringColumnBuilder : ColumnBuilder
         Rows++;
     }
 
+    public override bool Accepts(object value) => value is string;
+
     public override void AppendObject(object value)
     {
         string s = value switch
@@ -324,12 +336,16 @@ internal sealed class BooleanColumnBuilder : ColumnBuilder
         Rows++;
     }
 
-    public override void AppendObject(object value) => Append(value switch
+    public override bool Accepts(object value) => value is bool;
+
+    public override object Coerce(object value) => value switch
     {
-        bool b => b,
+        bool => value,
         string s => bool.Parse(s),
         _ => Convert.ToBoolean(value, CultureInfo.InvariantCulture),
-    });
+    };
+
+    public override void AppendObject(object value) => Append((bool)Coerce(value));
 
     public override IEnumerable<object?> Keys()
     {
@@ -405,6 +421,25 @@ internal sealed class Int64ColumnBuilder : ColumnBuilder
         if (scaled > long.MaxValue || scaled < long.MinValue)
             throw new OverflowException($"Value {value} is outside the range of the Currency data type.");
         return (long)scaled;
+    }
+
+    // Currency values are range-checked by Coerce, so they always take that path.
+    public override bool Accepts(object value) => !_currency && value is long or int or short or byte or sbyte or ushort or uint or bool;
+
+    public override object Coerce(object value)
+    {
+        if (_currency)
+        {
+            decimal m = value as decimal? ?? Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+            ToCurrencyUnits(m);
+            return m;
+        }
+        return value switch
+        {
+            long or int or short or byte or sbyte or ushort or uint or bool => value,
+            ulong ul => checked((long)ul),
+            _ => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+        };
     }
 
     public override void AppendObject(object value)
@@ -565,6 +600,30 @@ internal sealed class DoubleColumnBuilder : ColumnBuilder
         string s => DateTime.Parse(s, CultureInfo.InvariantCulture).ToOADate(),
         _ => Convert.ToDateTime(value, CultureInfo.InvariantCulture).ToOADate(),
     };
+
+    public override bool Accepts(object value) => _date
+        ? value is DateTime { Year: >= 100 } or DateOnly { Year: >= 100 }
+        : value is double or float or decimal;
+
+    public override object Coerce(object value)
+    {
+        if (_date)
+        {
+            object date = value switch
+            {
+                DateTime or DateTimeOffset or DateOnly or TimeOnly or TimeSpan => value,
+                string s => DateTime.Parse(s, CultureInfo.InvariantCulture),
+                _ => Convert.ToDateTime(value, CultureInfo.InvariantCulture),
+            };
+            ToOADate(date);   // throws OverflowException for a date before the year 100
+            return date;
+        }
+        return value switch
+        {
+            double or float or decimal => value,
+            _ => Convert.ToDouble(value, CultureInfo.InvariantCulture),
+        };
+    }
 
     public override void AppendObject(object value)
     {

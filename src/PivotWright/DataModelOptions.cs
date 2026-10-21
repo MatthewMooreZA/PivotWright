@@ -7,11 +7,29 @@ public sealed class DataModelOptions
 {
     private int _segmentRowCount = 1 << 20;
 
+    private CultureInfo _culture = CultureInfo.GetCultureInfo("en-US");
+
     /// <summary>
-    /// Windows locale identifier (LCID) of the model. It drives the collation used to sort and
-    /// de-duplicate text values (case-insensitive, as in Power Pivot). Default: 1033 (en-US).
+    /// Locale of the model, for example <c>CultureInfo.GetCultureInfo("en-ZA")</c>. It drives the collation used to sort and
+    /// de-duplicate text values (case-insensitive, as in Power Pivot), the currency format, and the month and day names of
+    /// <see cref="DataModelWriter.AddDateTable"/>. It must be a culture with a Windows locale id (LCID), which Excel stores in the
+    /// file. Default: en-US.
     /// </summary>
-    public int Lcid { get; init; } = 1033;
+    /// <exception cref="ArgumentException">The culture has no Windows locale id (the invariant culture or a custom culture).</exception>
+    public CultureInfo Culture
+    {
+        get => _culture;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value, nameof(Culture));
+            if (value.LCID is 127 or 4096 or 0)
+                throw new ArgumentException($"Culture '{value.Name}' has no Windows locale id; use a named culture such as \"en-US\" or \"en-ZA\".", nameof(Culture));
+            _culture = value;
+        }
+    }
+
+    /// <summary>Windows locale id of <see cref="Culture"/>, as written to the file.</summary>
+    internal int Lcid => _culture.LCID;
 
     /// <summary>
     /// Rows per column segment. Must be a power of two between 16,384 and 16,777,216.
@@ -75,13 +93,4 @@ public sealed class DataModelOptions
     /// Default true; turn it off if you add your own measures or never sort in Excel.
     /// </summary>
     public bool AddHelperMeasure { get; init; } = true;
-
-    internal CultureInfo Culture
-    {
-        get
-        {
-            try { return CultureInfo.GetCultureInfo(Lcid); }
-            catch (CultureNotFoundException) { return CultureInfo.InvariantCulture; }
-        }
-    }
 }

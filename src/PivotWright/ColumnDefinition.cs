@@ -45,6 +45,10 @@ public sealed class ColumnDefinition
 
     public override string ToString() => $"{Name} ({DataType})";
 
+    /// <summary>A copy with the given settings, used when a setting is changed after the table was created.</summary>
+    internal ColumnDefinition With(bool? isHidden = null, string? sortByColumn = null)
+        => new(Name, DataType) { IsHidden = isHidden ?? IsHidden, SortByColumn = sortByColumn ?? SortByColumn };
+
     /// <summary>Maps a CLR type to the data model type used for it.</summary>
     public static ColumnDataType FromClrType(Type type, bool decimalAsCurrency = false)
     {

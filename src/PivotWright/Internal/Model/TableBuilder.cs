@@ -46,7 +46,7 @@ internal sealed class TableBuilder : IDisposable
         foreach (var def in columns)
         {
             if (!names.Add(def.Name))
-                throw new ArgumentException($"Table '{name}' already has a column named '{def.Name}'.");
+                throw new ArgumentException($"Table '{name}' already has a column named '{def.Name}'.", "columns");
             string modelName = Identifiers.Unique(Identifiers.SanitizeName(def.Name, "Column"), modelNames);
             string colId = Identifiers.Unique(Identifiers.Sanitize(modelName, "Column"), used);
             ColumnBuilder builder = def.DataType switch
@@ -60,27 +60,65 @@ internal sealed class TableBuilder : IDisposable
             builder.ModelName = modelName;
             _columns.Add(builder);
         }
-        if (_columns.Count == 0) throw new ArgumentException($"Table '{name}' must have at least one column.");
+        if (_columns.Count == 0) throw new ArgumentException($"Table '{name}' must have at least one column.", "columns");
         foreach (var b in _columns.ToList())
             if (b.Definition.SortByColumn is { } by) SetSortBy(b.Definition.Name, by);
     }
 
-    public ColumnBuilder FindColumn(string name) =>
-        _columns.FirstOrDefault(c => string.Equals(c.Definition.Name, name, StringComparison.OrdinalIgnoreCase)
-                                     || string.Equals(c.ModelName, name, StringComparison.OrdinalIgnoreCase))
-        ?? throw new ArgumentException($"Table '{Name}' has no column named '{name}'.", nameof(name));
-
-    /// <summary>Orders <paramref name="column"/> by <paramref name="sortColumn"/> (Power Pivot's Sort by Column).</summary>
-    public void SetSortBy(string column, string sortColumn)
+    /// <summary>Finds a column by the name it was defined with or its model name, ignoring case.</summary>
+    /// <param name="name">Column name.</param>
+    /// <param name="paramName">Parameter of the public method that took the name, reported in the exception.</param>
+    public ColumnBuilder FindColumn(string name, string paramName = "column")
     {
-        var c = FindColumn(column);
-        var by = FindColumn(sortColumn);
-        if (c == by) throw new ArgumentException($"Column '{c.Definition.Name}' cannot be sorted by itself.");
+        ArgumentNullException.ThrowIfNull(name, paramName);
+        return _columns.FirstOrDefault(c => string.Equals(c.Definition.Name, name, StringComparison.OrdinalIgnoreCase)
+                                            || string.Equals(c.ModelName, name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException(
+                $"Table '{Name}' has no column named '{name}'. Its columns are: {Identifiers.List(_columns.Select(c => c.Definition.Name))}.", paramName);
+    }
+
+    /// <summary>Set when the table is complete (a generated date table); the text says why rows cannot be added.</summary>
+    public string? ReadOnlyReason { get; set; }
+
+    // Set when a row was only partly added (the source failed in the middle of a row); the table can then not be saved.
+    private string? _fault;
+
+    // Values of the row being added, converted before any column takes one.
+    private object?[]? _scratch;
+
+    /// <summary>Hides a column from client tools, or shows it again.</summary>
+    public void SetHidden(ColumnBuilder c, bool hidden)
+    {
+        if (c.Definition.IsHidden != hidden) c.Definition = c.Definition.With(isHidden: hidden);
+    }
+
+    /// <summary>Orders <paramref name="column"/> by <paramref name="sortColumn"/> (Power Pivot's Sort by Column), by name.</summary>
+    public void SetSortBy(string column, string sortColumn)
+        => SetSortBy(FindColumn(column, "columns"), FindColumn(sortColumn, "columns"));
+
+    /// <summary>Orders <paramref name="c"/> by <paramref name="by"/> (Power Pivot's Sort by Column).</summary>
+    public void SetSortBy(ColumnBuilder c, ColumnBuilder by)
+    {
+        const string param = "SortByColumn";
+        if (c == by) throw new ArgumentException($"Column '{c.Definition.Name}' cannot be sorted by itself.", param);
+        if (c.SortBy == by) return;
         if (by.SortBy is not null)
-            throw new ArgumentException($"Column '{by.Definition.Name}' is itself sorted by another column, so it cannot be a sort column.");
+            throw new ArgumentException($"Column '{by.Definition.Name}' is itself sorted by another column, so it cannot be a sort column.", param);
         if (_columns.Any(o => o.SortBy == c))
-            throw new ArgumentException($"Column '{c.Definition.Name}' is the sort column of another column, so it cannot be sorted itself.");
+            throw new ArgumentException($"Column '{c.Definition.Name}' is the sort column of another column, so it cannot be sorted itself.", param);
+        if (c.IsDateKey || by.IsDateKey)
+            throw new ArgumentException($"'{Name}[{(c.IsDateKey ? c : by).Definition.Name}]' is the date column of a date table, so it cannot take part in Sort by Column.", param);
         c.SortBy = by;
+        if (!string.Equals(c.Definition.SortByColumn, by.Definition.Name, StringComparison.Ordinal))
+            c.Definition = c.Definition.With(sortByColumn: by.Definition.Name);
+    }
+
+    /// <summary>Removes Sort by Column from a column, so it sorts by its own values.</summary>
+    public void ClearSortBy(ColumnBuilder c)
+    {
+        if (c.SortBy is null) return;
+        c.SortBy = null;
+        c.Definition = new ColumnDefinition(c.Definition.Name, c.Definition.DataType) { IsHidden = c.Definition.IsHidden };
     }
 
     // For every sorted column: checks that each of its values belongs to exactly one value of the sort column
@@ -126,24 +164,61 @@ internal sealed class TableBuilder : IDisposable
     public long Rows { get; private set; }
     public IReadOnlyList<ColumnBuilder> Columns => _columns;
 
+    /// <summary>Throws when rows cannot be added to the table.</summary>
+    public void ThrowIfReadOnly()
+    {
+        if (ReadOnlyReason is not null) throw new InvalidOperationException(ReadOnlyReason);
+    }
+
+    /// <summary>
+    /// Adds a row. Every value is converted first, so a value that does not fit its column leaves the table unchanged and
+    /// the caller can skip the row and go on.
+    /// </summary>
     public void AddRow(ReadOnlySpan<object?> values)
     {
+        ThrowIfReadOnly();
         if (values.Length != _columns.Count)
-            throw new ArgumentException($"Expected {_columns.Count} values for table '{Name}' but got {values.Length}.");
+            throw new ArgumentException($"Row {Rows + 1} of table '{Name}' has {values.Length} values, but the table has {_columns.Count} columns ({Identifiers.List(_columns.Select(c => c.Definition.Name))}).", nameof(values));
+        // Values the column takes as they are cannot fail; the others are converted into the scratch row first, so a value
+        // that does not fit throws before any column has taken a value of this row.
+        object?[]? converted = null;
         for (int i = 0; i < values.Length; i++)
         {
             object? v = values[i];
+            if (v is null || v is DBNull || _columns[i].Accepts(v)) continue;
+            (converted ??= _scratch ??= new object?[_columns.Count])[i] = Coerce(i, v, Rows + 1);
+        }
+        for (int i = 0; i < values.Length; i++)
+        {
+            object? v = converted?[i] ?? values[i];
             if (v is null || v is DBNull) _columns[i].AppendNull();
             else _columns[i].AppendObject(v);
         }
+        if (converted is not null) Array.Clear(converted);
         Rows++;
+    }
+
+    /// <summary>Converts a value for the column at <paramref name="ordinal"/>, naming row, column and value when it does not fit.</summary>
+    public object Coerce(int ordinal, object value, long row)
+    {
+        var c = _columns[ordinal];
+        try { return c.Coerce(value); }
+        catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
+        {
+            throw new ArgumentException(
+                $"Row {row} of table '{Name}': column '{c.Definition.Name}' ({c.Definition.DataType}) cannot hold the {value.GetType().Name} value '{value}'. {e.Message}", e);
+        }
     }
 
     /// <summary>Called by typed writers after they appended one value to every column.</summary>
     public void CommitRow() => Rows++;
 
+    /// <summary>Records that a row was only partly added; saving then fails with <paramref name="reason"/>.</summary>
+    public void Fault(string reason) => _fault ??= reason;
+
     public EncodedTable Encode(IFileSink sink, int segmentSize)
     {
+        if (_fault is not null) throw new InvalidOperationException(_fault);
         foreach (var c in _columns)
             if (c.Rows != Rows) throw new InvalidOperationException($"Column '{c.Definition.Name}' has {c.Rows} values but table '{Name}' has {Rows} rows.");
 
@@ -201,6 +276,15 @@ internal static class Identifiers
     // Characters Power Pivot does not allow in table, column or measure names
     // ("Naming Requirements for Tables and Columns", PowerPivot for Excel).
     private static readonly char[] InvalidInNames = ".,;':/\\*|?&%$!+=()[]{}<>\"".ToCharArray();
+
+    /// <summary>Names quoted and separated by commas for an error message, the first 20 only.</summary>
+    public static string List(IEnumerable<string> names)
+    {
+        var all = names.ToList();
+        if (all.Count == 0) return "(none)";
+        string shown = string.Join(", ", all.Take(20).Select(n => "'" + n + "'"));
+        return all.Count > 20 ? $"{shown} and {all.Count - 20} more" : shown;
+    }
 
     /// <summary>Removes characters that Power Pivot rejects in object names, and surrounding spaces.</summary>
     public static string SanitizeName(string name, string fallback)
