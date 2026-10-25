@@ -59,6 +59,8 @@ var tests = new (string Name, Action Body)[]
     ("Calculated column: formula, no values, counters as Excel saves them (H10)", Tests.CalculatedColumnProfile),
     ("Calculated column: the six data types as Excel infers them (H10 to H15)", Tests.CalculatedColumnTypes),
     ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
+    ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
+    ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
 };
 
@@ -995,7 +997,7 @@ namespace PivotWright.Tests
         // Sort by Column worked in Excel depended on the random ids (ASDetail::OnClone2). Excel numbers them distinctly.
         // Products(Category, Product) with a hierarchy and Sales(ProductKey, Qty, Amount) related to it: the shape of calcbase_v1, the
         // base of Excel's H6, H7 and H10 samples.
-        private static (DataModelWriter model, ModelTable products, ModelTable sales) CalcModel()
+        private static (DataModelWriter model, ModelTable products, ModelTable sales) CalcModel(bool hierarchy = true, int salesRows = 40)
         {
             var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             var products = model.CreateTable("Products", new[]
@@ -1011,9 +1013,9 @@ namespace PivotWright.Tests
                 new ColumnDefinition("Qty", ColumnDataType.Int64),
                 new ColumnDefinition("Amount", ColumnDataType.Currency),
             });
-            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, 1 + i % 5, (decimal)(10 + i % 7));
+            for (int i = 0; i < salesRows; i++) sales.AddRow(1 + i % 6, 1 + i % 5, (decimal)(10 + i % 7));
             model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
-            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            if (hierarchy) products.AddHierarchy("Product Hierarchy", "Category", "Product");
             return (model, products, sales);
         }
 
@@ -1056,7 +1058,8 @@ namespace PivotWright.Tests
                 var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Line Total\.0\.idf$");
                 Check.Equal(152, idf.Length, "stub size");
                 Check.Equal(16, (int)BitConverter.ToUInt64(idf, 0), "run slots");
-                Check.Equal(2, (int)BitConverter.ToUInt32(idf, 8), "BLANK");
+                // 40 rows are fewer than the 64 of a run-length entry, so they are bit-packed (SPEC section 10, H23).
+                Check.Equal(0xFFFFFFFFu, BitConverter.ToUInt32(idf, 8), "bit-packed entry");
                 Check.Equal(40, (int)BitConverter.ToUInt32(idf, 12), "rows");
                 Check.True(!m.Files.Keys.Any(k => k.Contains("Line Total") && (k.Contains("H$") || k.EndsWith(".dictionary", StringComparison.Ordinal))),
                     "no hierarchy table and no dictionary");
@@ -1164,6 +1167,83 @@ namespace PivotWright.Tests
             Find(both, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
         }
 
+        // Excel's H21 (one column on Sales), H22 (two), H23 (one on Products) and H24 (one on each) in a model without a hierarchy.
+        public static void CalculatedColumnShapesWithoutHierarchy()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, products, sales) = CalcModel(hierarchy: false);
+                using (model)
+                {
+                    add(products, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            var one = Save((p, s) => s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency));
+            Find(one, @"Model\.7\.cub\.xml$");
+            Check.Equal("1,2,2,2,", Counters(one, @"Sales_G\.6\.dim\.xml$"), "Sales dimension counters");
+            Find(one, @"Products_G\.2\.dim\.xml$");
+            Find(one, @"\.0\.dim\\Sales_G\.2\.tbl\.xml$");
+            Find(one, @"\.cub\\info\.7\.xml$");
+            Check.Equal(0, one.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "no partition information");
+            Check.True(Find(one, @"Sales_G\.7\.det\.xml$").Contains("<Expression>[Qty]*[Amount]</Expression>"), "formula in the measure group");
+
+            var two = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+            });
+            Find(two, @"Model\.10\.cub\.xml$");
+            Check.Equal("2,3,3,3,", Counters(two, @"Sales_G\.8\.dim\.xml$"), "Sales dimension counters");
+            Find(two, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+
+            var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
+            Find(primary, @"Model\.6\.cub\.xml$");
+            Check.Equal("1,2,2,1,", Counters(primary, @"Products_G\.5\.dim\.xml$"), "Products dimension counters");
+            Find(primary, @"\.0\.dim\\Products_G\.1\.tbl\.xml$");
+            Check.True(Find(primary, @"Sales_G\.6\.det\.xml$").Contains("<Expression>LEN([Product])</Expression>"), "the many-side group holds the primary side's formula");
+
+            var both = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            });
+            Find(both, @"Model\.10\.cub\.xml$");
+            Check.Equal("1,2,2,2,", Counters(both, @"Sales_G\.5\.dim\.xml$"), "Sales dimension counters");
+            Find(both, @"Products_G\.5\.dim\.xml$");
+        }
+
+        // A run of 64 or more BLANKs is a run-length entry (1,000 rows in H10 to H21), fewer are bit-packed (12 rows in H23, H24).
+        public static void CalculatedColumnBlankEncoding()
+        {
+            foreach (var (rows, rle) in new[] { (12, false), (63, false), (64, true), (1000, true) })
+            {
+                var (model, _, sales) = CalcModel(salesRows: rows);
+                using (model)
+                {
+                    sales.AddCalculatedColumn("Calc", "1", ColumnDataType.Currency);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var m = ModelReader.Read(ms.ToArray());
+                    var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Calc\.0\.idf$");
+                    Check.Equal(152, idf.Length, rows + " rows: file size");
+                    Check.Equal(rle ? 2u : 0xFFFFFFFFu, BitConverter.ToUInt32(idf, 8), rows + " rows: entry");
+                    Check.Equal(rows, (int)BitConverter.ToUInt32(idf, 12), rows + " rows: count");
+                    string tbl = Encoding.UTF8.GetString(m.Find(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$"));
+                    int col = tbl.IndexOf("name=\"Calc\"", StringComparison.Ordinal);
+                    string block = tbl[col..tbl.IndexOf("</DataObjects>", col, StringComparison.Ordinal)];
+                    string runs = rle ? "<RLERuns xsi:type=\"xsd:long\">1</RLERuns><OthersRLERuns xsi:type=\"xsd:long\">0</OthersRLERuns>" : "<RLERuns xsi:type=\"xsd:long\">0</RLERuns><OthersRLERuns xsi:type=\"xsd:long\">1</OthersRLERuns>";
+                    Check.True(block.Replace("\r", "").Replace("\n", "").Replace(" ", "").Contains(runs.Replace(" ", "")), rows + " rows: run counts");
+                }
+            }
+        }
+
         public static void CalculatedColumnValidation()
         {
             void Rejects<T>(Action a, string what) where T : Exception
@@ -1204,7 +1284,7 @@ namespace PivotWright.Tests
                 Rejects<InvalidOperationException>(() => Saves(twoOnProducts), "two columns on a hierarchy table");
             }
 
-            // Without a hierarchy, or on a table that is not the many side of a relationship, the case was never seen in Excel.
+            // A model without a hierarchy is supported (H21 to H24), but not a table without any relationship.
             using (var noHierarchy = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
             {
                 var a = noHierarchy.CreateTable("A", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("V", ColumnDataType.Currency) });
@@ -1213,7 +1293,11 @@ namespace PivotWright.Tests
                 b.AddRow(1);
                 noHierarchy.AddRelationship(b["K"], a["K"]);
                 b.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
-                Rejects<InvalidOperationException>(() => Saves(noHierarchy), "no hierarchy");
+                Saves(noHierarchy);
+                var c = noHierarchy.CreateTable("C", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                c.AddRow(1);
+                c.AddCalculatedColumn("D", "1", ColumnDataType.Currency);
+                Rejects<InvalidOperationException>(() => Saves(noHierarchy), "table without a relationship in a model without hierarchy");
             }
             var (lonely, _, _) = CalcModel();
             using (lonely)

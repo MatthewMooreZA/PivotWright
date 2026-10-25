@@ -323,6 +323,8 @@ internal static class TableXmlWriter
     private static void CalculatedColumn(XmBuilder x, EncodedTable t, EncodedCalculatedColumn col, int lcid)
     {
         long rows = col.Rows;
+        var seg = col.Segment;
+        // Excel's bookmark bits for these columns are the position of the highest bit of the row count (9 for 1,000 rows, 3 for 12).
         long bookmarkBits = 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)Math.Max(1, rows));
         x.Open("XMRawColumn", col.Id, providerVersion: 1);
         x.Properties(p => p.Long("Settings", 3073).Long("ColumnFlags", 8).Raw("<Collation/><OrderByColumn/>").Long("Locale", lcid).UInt("BinaryCharacters", 0));
@@ -354,7 +356,7 @@ internal static class TableXmlWriter
                 m.Member("SubSegment", s =>
                 {
                     s.Open("XMColumnSegment");
-                    s.Properties(p => p.Long("Records", 0).Long("Mask", 0));
+                    s.Properties(p => p.Long("Records", seg.SubRecords).Long("Mask", 0));
                     s.Members(sm =>
                     {
                         sm.Member("CompressionInfo", ci => { ci.Open($"XMRENoSplitCompressionInfo{LT}1>"); ci.Properties(p => p.Int("Min", DataIds.Null)); ci.Close(); });
@@ -370,8 +372,8 @@ internal static class TableXmlWriter
                         cm.Member("RLECompression", r =>
                         {
                             r.Open("XMRLECompressionInfo");
-                            r.Properties(p => p.Long("BookmarkBits", bookmarkBits).Long("StorageAllocSize", UnprocessedColumn.Slots * 2)
-                                .Long("StorageUsedSize", 4).Bool("SegmentNeedsResizing", false));
+                            r.Properties(p => p.Long("BookmarkBits", bookmarkBits).Long("StorageAllocSize", seg.StorageAllocSize)
+                                .Long("StorageUsedSize", seg.StorageUsedSize).Bool("SegmentNeedsResizing", false));
                             r.Close();
                         });
                         cm.Member("SubCompression", sc2 => { sc2.Open($"XMRENoSplitCompressionInfo{LT}1>"); sc2.Properties(p => p.Int("Min", DataIds.Null)); sc2.Close(); });
@@ -383,7 +385,7 @@ internal static class TableXmlWriter
                     s.Open("XMColumnSegmentStats");
                     s.Properties(p => p.Long("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
                         .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", rows).Bool("HasNulls", true)
-                        .Long("RLERuns", 1).Long("OthersRLERuns", 0));
+                        .Long("RLERuns", seg.RleRuns).Long("OthersRLERuns", seg.BitPackedRuns));
                     s.Close();
                 });
             });

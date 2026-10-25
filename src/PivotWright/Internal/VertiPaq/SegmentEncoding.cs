@@ -219,23 +219,3 @@ internal static class NoSplit32Writer
         s.Write(buf);
     }
 }
-
-/// <summary>
-/// Data file of a calculated column that Excel has not calculated yet (H10): one run of BLANK over the table's rows, in 16
-/// reserved run slots, followed by one empty bit-packed word. Excel computes the values when a PivotTable first uses the column.
-/// </summary>
-internal static class UnprocessedColumn
-{
-    public const int Slots = 16;
-
-    /// <summary>The file for a table of <paramref name="rows"/> rows in a single segment.</summary>
-    public static byte[] Segment(long rows)
-    {
-        var data = new byte[8 + Slots * 8 + 8 + 8];
-        BinaryPrimitives.WriteUInt64LittleEndian(data, Slots);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), DataIds.Null);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(12), (uint)rows);
-        BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(8 + Slots * 8), 1);
-        return data;
-    }
-}

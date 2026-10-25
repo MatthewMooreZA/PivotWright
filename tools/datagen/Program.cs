@@ -48,7 +48,7 @@ for (int i = 0; i < 1000; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).Add
 var dates = m.Tables["Dates"];
 m.AddRelationship(s["ProductKey"], p["ProductKey"]);
 m.AddRelationship(s["Date"], dates["Date"]);
-bool plain = args.Length > 2 && args[2] == "plain";   // no hierarchies at all
+bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain", or a trailing "plain" after a calc mode)
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
 s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
@@ -56,7 +56,7 @@ if (args.Length > 2 && args[2] == "date") dates.MarkAsDateTable("Date");
 if (args.Length > 2 && args[2] == "calc")
 {
     // calc [currency|whole|decimal|date|boolean|text]: one calculated column, as in Excel's H10 to H15 samples
-    var (calcName, calcFormula, calcType) = (args.Length > 3 ? args[3] : "currency") switch
+    var (calcName, calcFormula, calcType) = (args.Skip(3).FirstOrDefault(a => a != "plain") ?? "currency") switch
     {
         "whole" => ("Double Qty", "[Qty]*2", ColumnDataType.Int64),
         "decimal" => ("Half Qty", "[Qty]/2", ColumnDataType.Double),

@@ -597,18 +597,23 @@ internal static class AsslWriter
             sb.Append("</KeyColumn></KeyColumns></Attribute>");
         }
         foreach (var c in t.CalculatedColumns)
-            sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><Type>Regular</Type><Enabled>true</Enabled><KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:ExpressionBinding\"><Expression/></Source></KeyColumn></KeyColumns></Attribute>");
+            CalculatedGroupAttribute(sb, m, c);
         sb.Append("</Attributes><ddl200_200:ShareDimensionStorage>Shared</ddl200_200:ShareDimensionStorage><CubeDimensionID>").Append(E(t.Id))
           .Append("</CubeDimensionID></Dimension>");
-        foreach (var r in t.Relationships) ReferenceDimension(sb, t, r, tablesById[r.PrimaryTableId]);
-        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.Calc?.MeasureGroupStructure ?? (m.AnyDate ? 9 : m.AnyHierarchy ? 8 : 0)) + "</StructureVersion><CacheVersion>" + (m.Calc?.MeasureGroupCache ?? (m.AnyDate ? 2 : 1)) + "</CacheVersion><DataVersion>" + (m.CalculatedProfile ? -1 : !m.AnyHierarchy ? 0 : m.HierarchyTables.Contains(t.Id) ? -1 : t.Relationships.Count > 0 ? 1 : 0) + "</DataVersion>");
+        foreach (var r in t.Relationships) ReferenceDimension(sb, m, t, r, tablesById[r.PrimaryTableId]);
+        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.Calc?.MeasureGroupStructure ?? (m.AnyDate ? 9 : m.AnyHierarchy ? 8 : 0)) + "</StructureVersion><CacheVersion>" + (m.Calc?.MeasureGroupCache ?? (m.AnyDate ? 2 : 1)) + "</CacheVersion><DataVersion>" + (m.Calc is not null ? m.Calc.MeasureGroupData[t.Id] : !m.AnyHierarchy ? 0 : m.HierarchyTables.Contains(t.Id) ? -1 : t.Relationships.Count > 0 ? 1 : 0) + "</DataVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><AggregationDesignFileList/><PartitionFileList>")
           .Append(E(t.Id)).Append(".").Append(m.PartitionVersion).Append(".prt.xml</PartitionFileList></MeasureGroup></ObjectDefinition></Load>");
         return sb.ToString();
     }
 
+    private static void CalculatedGroupAttribute(StringBuilder sb, ModelInfo m, EncodedCalculatedColumn c)
+        => sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><Type>Regular</Type><Enabled>true</Enabled><KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:ExpressionBinding\">")
+             .Append(m.Calc?.FormulasInMeasureGroups == true ? "<Expression>" + E(c.Expression) + "</Expression>" : "<Expression/>")
+             .Append("</Source></KeyColumn></KeyColumns></Attribute>");
+
     /// <summary>The measure group dimension that lets a table be sliced by the columns of a related (primary) table.</summary>
-    private static void ReferenceDimension(StringBuilder sb, EncodedTable fk, EncodedRelationship r, EncodedTable pk)
+    private static void ReferenceDimension(StringBuilder sb, ModelInfo m, EncodedTable fk, EncodedRelationship r, EncodedTable pk)
     {
         sb.Append("<Dimension xsi:type=\"ReferenceMeasureGroupDimension\"><Attributes>");
         sb.Append("<Attribute><AttributeID>").Append(FileNames.RowNumberId).Append("</AttributeID><Type>Regular</Type><Enabled>true</Enabled><KeyColumns><KeyColumn><DataType>Integer</DataType><DataSize>4</DataSize><NullProcessing>Error</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:RowNumberBinding\"/></KeyColumn></KeyColumns></Attribute>");
@@ -623,6 +628,8 @@ internal static class AsslWriter
             ColumnBinding(sb, pk.Id, c.Id);
             sb.Append("</KeyColumn></KeyColumns></Attribute>");
         }
+        if (m.Calc?.FormulasInMeasureGroups == true)
+            foreach (var c in pk.CalculatedColumns) CalculatedGroupAttribute(sb, m, c);
         sb.Append("</Attributes><IntermediateCubeDimensionID>").Append(E(fk.Id)).Append("</IntermediateCubeDimensionID><IntermediateGranularityAttributeID>")
           .Append(E(r.ForeignColumnId)).Append("</IntermediateGranularityAttributeID><Materialization>Regular</Materialization><ddl200:ProcessingState>Processed</ddl200:ProcessingState><ddl300:RelationshipID>")
           .Append(r.Name).Append("</ddl300:RelationshipID><CubeDimensionID>").Append(E(pk.Id)).Append("</CubeDimensionID></Dimension>");
@@ -639,7 +646,7 @@ internal static class AsslWriter
         sb.Append("<DataFileList/><Description/>");
         sb.Append("<Annotations").Append(NsB).Append('>').Append(Annotations(m.CalculatedProfile).Replace("\n          ", "\n                  ").Replace("\n            ", "\n                    ")).Append("</Annotations>");
         sb.Append(m.Calc is not null
-            ? (m.Calc.PartitionDataOne.Contains(tableId) ? "<DataVersion>1</DataVersion>" : m.HierarchyTables.Contains(tableId) || m.Calc.HoldsColumns(tableId) ? "<DataVersion>-1</DataVersion>" : "<DataVersion>0</DataVersion>")
+            ? "<DataVersion>" + m.Calc.PartitionData[tableId] + "</DataVersion>"
             : m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Data</Type><AggregationPrefix/><StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><CurrentStorageMode valuens=\"ddl200_200\">InMemory</CurrentStorageMode>");
         sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
