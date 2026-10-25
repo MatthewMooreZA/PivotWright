@@ -60,6 +60,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated column: the six data types as Excel infers them (H10 to H15)", Tests.CalculatedColumnTypes),
     ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
     ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
+    ("Calculated columns: one block of BLANKs per segment of a larger table", Tests.CalculatedColumnSeveralSegments),
     ("Calculated columns with hidden columns: hide a data column, a level, or the calculated column (H33 to H36)", Tests.CalculatedColumnsWithHiddenColumns),
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
     ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
@@ -1338,6 +1339,35 @@ namespace PivotWright.Tests
             Find(both, @"Model\.10\.cub\.xml$");
             Check.Equal("1,2,2,2,", Counters(both, @"Sales_G\.5\.dim\.xml$"), "Sales dimension counters");
             Find(both, @"Products_G\.5\.dim\.xml$");
+        }
+
+        // A table of several segments gets one block of BLANKs per segment (a model written with 16,384-row segments, 40,000 rows).
+        public static void CalculatedColumnSeveralSegments()
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, SegmentRowCount = 16384 });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 40000; i++) sales.AddRow(1 + i % 6, 1 + i % 5);
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            sales.AddCalculatedColumn("Twice", "[Qty]*2", ColumnDataType.Int64);
+            using (model)
+            {
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Twice\.0\.idf$");
+                Check.Equal(3 * 152, idf.Length, "three blocks of 152 bytes");
+                Check.Equal(16384, (int)BitConverter.ToUInt32(idf, 12), "first segment rows");
+                Check.Equal(16384, (int)BitConverter.ToUInt32(idf, 152 + 12), "second segment rows");
+                Check.Equal(40000 - 32768, (int)BitConverter.ToUInt32(idf, 304 + 12), "last segment rows");
+                string tbl = Encoding.UTF8.GetString(m.Find(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$"));
+                int col = tbl.IndexOf("name=\"Twice\"", StringComparison.Ordinal);
+                string block = tbl[col..tbl.IndexOf("</DataObjects>", col, StringComparison.Ordinal)];
+                Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(block, "<Name>SubSegment</Name>").Count, "three segments in the table XML");
+                Check.True(block.Contains("<SegmentCount xsi:type=\"xsd:int\">3</SegmentCount>"), "segment count of the data file");
+            }
         }
 
         // A run of 64 or more BLANKs is a run-length entry (1,000 rows in H10 to H21), fewer are bit-packed (12 rows in H23, H24).

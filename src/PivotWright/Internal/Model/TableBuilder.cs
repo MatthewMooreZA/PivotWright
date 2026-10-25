@@ -41,7 +41,7 @@ internal sealed class EncodedCalculatedColumn
     public required long Rows { get; init; }
     public required (int Prefix, int Dictionary, int File) Versions { get; init; }
     /// <summary>The column's only segment: BLANK in every row, as run-length or bit-packed entries by the usual rule.</summary>
-    public required EncodedSegment Segment { get; init; }
+    public required IReadOnlyList<EncodedSegment> Segments { get; init; }
     public bool IsHidden { get; init; }
 }
 
@@ -297,17 +297,23 @@ internal sealed class TableBuilder : IDisposable
         var calculated = new List<EncodedCalculatedColumn>(_calculated.Count);
         foreach (var c in _calculated)
         {
-            if (Rows > segmentSize)
-                throw new InvalidOperationException($"'{Name}[{c.Name}]' is a calculated column, which is only supported for tables of one segment ({segmentSize:N0} rows); '{Name}' has {Rows:N0} rows (no Excel sample of a calculated column on a larger table exists yet).");
             if (Rows == 0)
                 throw new InvalidOperationException($"'{Name}[{c.Name}]' is a calculated column on a table without rows, which was never seen in an Excel-written file.");
-            var blanks = new uint[Rows];
-            Array.Fill(blanks, DataIds.Null);
-            var segment = HybridRleEncoder.Encode(blanks);
+            // One block of BLANKs per segment, written one after the other like the segments of any column.
+            var segments = new List<EncodedSegment>();
             using (var idf = sink.Create(FileNames.CalculatedIdf(Id, c.Id, c.Versions.Prefix)))
-                idf.Write(segment.Data);
-            segment.Data = Array.Empty<byte>();
-            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segment = segment, IsHidden = c.IsHidden });
+            {
+                for (long done = 0; done < Rows; done += segmentSize)
+                {
+                    var blanks = new uint[Math.Min(segmentSize, Rows - done)];
+                    Array.Fill(blanks, DataIds.Null);
+                    var segment = HybridRleEncoder.Encode(blanks);
+                    idf.Write(segment.Data);
+                    segment.Data = Array.Empty<byte>();
+                    segments.Add(segment);
+                }
+            }
+            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden });
         }
         var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
         result.CalculatedColumns.AddRange(calculated);

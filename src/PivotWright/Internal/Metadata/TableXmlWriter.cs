@@ -323,9 +323,6 @@ internal static class TableXmlWriter
     private static void CalculatedColumn(XmBuilder x, EncodedTable t, EncodedCalculatedColumn col, int lcid)
     {
         long rows = col.Rows;
-        var seg = col.Segment;
-        // Excel's bookmark bits for these columns are the position of the highest bit of the row count (9 for 1,000 rows, 3 for 12).
-        long bookmarkBits = 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)Math.Max(1, rows));
         x.Open("XMRawColumn", col.Id, providerVersion: 1);
         x.Properties(p => p.Long("Settings", 3073).Long("ColumnFlags", 8).Raw("<Collation/><OrderByColumn/>").Long("Locale", lcid).UInt("BinaryCharacters", 0));
         x.Members(m =>
@@ -347,10 +344,16 @@ internal static class TableXmlWriter
                 s.Close();
             });
         });
-        x.Collections(c => c.Collection("Segments", sc =>
+        x.Collections(c => c.Collection("Segments", scAll =>
         {
+          foreach (var seg in col.Segments)
+          {
+            var sc = scAll;
+            long segmentRows = seg.Records;
+            // Excel's bookmark bits for these columns are the position of the highest bit of the row count (9 for 1,000 rows, 3 for 12).
+            long bookmarkBits = 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)Math.Max(1, segmentRows));
             sc.Open("XMColumnSegment");
-            sc.Properties(p => p.Long("Records", rows).Long("Mask", 0));
+            sc.Properties(p => p.Long("Records", segmentRows).Long("Mask", 0));
             sc.Members(m =>
             {
                 m.Member("SubSegment", s =>
@@ -384,12 +387,13 @@ internal static class TableXmlWriter
                 {
                     s.Open("XMColumnSegmentStats");
                     s.Properties(p => p.Long("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
-                        .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", rows).Bool("HasNulls", true)
+                        .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", segmentRows).Bool("HasNulls", true)
                         .Long("RLERuns", seg.RleRuns).Long("OthersRLERuns", seg.BitPackedRuns));
                     s.Close();
                 });
             });
             sc.Close();
+          }
         }));
         x.DataObjects(d =>
         {
@@ -408,7 +412,7 @@ internal static class TableXmlWriter
             d.DataObject(o =>
             {
                 o.Open("XMRawColumnPartitionDataObject", FileNames.CalculatedIdf(t.Id, col.Id, col.Versions.Prefix));
-                o.Properties(p => p.Int("DataVersion", col.Versions.File).Int("Partition", 0).Int("SegmentCount", 1));
+                o.Properties(p => p.Int("DataVersion", col.Versions.File).Int("Partition", 0).Int("SegmentCount", col.Segments.Count));
                 o.Close();
             });
         });

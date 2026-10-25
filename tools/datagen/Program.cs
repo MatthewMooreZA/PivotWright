@@ -44,7 +44,9 @@ else
     for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
 }
 var s = m.CreateTable("Sales", new[] { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) });
-for (int i = 0; i < 1000; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
+int salesRows = args.Select(a => a.StartsWith("rows=") ? int.Parse(a[5..]) : 0).FirstOrDefault(n => n > 0);   // "rows=1100000" for a table of several segments
+if (salesRows == 0) salesRows = 1000;
+for (int i = 0; i < salesRows; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
 var dates = m.Tables["Dates"];
 m.AddRelationship(s["ProductKey"], p["ProductKey"]);
 m.AddRelationship(s["Date"], dates["Date"]);
