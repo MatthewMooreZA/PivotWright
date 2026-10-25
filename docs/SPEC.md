@@ -202,7 +202,8 @@ Base for all three: `calcbase_v1` (the standard Products/Dates/Sales model). H6:
 - **Verified**: a generated file calculates on demand in Excel's automatic mode (sum of Line Total R90500 as computed), and adding a hierarchy, adding a Sort by Column, save and refresh all work afterwards.
 - **Uncalculated limits** (Matthew, 2026-10-25, text column in `calccol_text_v1` and in Excel's own H15, which behave the same): the column works as a value in a PivotTable, which makes Excel calculate it; it cannot be dragged into Rows or Columns until it was calculated once (by using it as a value, or by Power Pivot's Calculate Now), and Refresh All does not calculate it (the connection is a placeholder). So the formula-only form suits value-like use; a column that is to be a row or column label needs stored values, which means the library would have to evaluate the formula.
 - **Types verified** (Matthew, 2026-10-25): generated files of all six types load, show their values as PivotTable values, and none can be a row or column field before being used as a value (the limitation above).
-- **Open**: `RELATED` columns; what happens when the formula is invalid.
+- **`RELATED`** (`calccol_related_v1`, a text column `RELATED(Products[Category])` on Sales in the hierarchy model): the formula is stored as text like any other, so no format work was needed; Matthew's hierarchy, Sort by Column, save and PivotTable refresh checks passed.
+- **Open**: what happens when the formula is invalid.
 
 ## 11. Not understood (open)
 
