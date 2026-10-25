@@ -90,6 +90,7 @@ new ColumnDefinition("Due", ColumnDataType.DateTime) { Format = MeasureFormat.Sh
 
 - Numbers: `WholeNumber`, `Decimal(places, thousandSeparator)`, `Percentage(places)`, `Currency(places, culture)` (the culture decides the symbol and where it sits; with none, the model's culture) and `CurrencyWithoutSymbol(places)` (Power Pivot's Symbol "None").
 - Dates: `ShortDate(culture)` and `LongDate(culture)` use the culture's own pattern, so the order of day, month and year is never fixed by the library: en-US gives `M/d/yyyy`, en-GB `dd/MM/yyyy`, en-ZA `yyyy/MM/dd`. With no culture, the model's. A measure only takes the short date of the model's culture.
+- Where a date format shows: in Power Pivot's table view and for a date used as a value (for example Max of the date), as the format says. A date field dragged into Rows or Columns of a PivotTable is grouped automatically by Excel (Year, Quarter, Month, Date), and the ungrouped labels follow Excel's default date display, not the model's format (observed with a long date format in our `calcfmt_v1`; not yet compared with Excel's own H37 file).
 - A format must fit the type (numbers on Whole Number, Decimal Number and Currency columns, dates on Date columns); `ArgumentException` otherwise. Written as in `reference/excel-samples/H37_calc_formats_calculated.xlsx`. Negative US dollars are written in parentheses (as Windows has them), whatever platform builds the file.
 
 ### Hierarchies
