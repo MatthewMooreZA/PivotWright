@@ -101,6 +101,21 @@ if (calcMode is "calch" or "calchl" or "calchc") s.AddCalculatedColumn("Line Tot
 if (calcMode == "calch") s["Qty"].IsHidden = true;
 if (calcMode == "calchl") p["Product"].IsHidden = true;
 if (calcMode == "calchc") s.CalculatedColumns[0].IsHidden = true;
+// calcfmt: the eight formatted columns of Excel's H37 sample, on Sales
+if (calcMode == "calcfmt")
+{
+    var us = new System.Globalization.CultureInfo("en-US");
+    var za = new System.Globalization.CultureInfo("en-ZA");
+    s.AddCalculatedColumn("Fmt Whole", "[Qty]*2", ColumnDataType.Int64, MeasureFormat.WholeNumber);
+    s.AddCalculatedColumn("Fmt Decimal3", "[Qty]/3*10000", ColumnDataType.Double, MeasureFormat.Decimal(3));
+    s.AddCalculatedColumn("Fmt DecimalNoSep", "[Qty]/7*10000", ColumnDataType.Double, MeasureFormat.Decimal(2, thousandSeparator: false));
+    s.AddCalculatedColumn("Fmt Percent", "[Qty]/10", ColumnDataType.Double, MeasureFormat.Percentage(1));
+    s.AddCalculatedColumn("Fmt Currency R", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, za));
+    s.AddCalculatedColumn("Fmt Currency USD", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, us));
+    s.AddCalculatedColumn("Fmt Current No Unit", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.CurrencyWithoutSymbol());
+    s.AddCalculatedColumn("Fmt Date Short", "[Date]+1", ColumnDataType.DateTime, MeasureFormat.ShortDate(us));
+    s.AddCalculatedColumn("Fmt Date Long", "[Date]+2", ColumnDataType.DateTime, MeasureFormat.LongDate(us));
+}
 // calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32; with "datetable"); calcpd: one on Products and one on Dates
 if (calcMode is "calcd" or "calcsd" or "calcpd" or "calcdh") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
 // calcdh: calcd plus a hierarchy Year > Year Month over the calculated column (H31B; with "datetable")

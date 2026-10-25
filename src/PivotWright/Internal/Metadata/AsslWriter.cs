@@ -219,26 +219,86 @@ internal static class AsslWriter
         return sb.ToString();
     }
 
-    private static string AttributeFormat(ColumnDataType t, System.Globalization.CultureInfo culture, int lcid) => t switch
-    {
-        ColumnDataType.String => "<Format Format=\"Text\" xmlns=\"\"/>",
-        ColumnDataType.DateTime => "<Format Format=\"DateTimeGeneral\" xmlns=\"\"/>",
-        ColumnDataType.Currency => CurrencyFormat(culture, lcid).annotation,
-        _ => "<Format Format=\"General\" xmlns=\"\"/>",
-    };
+    private const string GeneralFormat = "<Format Format=\"General\" xmlns=\"\"/>";
 
-    /// <summary>Power Pivot "Currency" format for the model culture, as Excel writes it.</summary>
-    internal static (string annotation, string formatString) CurrencyFormat(System.Globalization.CultureInfo culture, int lcid)
+    /// <summary>
+    /// The Format annotation and the format string of a dimension attribute: the type's default when <paramref name="f"/> is null (data
+    /// columns: General, Text, DateTimeGeneral, Currency of the model culture; calculated columns also Boolean), else the chosen
+    /// format, written as in Excel's H37 sample.
+    /// </summary>
+    internal static (string annotation, string? formatString) AttributeFormat(MeasureFormat? f, ColumnDataType t, ModelInfo m, bool calculated)
     {
-        var nf = culture.NumberFormat;
-        string sym = string.IsNullOrEmpty(nf.CurrencySymbol) ? "$" : nf.CurrencySymbol;
-        string name = string.IsNullOrEmpty(culture.EnglishName) ? "English (United States)" : culture.EnglishName;
-        int pos = nf.CurrencyPositivePattern, neg = nf.CurrencyNegativePattern;
-        string annotation = "<Format Format=\"Currency\" Accuracy=\"2\" ThousandSeparator=\"True\" xmlns=\"\">\n                      <Currency LCID=\""
-            + lcid + "\" DisplayName=\"" + E(sym + " " + name) + "\" Symbol=\"" + E(sym) + "\" PositivePattern=\"" + pos
+        if (f is null)
+            return t switch
+            {
+                ColumnDataType.String => ("<Format Format=\"Text\" xmlns=\"\"/>", null),
+                ColumnDataType.DateTime => ("<Format Format=\"DateTimeGeneral\" xmlns=\"\"/>", "General Date"),
+                ColumnDataType.Currency => CurrencyFormat(null, m, attribute: true),
+                ColumnDataType.Boolean when calculated => ("<Format Format=\"Boolean\" xmlns=\"\"/>", "\"TRUE\";\"TRUE\";\"FALSE\""),
+                _ => (GeneralFormat, null),
+            };
+        string dec(int n) => n == 0 ? "" : "." + new string('0', n);
+        string sep(bool on) => on ? " ThousandSeparator=\"True\"" : "";
+        switch (f.KindValue)
+        {
+            case MeasureFormat.Kind.WholeNumber:
+                return ("<Format Format=\"NumberWhole\" ThousandSeparator=\"True\" xmlns=\"\"/>", "#,0");
+            case MeasureFormat.Kind.Decimal:
+                return ("<Format Format=\"NumberDecimal\" Accuracy=\"" + f.Decimals + "\"" + sep(f.ThousandSeparator) + " xmlns=\"\"/>",
+                    (f.ThousandSeparator ? "#,0" : "0") + dec(f.Decimals));
+            case MeasureFormat.Kind.Percentage:
+            {
+                string p = "0" + dec(f.Decimals) + "%";
+                return ("<Format Format=\"Percentage\" Accuracy=\"" + f.Decimals + "\" xmlns=\"\"/>", p + ";-" + p + ";" + p);
+            }
+            case MeasureFormat.Kind.Currency:
+                return CurrencyFormat(f, m, attribute: true);
+            case MeasureFormat.Kind.ShortDate:
+            case MeasureFormat.Kind.LongDate:
+            {
+                bool shortDate = f.KindValue == MeasureFormat.Kind.ShortDate;
+                var culture = f.Culture ?? m.Culture;
+                int lcid = f.Culture?.LCID ?? m.Lcid;
+                string pattern = shortDate ? culture.DateTimeFormat.ShortDatePattern : culture.DateTimeFormat.LongDatePattern;
+                return ("<Format Format=\"DateTimeCustom\" xmlns=\"\">\n                      <DateTimes>\n                        <DateTime LCID=\"" + lcid
+                    + "\" Group=\"" + (shortDate ? "ShortDate" : "LongDate") + "\" FormatString=\"" + E(pattern) + "\"/>\n                      </DateTimes>\n                    </Format>", pattern);
+            }
+            default:
+                return (GeneralFormat, null);
+        }
+    }
+
+    /// <summary>
+    /// Power Pivot "Currency" format as Excel writes it: the symbol and layout of the given culture, of the model culture, or none
+    /// (<see cref="MeasureFormat.CurrencyWithoutSymbol"/>: locale 1033, empty symbol, parentheses for negatives). In a column's format string
+    /// the dollar sign is escaped (<c>\$</c>) and any other symbol quoted, as in H10 and H37.
+    /// </summary>
+    internal static (string annotation, string formatString) CurrencyFormat(MeasureFormat? f, ModelInfo m, bool attribute)
+    {
+        int decimals = f?.Decimals ?? 2;
+        int lcid = f?.Culture?.LCID ?? m.Lcid;
+        var culture = f?.Culture ?? m.Culture;
+        string sym, name;
+        int pos, neg;
+        if (f?.NoSymbol == true)
+        {
+            lcid = 1033; sym = ""; name = ""; pos = 0; neg = 0;
+        }
+        else
+        {
+            var nf = culture.NumberFormat;
+            sym = string.IsNullOrEmpty(nf.CurrencySymbol) ? "$" : nf.CurrencySymbol;
+            name = sym + " " + (string.IsNullOrEmpty(culture.EnglishName) ? "English (United States)" : culture.EnglishName);
+            pos = nf.CurrencyPositivePattern; neg = nf.CurrencyNegativePattern;
+            // Windows (and so Excel) lays out negative US dollars in parentheses; the culture data of other platforms (ICU) says -$1.00.
+            // Pinned so that the file does not depend on the operating system (H37). Other cultures come from the platform's data.
+            if (lcid == 1033) neg = 0;
+        }
+        string annotation = "<Format Format=\"Currency\" Accuracy=\"" + decimals + "\" ThousandSeparator=\"True\" xmlns=\"\">\n                      <Currency LCID=\""
+            + lcid + "\" DisplayName=\"" + E(name) + "\" Symbol=\"" + E(sym) + "\" PositivePattern=\"" + pos
             + "\" NegativePattern=\"" + neg + "\"/>\n                    </Format>";
-        string s = "\"" + sym.Replace("\"", "\"\"") + "\"";
-        const string n = "#,0.00";
+        string s = attribute && sym == "$" ? "\\$" : "\"" + sym.Replace("\"", "\"\"") + "\"";
+        string n = "#,0" + (decimals == 0 ? "" : "." + new string('0', decimals));
         string positive = pos switch { 1 => n + s, 2 => s + " " + n, 3 => n + " " + s, _ => s + n };
         string negative = neg switch
         {
@@ -311,8 +371,9 @@ internal static class AsslWriter
         {
             var (type, size) = KeyType(c);
             sb.Append("<Attribute><Name>").Append(E(c.Name)).Append("</Name><ID>").Append(E(c.Id)).Append("</ID><Description/>");
+            var (annotation, formatString) = AttributeFormat(c.Format, c.DataType, m, calculated: false);
             sb.Append("<Annotations").Append(NsB).Append(">\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ")
-              .Append(AttributeFormat(c.DataType, m.Culture, m.Lcid)).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
+              .Append(annotation).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
             sb.Append("<Type>Regular</Type><Usage>").Append(c.IsDateKey ? "Key" : "Regular").Append("</Usage>");
             AttributeCommon(sb, visible: !c.IsHidden, orderBy: c.OrderByColumnId);
             sb.Append("<KeyColumns><KeyColumn><DataType>").Append(type).Append("</DataType><DataSize>").Append(size)
@@ -328,10 +389,7 @@ internal static class AsslWriter
                 sb.Append("<AttributeRelationships><AttributeRelationship><AttributeID>").Append(FileNames.RowNumberId).Append("</AttributeID><Name>").Append(FileNames.RowNumberId)
                   .Append("</Name><RelationshipType>Flexible</RelationshipType><Cardinality>One</Cardinality><Optionality>Mandatory</Optionality><OverrideBehavior>None</OverrideBehavior><Translations/></AttributeRelationship></AttributeRelationships>");
             else sb.Append("<AttributeRelationships/>");
-            if (c.DataType == ColumnDataType.DateTime)
-                sb.Append("<ddl300_300:FormatString>General Date</ddl300_300:FormatString>");
-            else if (c.DataType == ColumnDataType.Currency)
-                sb.Append("<ddl300_300:FormatString>").Append(E(CurrencyFormat(m.Culture, m.Lcid).formatString)).Append("</ddl300_300:FormatString>");
+            if (formatString is not null) sb.Append("<ddl300_300:FormatString>").Append(E(formatString)).Append("</ddl300_300:FormatString>");
             sb.Append("</Attribute>");
         }
         foreach (var c in t.CalculatedColumns) CalculatedAttribute(sb, m, c);
@@ -401,9 +459,9 @@ internal static class AsslWriter
     private static void CalculatedAttribute(StringBuilder sb, ModelInfo m, EncodedCalculatedColumn c)
     {
         sb.Append("<Attribute><Name>").Append(E(c.Name)).Append("</Name><ID>").Append(E(c.Id)).Append("</ID><Description/>");
+        var (annotation, formatString) = AttributeFormat(c.Format, c.DataType, m, calculated: true);
         sb.Append("<Annotations").Append(NsB).Append(">\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ")
-          .Append(c.DataType == ColumnDataType.Boolean ? "<Format Format=\"Boolean\" xmlns=\"\"/>" : AttributeFormat(c.DataType, m.Culture, m.Lcid))
-          .Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
+          .Append(annotation).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
         sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
         AttributeCommon(sb, visible: !c.IsHidden, processed: false);
         sb.Append("<ddl200:InferredDatatype>").Append(InferredDatatype(c.DataType)).Append("</ddl200:InferredDatatype>");
@@ -411,13 +469,6 @@ internal static class AsslWriter
         sb.Append("<KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</KeyColumn></KeyColumns>");
         sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</NameColumn>");
         sb.Append("<Translations/><NamingTemplateTranslations/><AttributeRelationships/>");
-        string? formatString = c.DataType switch
-        {
-            ColumnDataType.Currency => CurrencyFormat(m.Culture, m.Lcid).formatString,
-            ColumnDataType.DateTime => "General Date",
-            ColumnDataType.Boolean => "\"TRUE\";\"TRUE\";\"FALSE\"",
-            _ => null,
-        };
         if (formatString is not null) sb.Append("<ddl300_300:FormatString>").Append(E(formatString)).Append("</ddl300_300:FormatString>");
         sb.Append("</Attribute>");
     }
@@ -555,15 +606,10 @@ internal static class AsslWriter
                 return ("0" + dec(f.Decimals) + "%", "<Format Format=\"Percentage\"" + acc(f.Decimals) + "/>");
             case MeasureFormat.Kind.Currency:
             {
-                var (annotation, fs) = CurrencyFormat(m.Culture, m.Lcid);
-                if (f.Decimals != 2)
-                {
-                    fs = fs.Replace("#,0.00", "#,0" + dec(f.Decimals));
-                    annotation = annotation.Replace("Accuracy=\"2\"", "Accuracy=\"" + f.Decimals + "\"");
-                }
+                var (annotation, fs) = CurrencyFormat(f, m, attribute: false);
                 return (fs, annotation.Replace(" xmlns=\"\"", ""));
             }
-            case MeasureFormat.Kind.Date:
+            case MeasureFormat.Kind.ShortDate:
                 return ("Short Date", "<Format Format=\"DateTimeShortDatePattern\"/>");
             default:
                 return ("", "<Format Format=\"General\"/>");

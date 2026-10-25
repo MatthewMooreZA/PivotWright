@@ -43,11 +43,18 @@ public sealed class ColumnDefinition
     /// </summary>
     public string? SortByColumn { get; init; }
 
+    /// <summary>
+    /// The number or date format of the column, like Power Pivot's Format command: for example <c>MeasureFormat.Currency(2, new CultureInfo("en-US"))</c>
+    /// for dollars in a model whose culture is another, or <c>MeasureFormat.CurrencyWithoutSymbol()</c>. Null keeps the type's default
+    /// (General, Text, a general date, or the model culture's currency). It must fit the data type.
+    /// </summary>
+    public MeasureFormat? Format { get; init; }
+
     public override string ToString() => $"{Name} ({DataType})";
 
     /// <summary>A copy with the given settings, used when a setting is changed after the table was created.</summary>
     internal ColumnDefinition With(bool? isHidden = null, string? sortByColumn = null)
-        => new(Name, DataType) { IsHidden = isHidden ?? IsHidden, SortByColumn = sortByColumn ?? SortByColumn };
+        => new(Name, DataType) { IsHidden = isHidden ?? IsHidden, SortByColumn = sortByColumn ?? SortByColumn, Format = Format };
 
     /// <summary>Maps a CLR type to the data model type used for it.</summary>
     public static ColumnDataType FromClrType(Type type, bool decimalAsCurrency = false)

@@ -43,6 +43,7 @@ internal sealed class EncodedCalculatedColumn
     /// <summary>The column's only segment: BLANK in every row, as run-length or bit-packed entries by the usual rule.</summary>
     public required IReadOnlyList<EncodedSegment> Segments { get; init; }
     public bool IsHidden { get; init; }
+    public MeasureFormat? Format { get; init; }
 }
 
 /// <summary>Collects the rows of one table.</summary>
@@ -65,6 +66,7 @@ internal sealed class TableBuilder : IDisposable
         {
             if (!names.Add(def.Name))
                 throw new ArgumentException($"Table '{name}' already has a column named '{def.Name}'.", "columns");
+            MeasureFormat.CheckFits(def.Format, def.DataType, def.Name, "columns");
             string modelName = Identifiers.Unique(Identifiers.SanitizeName(def.Name, "Column"), modelNames);
             string colId = Identifiers.Unique(Identifiers.Sanitize(modelName, "Column"), used);
             ColumnBuilder builder = def.DataType switch
@@ -136,7 +138,7 @@ internal sealed class TableBuilder : IDisposable
     {
         if (c.SortBy is null) return;
         c.SortBy = null;
-        c.Definition = new ColumnDefinition(c.Definition.Name, c.Definition.DataType) { IsHidden = c.Definition.IsHidden };
+        c.Definition = new ColumnDefinition(c.Definition.Name, c.Definition.DataType) { IsHidden = c.Definition.IsHidden, Format = c.Definition.Format };
     }
 
     // For every sorted column: checks that each of its values belongs to exactly one value of the sort column
@@ -185,7 +187,7 @@ internal sealed class TableBuilder : IDisposable
     public IReadOnlyList<CalculatedColumnDefinition> CalculatedColumns => _calculated;
 
     /// <summary>Adds a calculated column; the caller has checked the name and the expression.</summary>
-    public CalculatedColumnDefinition AddCalculatedColumn(string name, string expression, ColumnDataType dataType)
+    public CalculatedColumnDefinition AddCalculatedColumn(string name, string expression, ColumnDataType dataType, MeasureFormat? format = null)
     {
         var column = new CalculatedColumnDefinition
         {
@@ -193,6 +195,7 @@ internal sealed class TableBuilder : IDisposable
             Id = Identifiers.Unique(Identifiers.Sanitize(name, "Column"), _usedIds),
             Expression = expression,
             DataType = dataType,
+            Format = format,
         };
         _calculated.Add(column);
         return column;
@@ -313,7 +316,7 @@ internal sealed class TableBuilder : IDisposable
                     segments.Add(segment);
                 }
             }
-            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden });
+            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden, Format = c.Format });
         }
         var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
         result.CalculatedColumns.AddRange(calculated);

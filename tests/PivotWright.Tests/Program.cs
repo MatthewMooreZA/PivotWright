@@ -61,6 +61,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
     ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
     ("Calculated columns: one block of BLANKs per segment of a larger table", Tests.CalculatedColumnSeveralSegments),
+    ("Formats: the eight columns of Excel's H37 sample, currency symbols and date patterns", Tests.ColumnFormats),
     ("DAX text: paired brackets, parentheses and quotes are checked, real DAX is not rejected", Tests.DaxTextCheck),
     ("Calculated columns with hidden columns: hide a data column, a level, or the calculated column (H33 to H36)", Tests.CalculatedColumnsWithHiddenColumns),
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
@@ -602,11 +603,11 @@ namespace PivotWright.Tests
                 Check.True(x.Contains("<FormatString>''</FormatString>"), "general format string");
                 Check.True(x.Contains("<Format Format=\"General\"/>"), "general format");
                 Check.True(x.Contains("<FormatString>'0.0%'</FormatString>"), "percentage");
-                model.Tables["Many"].AddMeasure("When", "MAX(Many[N])", MeasureFormat.Date);
+                model.Tables["Many"].AddMeasure("When", "MAX(Many[N])", MeasureFormat.ShortDate());
                 model.Tables["Many"].AddMeasure("Money", "SUM(Many[N])", MeasureFormat.Currency());
                 string y = Script(model);
                 Check.True(y.Contains("<FormatString>'Short Date'</FormatString>") && y.Contains("<Format Format=\"DateTimeShortDatePattern\"/>"), "short date");
-                Check.True(y.Contains("<FormatString>'\"$\"#,0.00;-\"$\"#,0.00;\"$\"#,0.00'</FormatString>"), "currency (en-US default)");
+                Check.True(y.Contains("<FormatString>'\"$\"#,0.00;(\"$\"#,0.00);\"$\"#,0.00'</FormatString>"), "currency (en-US default; negatives in parentheses as Windows has them)");
                 Check.True(System.Text.RegularExpressions.Regex.IsMatch(x, @"<Name>IsPrivate</Name>\s*<Value>True</Value>"), "hidden");
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
@@ -1519,6 +1520,95 @@ namespace PivotWright.Tests
                 Tests.Throws<ArgumentException>(() => sales.AddCalculatedColumn("Bad", "SUM(Sales[Qty]", ColumnDataType.Int64), "unclosed parenthesis in a column", "malformed");
                 Tests.Throws<ArgumentException>(() => sales.AddMeasure("Bad measure", "SUM(Sales[Qty]"), "unclosed parenthesis in a measure", "malformed");
                 Check.Equal(0, sales.CalculatedColumns.Count, "failed calls change nothing");
+            }
+        }
+
+        // Excel's H37 sample: how a calculated column's format is written for each kind of format; and the data columns take formats too.
+        public static void ColumnFormats()
+        {
+            var us = new CultureInfo("en-US");
+            var za = new CultureInfo("en-ZA");
+            var gb = new CultureInfo("en-GB");
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                sales.AddCalculatedColumn("Whole", "[Qty]*2", ColumnDataType.Int64, MeasureFormat.WholeNumber);
+                sales.AddCalculatedColumn("Dec3", "[Qty]/3", ColumnDataType.Double, MeasureFormat.Decimal(3));
+                sales.AddCalculatedColumn("DecNoSep", "[Qty]/7", ColumnDataType.Double, MeasureFormat.Decimal(2, thousandSeparator: false));
+                sales.AddCalculatedColumn("Pct", "[Qty]/10", ColumnDataType.Double, MeasureFormat.Percentage(1));
+                sales.AddCalculatedColumn("CurR", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, za));
+                sales.AddCalculatedColumn("CurUsd", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, us));
+                sales.AddCalculatedColumn("CurNone", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.CurrencyWithoutSymbol());
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var read = ModelReader.Read(ms.ToArray());
+                string dim = Encoding.UTF8.GetString(read.Find(@"Sales_G\.\d+\.dim\.xml$"));
+                (string annotation, string formatString) Of(string column)
+                {
+                    int at = dim.IndexOf("<Attribute><Name>" + column + "</Name>", StringComparison.Ordinal);
+                    string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+                    var ann = System.Text.RegularExpressions.Regex.Match(a, "<Name>Format</Name>\\s*<Value>\\s*(.*?)\\s*</Value>", System.Text.RegularExpressions.RegexOptions.Singleline).Groups[1].Value;
+                    var fs = System.Text.RegularExpressions.Regex.Match(a, "<ddl300_300:FormatString>(.*?)</ddl300_300:FormatString>").Groups[1].Value;
+                    return (System.Text.RegularExpressions.Regex.Replace(ann, "\\s+", " "), System.Net.WebUtility.HtmlDecode(fs));
+                }
+                Check.Equal("#,0", Of("Whole").formatString, "whole number format string");
+                Check.True(Of("Whole").annotation.Contains("Format=\"NumberWhole\" ThousandSeparator=\"True\""), "whole number annotation");
+                Check.Equal("#,0.000", Of("Dec3").formatString, "decimal with separator");
+                Check.True(Of("Dec3").annotation.Contains("Accuracy=\"3\" ThousandSeparator=\"True\""), "decimal annotation");
+                Check.Equal("0.00", Of("DecNoSep").formatString, "decimal without separator");
+                Check.True(!Of("DecNoSep").annotation.Contains("ThousandSeparator"), "no separator in the annotation");
+                Check.Equal("0.0%;-0.0%;0.0%", Of("Pct").formatString, "percentage");
+                Check.Equal("\"R\"#,0.00;-\"R\"#,0.00;\"R\"#,0.00", Of("CurR").formatString, "rand");
+                Check.True(Of("CurR").annotation.Contains("LCID=\"7177\"") && Of("CurR").annotation.Contains("DisplayName=\"R English (South Africa)\""), "rand annotation");
+                Check.Equal("\\$#,0.00;(\\$#,0.00);\\$#,0.00", Of("CurUsd").formatString, "dollar is escaped, negatives in parentheses");
+                Check.Equal("\"\"#,0.00;(\"\"#,0.00);\"\"#,0.00", Of("CurNone").formatString, "no symbol");
+                Check.True(Of("CurNone").annotation.Contains("LCID=\"1033\" DisplayName=\"\" Symbol=\"\" PositivePattern=\"0\" NegativePattern=\"0\""), "no symbol annotation");
+            }
+
+            // Dates follow the culture's own pattern: en-ZA gives year first, en-US month first, en-GB day first; never the library's choice.
+            var dateCases = new (CultureInfo culture, string shortPattern)[] { (us, "M/d/yyyy"), (gb, "dd/MM/yyyy"), (za, "yyyy/MM/dd") };
+            foreach (var (culture, expected) in dateCases)
+            {
+                var m = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = culture });
+                var d = m.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) { Format = MeasureFormat.ShortDate() }, new ColumnDefinition("Year", ColumnDataType.Int64) });
+                d.AddRow(new DateTime(2025, 3, 14), 2025);
+                using (m)
+                {
+                    var ms2 = new MemoryStream();
+                    m.SaveModelPart(ms2);
+                    string dimension = Encoding.UTF8.GetString(ModelReader.Read(ms2.ToArray()).Find(@"Dates_G\.\d+\.dim\.xml$"));
+                    Check.True(dimension.Contains("Group=\"ShortDate\" FormatString=\"" + expected + "\""), culture.Name + ": short date " + expected);
+                    Check.True(dimension.Contains("LCID=\"" + culture.LCID + "\""), culture.Name + ": locale");
+                }
+            }
+            // A specific culture can be chosen for a column of another model.
+            var other = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = za });
+            var table = other.CreateTable("T", new[] { new ColumnDefinition("D", ColumnDataType.DateTime) { Format = MeasureFormat.LongDate(us) }, new ColumnDefinition("A", ColumnDataType.Currency) { Format = MeasureFormat.Currency(0, us) } });
+            table.AddRow(new DateTime(2025, 3, 14), 5m);
+            using (other)
+            {
+                var ms3 = new MemoryStream();
+                other.SaveModelPart(ms3);
+                string dimension = Encoding.UTF8.GetString(ModelReader.Read(ms3.ToArray()).Find(@"T_G\.\d+\.dim\.xml$"));
+                Check.True(dimension.Contains("Group=\"LongDate\" FormatString=\"dddd, MMMM d, yyyy\""), "long date of en-US in an en-ZA model");
+                Check.True(dimension.Contains("<ddl300_300:FormatString>\\$#,0;(\\$#,0);\\$#,0</ddl300_300:FormatString>"), "dollars with no decimals on a data column");
+            }
+
+            // A format must fit the type.
+            void Rejects(Action a, string what)
+            {
+                try { a(); } catch (ArgumentException) { return; }
+                throw new Exception("Expected ArgumentException: " + what);
+            }
+            var (checkModel, _, checkSales) = CalcModel();
+            using (checkModel)
+            {
+                Rejects(() => checkSales.AddCalculatedColumn("A", "1", ColumnDataType.String, MeasureFormat.WholeNumber), "number format on text");
+                Rejects(() => checkSales.AddCalculatedColumn("B", "1", ColumnDataType.Int64, MeasureFormat.ShortDate()), "date format on a number");
+                Rejects(() => checkSales.AddCalculatedColumn("C", "1", ColumnDataType.DateTime, MeasureFormat.Percentage()), "number format on a date");
+                Rejects(() => checkSales.AddMeasure("M", "1", MeasureFormat.LongDate()), "long date on a measure");
+                Rejects(() => new DataModelWriter().CreateTable("X", new[] { new ColumnDefinition("S", ColumnDataType.Boolean) { Format = MeasureFormat.WholeNumber } }), "number format on a TRUE/FALSE data column");
+                Check.Equal(0, checkSales.CalculatedColumns.Count, "failed calls change nothing");
             }
         }
 

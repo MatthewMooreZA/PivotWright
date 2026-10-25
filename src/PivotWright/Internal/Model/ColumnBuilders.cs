@@ -101,6 +101,7 @@ internal abstract class ColumnBuilder : IDisposable
         Id = Id,
         DataType = Definition.DataType,
         IsHidden = Definition.IsHidden,
+        Format = Definition.Format,
         IsPrimaryKey = IsPrimaryKey,
         IsForeignKey = IsForeignKey,
         IsDateKey = IsDateKey,

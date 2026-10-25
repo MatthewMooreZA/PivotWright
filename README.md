@@ -63,7 +63,7 @@ sales.AddMeasure("Revenue", "SUMX(Sales, Sales[Qty] * Sales[Price])", MeasureFor
 sales.AddMeasure("Base Rate", "0.15").IsHidden = true;   // used only by other measures
 ```
 
-A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. The one thing it checks, for measures and calculated columns alike, is that brackets, parentheses, braces and quotes are paired (comments and quoted text are skipped), so a typo like `SUM(Sales[Qty]` is rejected where it is written. Formats: `General`, `WholeNumber`, `Decimal(n)`, `Currency(n)`, `Percentage(n)`, `Date`. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
+A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. The one thing it checks, for measures and calculated columns alike, is that brackets, parentheses, braces and quotes are paired (comments and quoted text are skipped), so a typo like `SUM(Sales[Qty]` is rejected where it is written. Formats: see Formats below. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
 
 ### Calculated columns
 
@@ -76,6 +76,21 @@ The file holds only the formula; Excel calculates the values the first time a Pi
 > **Limitation:** until Excel has calculated the column, it can be used as a value in a PivotTable but **not as a row, column or filter field**. Put it in *Values* once, or click *Calculate Now* in the Power Pivot window, and it works everywhere. *Refresh All* does not calculate it. Excel's own files behave the same way.
 
 Written the way Excel saves a calculated column it has not calculated yet (`reference/excel-samples/H10_calculated_column_manual.xlsx`, and H11 to H15 for the other types); only some shapes have been seen, so saving requires a model with relationships, hidden columns, including a hidden calculated column (`ModelCalculatedColumn.IsHidden`; samples exist for the hierarchy model without a date table, the other models take the same steps by extrapolation), at least one row in each table with a calculated column, and any number of columns on the many-side table (Excel's samples go up to four; the counters grow in straight lines, so more are written by the same formulas) and any number on the tables on the primary side of a relationship (Excel's samples have one column on one such table; more columns, and columns on several such tables, are extrapolated from the many-side table's steps and each table's first-column values). Models with and without hierarchies each have their samples (H10, H18 to H20 with a hierarchy; H21 to H24 without; H29 to H32 with a date table, where the primary-side table with a column is the date table), and the shapes with one or two columns are verified in Excel as generated files (three and four columns follow the same pattern and are pending their first test). Other combinations make `Save` throw a message that lists these shapes. Verified in Excel for all six types: the model loads, the PivotTable shows the values, and adding a hierarchy or a Sort by Column, saving and refreshing afterwards all work.
+
+### Formats
+
+A format can be given to a measure, a calculated column or a data column (`ColumnDefinition.Format`); the default is the type's own (General, Text, a general date, the model culture's currency).
+
+```csharp
+sales.AddMeasure("Revenue", "SUM(Sales[Amount])", MeasureFormat.Currency());
+sales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, new CultureInfo("en-US")));   // $
+sales.AddCalculatedColumn("Net", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.CurrencyWithoutSymbol());                        // 1,234.57
+new ColumnDefinition("Due", ColumnDataType.DateTime) { Format = MeasureFormat.ShortDate() }
+```
+
+- Numbers: `WholeNumber`, `Decimal(places, thousandSeparator)`, `Percentage(places)`, `Currency(places, culture)` (the culture decides the symbol and where it sits; with none, the model's culture) and `CurrencyWithoutSymbol(places)` (Power Pivot's Symbol "None").
+- Dates: `ShortDate(culture)` and `LongDate(culture)` use the culture's own pattern, so the order of day, month and year is never fixed by the library: en-US gives `M/d/yyyy`, en-GB `dd/MM/yyyy`, en-ZA `yyyy/MM/dd`. With no culture, the model's. A measure only takes the short date of the model's culture.
+- A format must fit the type (numbers on Whole Number, Decimal Number and Currency columns, dates on Date columns); `ArgumentException` otherwise. Written as in `reference/excel-samples/H37_calc_formats_calculated.xlsx`. Negative US dollars are written in parentheses (as Windows has them), whatever platform builds the file.
 
 ### Hierarchies
 

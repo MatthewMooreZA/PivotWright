@@ -10,6 +10,8 @@ internal sealed class CalculatedColumnDefinition
     public required ColumnDataType DataType { get; init; }
     /// <summary>Hidden from client tools, like a hidden data column (H35).</summary>
     public bool IsHidden { get; set; }
+    /// <summary>The number or date format chosen for the column, or null for the one Excel infers from the type.</summary>
+    public MeasureFormat? Format { get; init; }
     /// <summary>Set when the model is saved: the data file prefix, the dictionary data version and the data file version Excel gives the column.</summary>
     public (int Prefix, int Dictionary, int File) Versions { get; set; } = (2, 3, 2);
 }

@@ -145,6 +145,8 @@ public sealed class ModelTable
             throw new ArgumentException($"A measure named '{name}' already exists ({taken}); measure names are unique across the model.", nameof(name));
         if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
+        if (format is { KindValue: MeasureFormat.Kind.LongDate } or { KindValue: MeasureFormat.Kind.ShortDate, Culture: not null })
+            throw new ArgumentException("A measure can only take the short date of the model's culture, MeasureFormat.ShortDate(); other date formats were never seen for measures.", nameof(format));
         var definition = new MeasureDefinition { Name = name, Table = Name, Expression = expression, Format = format ?? MeasureFormat.General };
         Model.MeasureDefinitions.Add(definition);
         var measure = new ModelMeasure(this, definition);
@@ -170,10 +172,13 @@ public sealed class ModelTable
     /// <param name="expression">DAX expression, with or without the leading "=", for example <c>[Qty]*[Amount]</c>.</param>
     /// <param name="dataType">Data type of the formula's result, which Excel infers from the formula when the column is typed in; give the
     /// type the formula produces (for example <see cref="ColumnDataType.Currency"/> for <c>[Qty]*[Amount]</c> with a Currency Amount).</param>
+    /// <param name="format">Number or date format of the column, like Power Pivot's Format command, for example <c>MeasureFormat.Decimal(3)</c>,
+    /// <c>MeasureFormat.Currency(2, new CultureInfo("en-US"))</c> or <c>MeasureFormat.CurrencyWithoutSymbol()</c>; it must fit <paramref name="dataType"/>.
+    /// Null keeps the one Excel gives the type (a general date, the model culture's currency, General).</param>
     /// <returns>The calculated column.</returns>
     /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters; the expression
     /// is empty; or the data type is not a <see cref="ColumnDataType"/>.</exception>
-    public ModelCalculatedColumn AddCalculatedColumn(string name, string expression, ColumnDataType dataType)
+    public ModelCalculatedColumn AddCalculatedColumn(string name, string expression, ColumnDataType dataType, MeasureFormat? format = null)
     {
         Model.ThrowIfDisposed();
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Column name is required.", nameof(name));
@@ -188,13 +193,14 @@ public sealed class ModelTable
         if (expression.Length == 0) throw new ArgumentException("A DAX expression is required.", nameof(expression));
         PivotWright.Internal.DaxText.Check(expression, nameof(expression));
         if (!Enum.IsDefined(dataType)) throw new ArgumentException($"'{dataType}' is not a data type.", nameof(dataType));
+        MeasureFormat.CheckFits(format, dataType, name, nameof(format));
         if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
         if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)
             throw new ArgumentException($"A measure named '{name}' already exists ({taken}); a column cannot share its name.", nameof(name));
         if (_hierarchies.Any(h => string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a hierarchy named '{name}'.", nameof(name));
-        var column = new ModelCalculatedColumn(this, Builder.AddCalculatedColumn(name, expression, dataType));
+        var column = new ModelCalculatedColumn(this, Builder.AddCalculatedColumn(name, expression, dataType, format));
         _calculatedColumns.Add(column);
         return column;
     }

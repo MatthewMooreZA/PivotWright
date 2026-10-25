@@ -26,6 +26,8 @@ internal sealed class EncodedColumn
     public required string Id { get; init; }
     public required ColumnDataType DataType { get; init; }
     public bool IsHidden { get; init; }
+    /// <summary>The number or date format chosen for the column, or null for the type's default.</summary>
+    public MeasureFormat? Format { get; init; }
     /// <summary>Id of the column whose order this column follows (Sort by Column), or null.</summary>
     public string? OrderByColumnId { get; set; }
     public bool IsRowNumber { get; init; }
