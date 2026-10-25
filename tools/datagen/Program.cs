@@ -50,6 +50,15 @@ for (int i = 0; i < salesRows; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1
 var dates = m.Tables["Dates"];
 m.AddRelationship(s["ProductKey"], p["ProductKey"]);
 m.AddRelationship(s["Date"], dates["Date"]);
+// calcmf: a second fact table, Stock, related to Products (a second one to Dates would make a loop), with a calculated column on Stock and one on Sales (four tables, two many-side tables)
+if (args.Length > 2 && args[2] == "calcmf")
+{
+    var stock = m.CreateTable("Stock", new[] { Col("Stock", "ProductKey", ColumnDataType.Int64), Col("Stock", "Date", ColumnDataType.DateTime), Col("Stock", "OnHand", ColumnDataType.Int64) });
+    for (int i = 0; i < 500; i++) stock.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 100 + i % 50);
+    m.AddRelationship(stock["ProductKey"], p["ProductKey"]);
+    s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+    stock.AddCalculatedColumn("Stock Doubled", "[OnHand]*2", ColumnDataType.Int64);
+}
 bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain", or a trailing "plain" after a calc mode)
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");

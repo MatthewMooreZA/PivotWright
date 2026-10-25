@@ -138,14 +138,12 @@ internal sealed record CalculatedPlan
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
-        if (many.Count > 1)
-            throw new InvalidOperationException($"The model has calculated columns on {many.Count} many-side tables, which was never seen in an Excel-written file (at most one many-side table can hold columns). " + seen);
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();
         // The primary side of the first relationship is saved again, unless it holds the column itself: in the samples with a column on
         // the many-side table, and (H31, H32) in a model with a date table whatever table holds the column.
-        var resaved = many.Count == 1 || date ? relationships.FirstOrDefault()?.To : null;
+        var resaved = many.Count >= 1 || date ? relationships.FirstOrDefault()?.To : null;
         var partitionData = new Dictionary<string, int>();
         var groupData = new Dictionary<string, int>();
         foreach (var t in tables)

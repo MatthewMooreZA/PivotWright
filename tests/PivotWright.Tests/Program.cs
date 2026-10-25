@@ -1265,6 +1265,33 @@ namespace PivotWright.Tests
                 }
             }
 
+            // Two many-side tables with columns (no sample): each takes the many-side steps for its own count, the totals drive the rest.
+            {
+                var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, 1 + i % 5);
+                var stock = model.CreateTable("Stock", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("OnHand", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) stock.AddRow(1 + i % 6, 100 + i);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(stock["ProductKey"], products["ProductKey"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                sales.AddCalculatedColumn("Twice", "[Qty]*2", ColumnDataType.Int64);
+                stock.AddCalculatedColumn("Doubled", "[OnHand]*2", ColumnDataType.Int64);
+                using (model)
+                {
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var multi = ModelReader.Read(ms.ToArray());
+                    Find(multi, @"Model\.27\.cub\.xml$");
+                    Check.Equal("1,2,2,2,", Counters(multi, @"Sales_G\.6\.dim\.xml$"), "Sales dimension counters");
+                    Check.Equal("1,2,2,2,", Counters(multi, @"Stock_G\.6\.dim\.xml$"), "Stock dimension counters");
+                    Find(multi, @"Products_G\.6\.dim\.xml$");
+                    Find(multi, @"\.0\.dim\\Stock_G\.2\.tbl\.xml$");
+                }
+            }
+
             // H20: one column on each.
             var both = Save((p, s) =>
             {
