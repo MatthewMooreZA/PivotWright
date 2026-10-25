@@ -17,3 +17,4 @@ All files were saved by desktop Excel 365 (Windows, en-ZA) from models first gen
 
 | `H6_calculated_column.xlsx` | `calcbase_v1` (the standard Products/Dates/Sales model) with Sales[Line Total] `=[Qty]*[Amount]` added in Power Pivot: the ground truth for calculated columns |
 | `H7_calculated_column_related.xlsx` | the same base with `=RELATED(Products[Category])` added to Sales; the column kept Excel's default name "Calculated Column 1" |
+| `H10_calculated_column_manual.xlsx` | `calcbase_v1` with Sales[Line Total] `=[Qty]*[Amount]` added in Manual Calculation Mode and not calculated: the on-disk shape of an unprocessed calculated column (formula only, no values) |
