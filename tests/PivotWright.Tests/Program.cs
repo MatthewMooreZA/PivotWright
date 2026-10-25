@@ -1144,6 +1144,37 @@ namespace PivotWright.Tests
             Check.Equal(0, two.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "no partition information");
             Check.True(Find(two, @"Model\.27\.cub\.xml$").Contains("<StructureVersion>21</StructureVersion>"), "cube structure");
 
+            // H25 and H26: three and four columns on the many-side table; H27: two on it and one on the primary side.
+            var three = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Triple Qty", "[Qty]*3", ColumnDataType.Int64);
+            });
+            Find(three, @"Model\.31\.cub\.xml$");
+            Check.Equal("3,4,4,4,", Counters(three, @"Sales_G\.12\.dim\.xml$"), "three columns: Sales dimension counters");
+            Find(three, @"\.0\.dim\\Sales_G\.4\.tbl\.xml$");
+            Check.Equal(152, three.Find(@"\.0\.dim\\4\.Sales_G\.Triple Qty\.0\.idf$").Length, "third column file");
+            var four = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Triple Qty", "[Qty]*3", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Quad Qty", "[Qty]*4", ColumnDataType.Int64);
+            });
+            Find(four, @"Model\.35\.cub\.xml$");
+            Check.Equal("4,5,5,5,", Counters(four, @"Sales_G\.15\.dim\.xml$"), "four columns: Sales dimension counters");
+            Find(four, @"\.0\.dim\\Sales_G\.5\.tbl\.xml$");
+            var mixed = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            });
+            Find(mixed, @"Model\.31\.cub\.xml$");
+            Check.Equal("2,3,3,3,", Counters(mixed, @"Sales_G\.9\.dim\.xml$"), "mixed: Sales dimension counters");
+            Check.Equal("3,2,2,3,", Counters(mixed, @"Products_G\.9\.dim\.xml$"), "mixed: Products dimension counters");
+
             // H19: one column on the hierarchy table that is the primary side; Sales is not touched.
             var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
             Find(primary, @"Model\.23\.cub\.xml$");
@@ -1202,6 +1233,17 @@ namespace PivotWright.Tests
             Find(two, @"Model\.10\.cub\.xml$");
             Check.Equal("2,3,3,3,", Counters(two, @"Sales_G\.8\.dim\.xml$"), "Sales dimension counters");
             Find(two, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+
+            // H28: three columns on Sales.
+            var three = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Triple Qty", "[Qty]*3", ColumnDataType.Int64);
+            });
+            Find(three, @"Model\.14\.cub\.xml$");
+            Check.Equal("3,4,4,4,", Counters(three, @"Sales_G\.11\.dim\.xml$"), "three columns: Sales dimension counters");
+            Find(three, @"\.0\.dim\\Sales_G\.4\.tbl\.xml$");
 
             var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
             Find(primary, @"Model\.6\.cub\.xml$");
@@ -1270,11 +1312,15 @@ namespace PivotWright.Tests
                 Rejects<ArgumentException>(() => sales.AddMeasure("Line Total", "1"), "measure named like a calculated column");
                 Rejects<ArgumentException>(() => products.AddHierarchy("Product Hierarchy", "Category", "Product"), "duplicate hierarchy");
                 Saves(model);
-                // A second column on the primary side is a shape Excel was seen to write (H20); a third column is not.
+                // A column on the primary side as well is a shape Excel was seen to write (H20, H27); so are up to four on the many side (H26).
                 products.AddCalculatedColumn("Other", "1", ColumnDataType.Int64);
                 Saves(model);
                 sales.AddCalculatedColumn("Third", "2", ColumnDataType.Int64);
-                Rejects<InvalidOperationException>(() => Saves(model), "three calculated columns");
+                sales.AddCalculatedColumn("Fourth", "3", ColumnDataType.Int64);
+                sales.AddCalculatedColumn("Fifth", "4", ColumnDataType.Int64);
+                Saves(model);
+                sales.AddCalculatedColumn("Sixth", "5", ColumnDataType.Int64);
+                Rejects<InvalidOperationException>(() => Saves(model), "five columns on the many-side table");
             }
             var (twoOnProducts, twoProducts, _) = CalcModel();
             using (twoOnProducts)

@@ -67,8 +67,15 @@ if (args.Length > 2 && args[2] == "calc")
     };
     s.AddCalculatedColumn(calcName, calcFormula, calcType);
 }
-// calc2: two columns on Sales (H18); calcp: one on Products (H19); calcsp: one on Sales and one on Products (H20)
-if (args.Length > 2 && args[2] is "calc2" or "calcsp") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
-if (args.Length > 2 && args[2] == "calc2") s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
-if (args.Length > 2 && args[2] is "calcp" or "calcsp") p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+// calc2, calc3, calc4: that many columns on Sales (H18, H25, H26); calcp: one on Products (H19); calcsp: one on Sales and one on
+// Products (H20); calc2p: two on Sales and one on Products (H27). Add "plain" for a model without hierarchies.
+var salesColumns = new[]
+{
+    ("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency), ("Double Qty", "[Qty]*2", ColumnDataType.Int64),
+    ("Triple Qty", "[Qty]*3", ColumnDataType.Int64), ("Quad Qty", "[Qty]*4", ColumnDataType.Int64),
+};
+string calcMode = args.Length > 2 ? args[2] : "";
+int onSales = calcMode switch { "calc2" or "calc2p" => 2, "calc3" => 3, "calc4" => 4, "calcsp" => 1, _ => 0 };
+for (int n = 0; n < onSales; n++) s.AddCalculatedColumn(salesColumns[n].Item1, salesColumns[n].Item2, salesColumns[n].Item3);
+if (calcMode is "calcp" or "calcsp" or "calc2p") p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

@@ -45,11 +45,14 @@ internal sealed class CalculatedPlan
     public bool Resaved(string tableId) => Tables.ContainsKey(tableId);
     public bool HoldsColumns(string tableId) => Tables.TryGetValue(tableId, out var f) && f.HoldsColumns;
 
+    /// <summary>Most columns on the many-side table; Excel's samples go up to four (H26), and the counters grow in a straight line.</summary>
+    private const int MaxOnManySide = 4;
+
     private const string Seen =
-        "The shapes seen in Excel-written files are: one column on the many-side table, two columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and one column on each of those two tables.";
+        "The shapes seen in Excel-written files are: one to four columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and both together.";
 
     private const string SeenPlain =
-        "The shapes seen in Excel-written files are: one column on the many-side table, two columns on the many-side table, one column on a primary-side table, and one column on each of those two tables.";
+        "The shapes seen in Excel-written files are: one to four columns on the many-side table, one column on a primary-side table, and both together.";
 
     public static CalculatedPlan? Create(IReadOnlyList<TableBuilder> tables, IReadOnlyList<RelationshipDefinition> relationships,
         IReadOnlyList<HierarchyDefinition> hierarchies)
@@ -87,8 +90,8 @@ internal sealed class CalculatedPlan
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
-        if (many.Count > 1 || primary.Count > 1 || total > 2)
-            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file. " + seen);
+        if (many.Count > 1 || primary.Count > 1 || (many.Count == 1 && many[0].CalculatedColumns.Count > MaxOnManySide))
+            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file (at most {MaxOnManySide} on the many-side table and one on a primary-side table). " + seen);
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();
@@ -123,7 +126,7 @@ internal sealed class CalculatedPlan
         {
             int n = t.CalculatedColumns.Count;
             // Beside a column on the primary side, the many-side table in a model without a hierarchy is one step behind (H24 against H21).
-            int dimension = plain ? (n == 1 ? (primary.Count == 1 ? 5 : 6) : 8) : 3 + 3 * n;
+            int dimension = plain ? (n == 1 ? (primary.Count == 1 ? 5 : 6) : 2 + 3 * n) : 3 + 3 * n;
             facts[t.Id] = new CalculatedTableFacts
             {
                 DimensionVersion = dimension, DimensionCounters = (n, 1 + n, 1 + n, 1 + n), TableVersion = 1 + n, HoldsColumns = true,
@@ -143,13 +146,14 @@ internal sealed class CalculatedPlan
 
         if (plain)
         {
-            // H21 (one on Sales), H22 (two on Sales), H23 (one on Products), H24 (one on each).
+            // H21 (one on Sales), H22 (two on Sales), H23 (one on Products), H24 (one on each), H28 (three on Sales). A single column on Sales
+            // alone is one step ahead of the straight line the others follow, in the cube and in the dimension.
             foreach (var t in primary) { partitionData[t.Id] = 1; groupData[t.Id] = 1; }
             if (total == 1 && many.Count == 1) partitionData[many[0].Id] = 1;
-            if (total == 2) foreach (var t in tables) partitionData[t.Id] = -1;
+            if (total >= 2) foreach (var t in tables) partitionData[t.Id] = -1;
             return new CalculatedPlan
             {
-                Cube = total == 2 ? 10 : many.Count == 1 ? 7 : 6, CubeStructure = total == 2 ? 10 : 5,
+                Cube = total == 1 && many.Count == 1 ? 7 : 2 + 4 * total, CubeStructure = 5 * total,
                 MeasureGroupStructure = total, MeasureGroupCache = 1 + total,
                 Partition = 1 + total, PartitionCache = 1 + total, Script = 1 + total,
                 PartitionInfo = false, Tables = facts, PartitionData = partitionData, MeasureGroupData = groupData, Columns = columns,
