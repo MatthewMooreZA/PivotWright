@@ -15,7 +15,7 @@ Normative sources: [MS-XLDM] (Spreadsheet Data Model file format), [MS-XCA] (Xpr
 
 `PivotWright` is a pure-managed .NET 8 library that writes `.xlsx` workbooks containing a Power Pivot data model (`xl/model/item.data`, an Analysis Services backup "ABF" holding VertiPaq files) with no Excel, SSAS or COM at write time. Input is an `IDataReader`, `DataTable`, objects or rows. Long-term aim: an Excel report modeller/writer. The model is the first layer.
 
-Supported and verified in Excel: tables, six data types, relationships (many-to-one), measures, user hierarchies, Sort by Column, hidden columns, date tables (marking an existing table and the generated `AddDateTable`). Calculated columns are implemented from H10 and await their first Excel test. Backlog: KPIs, perspectives, refresh with a real data source.
+Supported and verified in Excel: tables, six data types, relationships (many-to-one), measures, user hierarchies, Sort by Column, hidden columns, date tables (marking an existing table and the generated `AddDateTable`). Calculated columns are implemented from H10 and Excel-verified. Backlog: KPIs, perspectives, refresh with a real data source.
 
 ## 2. Public API (all in namespace `PivotWright`)
 
@@ -180,7 +180,7 @@ Only the configuration of `H2` has been seen, so `ModelSerializer.ValidateDateTa
 
 **No "create from scratch" case**: Excel cannot create a date table by itself; a date table is always an existing table that was marked (Matthew, 2026-10-11).
 
-## 10. Calculated columns (observed in `H6`, `H7`, `H10`; implemented from H10, not yet tested as a generated file in Excel)
+## 10. Calculated columns (observed in `H6`, `H7`, `H10`; implemented from H10; Excel-verified 2026-10-25 on a generated file)
 
 Base for all three: `calcbase_v1` (the standard Products/Dates/Sales model). H6: Sales `Line Total` = `[Qty]*[Amount]`. H7: Sales `RELATED(Products[Category])` (Excel's default name "Calculated Column 1"). H10: as H6 but saved in Manual Calculation Mode without Calculate Now.
 
@@ -192,7 +192,8 @@ Base for all three: `calcbase_v1` (the standard Products/Dates/Sales model). H6:
 - **Counters**: the cube, the measure groups, the partitions, the script and the Sales dimension and table all move to new versions (compare H6/H10 with the base using `tools/python/xd.py`); the Sales dimension's `DataIDVersion` and `IncDataIDVersion` go from 1 to 2. Exact rules still to be derived.
 - **Implementation** (`ModelInfo.CalculatedProfile`; the generated file matches H10 in every counter, Ordinal and file, and byte for byte in the table XML and the data file; the differences are the currency format, which follows the model culture where Excel inferred `$`, and folder numbers): cube 25 (structure 17), measure groups 25 (structure 10, cache 3, data -1, Ordinal = position + 2), partitions 11 (data version -1, or 1 for the table with the column; cache 2), script 11, dimension of the table with the column 7 (structure 1, DataID 2, cache 2, data 3), dimension of the primary side of its first relationship 6 (a guess at the rule: in H6, H7 and H10 only Products, not Dates, was saved again), table XML version 3 with `Settings` 4097 and `EncodingHint` 0 on the row number. Excel also drops the empty annotation `Value` elements of the re-saved dimensions and all partitions, writes the measure group list in alphabetical order, writes `info.25.xml` in the cube folder and partition information for the table with the column only. The data file `2.<table>.<column>.0.idf` is 16 run slots holding one run of BLANK over all rows, then one empty word (152 bytes); no `H$` table, no dictionary.
 - **Supported so far**: one calculated column per model, currency type, a model with a hierarchy and a relationship (the table on the many side), no date table, no hidden columns, a table of one segment. `Save` refuses the rest.
-- **Open**: whether a generated automatic-mode file with the unprocessed column also calculates on demand (H10 was saved in manual mode and no model file records the mode); formula types other than currency; `RELATED` columns; what happens when the formula is invalid.
+- **Verified**: a generated file calculates on demand in Excel's automatic mode (sum of Line Total R90500 as computed), and adding a hierarchy, adding a Sort by Column, save and refresh all work afterwards.
+- **Open**: formula types other than currency; `RELATED` columns; what happens when the formula is invalid.
 
 ## 11. Not understood (open)
 
