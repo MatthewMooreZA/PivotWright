@@ -63,7 +63,7 @@ sales.AddMeasure("Revenue", "SUMX(Sales, Sales[Qty] * Sales[Price])", MeasureFor
 sales.AddMeasure("Base Rate", "0.15").IsHidden = true;   // used only by other measures
 ```
 
-A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. Formats: `General`, `WholeNumber`, `Decimal(n)`, `Currency(n)`, `Percentage(n)`, `Date`. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
+A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. The one thing it checks, for measures and calculated columns alike, is that brackets, parentheses, braces and quotes are paired (comments and quoted text are skipped), so a typo like `SUM(Sales[Qty]` is rejected where it is written. Formats: `General`, `WholeNumber`, `Decimal(n)`, `Currency(n)`, `Percentage(n)`, `Date`. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
 
 ### Calculated columns
 

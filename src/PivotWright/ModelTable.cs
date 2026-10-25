@@ -124,10 +124,10 @@ public sealed class ModelTable
     /// in the PivotTable, not here. Hide it with <see cref="ModelMeasure.IsHidden"/>.
     /// </summary>
     /// <param name="name">Measure name; unique across the model, different from this table's column names, and without [ or ].</param>
-    /// <param name="expression">DAX expression, with or without the leading "=", for example <c>SUM(Sales[Qty])</c>.</param>
+    /// <param name="expression">DAX expression, with or without the leading "=", for example <c>SUM(Sales[Qty])</c>. Brackets, parentheses, braces and quotes must be paired; nothing else is checked.</param>
     /// <param name="format">Number format; <see cref="MeasureFormat.General"/> when omitted.</param>
     /// <returns>The measure.</returns>
-    /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters, or the expression is empty.</exception>
+    /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters, or the expression is empty or malformed (unpaired brackets, parentheses or quotes).</exception>
     public ModelMeasure AddMeasure(string name, string expression, MeasureFormat? format = null)
     {
         Model.ThrowIfDisposed();
@@ -140,6 +140,7 @@ public sealed class ModelTable
         if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("A DAX expression is required.", nameof(expression));
         expression = expression.Trim();
         if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
+        PivotWright.Internal.DaxText.Check(expression, nameof(expression));
         if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)
             throw new ArgumentException($"A measure named '{name}' already exists ({taken}); measure names are unique across the model.", nameof(name));
         if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
@@ -185,6 +186,7 @@ public sealed class ModelTable
         expression = expression.Trim();
         if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
         if (expression.Length == 0) throw new ArgumentException("A DAX expression is required.", nameof(expression));
+        PivotWright.Internal.DaxText.Check(expression, nameof(expression));
         if (!Enum.IsDefined(dataType)) throw new ArgumentException($"'{dataType}' is not a data type.", nameof(dataType));
         if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));

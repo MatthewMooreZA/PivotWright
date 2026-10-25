@@ -61,6 +61,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
     ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
     ("Calculated columns: one block of BLANKs per segment of a larger table", Tests.CalculatedColumnSeveralSegments),
+    ("DAX text: paired brackets, parentheses and quotes are checked, real DAX is not rejected", Tests.DaxTextCheck),
     ("Calculated columns with hidden columns: hide a data column, a level, or the calculated column (H33 to H36)", Tests.CalculatedColumnsWithHiddenColumns),
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
     ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
@@ -1496,6 +1497,29 @@ namespace PivotWright.Tests
             Find(both, @"Model\.30\.cub\.xml$");
             Find(both, @"Sales_G\.7\.dim\.xml$");
             Find(both, @"Dates_G\.9\.dim\.xml$");
+        }
+
+        // Only malformed text is rejected; DAX with comments, quotes inside text and brackets in names must pass.
+        public static void DaxTextCheck()
+        {
+            string[] good =
+            {
+                "SUM(Sales[Qty])", "[Qty]*[Amount]", "RELATED(Products[Category])", "\"Qty \"&[Qty]", "\"a \"\"quoted\"\" (word\"",
+                "CALCULATE(SUM('Sales Table'[Qty]), FILTER(ALL('Dates'), 'Dates'[Year] = 2025))", "'O''Rate'[Amount[x]]]",
+                "IF([Qty] > 2, \"big\", \"small\") // a comment with ( [ and \"", "1 + /* ( [ \" */ 2", "-- note )\n1", "{1, 2, 3}", "[Total N] * 2 & \"<x>\"",
+            };
+            foreach (var text in good)
+                Check.True(PivotWright.Internal.DaxText.Problem(text) is null, "well-formed: " + text);
+            string[] bad = { "SUM(Sales[Qty]", "SUM Sales[Qty])", "[Qty", "Qty]", "\"open", "'open", "(1 + 2", "1 + /* open", "{1, 2", "(1}" };
+            foreach (var text in bad)
+                Check.True(PivotWright.Internal.DaxText.Problem(text) is not null, "malformed: " + text);
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                Tests.Throws<ArgumentException>(() => sales.AddCalculatedColumn("Bad", "SUM(Sales[Qty]", ColumnDataType.Int64), "unclosed parenthesis in a column", "malformed");
+                Tests.Throws<ArgumentException>(() => sales.AddMeasure("Bad measure", "SUM(Sales[Qty]"), "unclosed parenthesis in a measure", "malformed");
+                Check.Equal(0, sales.CalculatedColumns.Count, "failed calls change nothing");
+            }
         }
 
         public static void CalculatedColumnValidation()
