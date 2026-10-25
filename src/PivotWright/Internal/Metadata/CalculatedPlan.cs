@@ -114,10 +114,7 @@ internal sealed record CalculatedPlan
         if (holders.Count == 0) return null;
         int total = holders.Sum(t => t.CalculatedColumns.Count);
         string what = $"'{holders[0].Name}[{holders[0].CalculatedColumns[0].Name}]'";
-        // Hidden columns (data columns or the calculated column itself) were seen in the hierarchy model without a date table only (H33 to H36).
         var hiddenTables = tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Any(c => c.IsHidden)).ToList();
-        if (hiddenTables.Count > 0 && (hierarchies.Count == 0 || tables.Any(t => t.DateColumn is not null)))
-            throw new InvalidOperationException($"{what} is a calculated column in a model with hidden columns, which was only seen in a model with a hierarchy and no date table (no Excel sample of the other cases exists yet).");
 
         bool plain = hierarchies.Count == 0;
         var dateTable = tables.FirstOrDefault(t => t.DateColumn is not null);
@@ -178,7 +175,7 @@ internal sealed record CalculatedPlan
         {
             int n = t.CalculatedColumns.Count;
             // Beside a column on the primary side, the many-side table in a model without a hierarchy is one step behind (H24 against H21).
-            int dimension = plain ? (n == 1 ? (primary.Count == 1 ? 5 : 6) : 2 + 3 * n) : 3 + 3 * n;
+            int dimension = plain ? (n == 1 ? (primary.Count == 1 || hiddenTables.Count > 0 ? 5 : 6) : 2 + 3 * n) : 3 + 3 * n;
             // With a date table every counter of the many-side table starts one step higher (its base: 4, table version 1, data 1).
             int shift = date ? 1 : 0;
             if (date) dimension = 4 + 3 * n;
@@ -213,11 +210,11 @@ internal sealed record CalculatedPlan
             // H21 (one on Sales), H22 (two on Sales), H23 (one on Products), H24 (one on each), H28 (three on Sales). A single column on Sales
             // alone is one step ahead of the straight line the others follow, in the cube and in the dimension.
             foreach (var t in primary) { partitionData[t.Id] = 1; groupData[t.Id] = 1; }
-            if (total == 1 && many.Count == 1) partitionData[many[0].Id] = 1;
+            if (total == 1 && many.Count == 1 && hiddenTables.Count == 0) partitionData[many[0].Id] = 1;
             if (total >= 2) foreach (var t in tables) partitionData[t.Id] = -1;
             return new CalculatedPlan
             {
-                Cube = total == 1 && many.Count == 1 ? 7 : 2 + 4 * total, CubeStructure = 5 * total,
+                Cube = total == 1 && many.Count == 1 && hiddenTables.Count == 0 ? 7 : 2 + 4 * total, CubeStructure = 5 * total,
                 MeasureGroupStructure = total, MeasureGroupCache = 1 + total,
                 Partition = 1 + total, PartitionCache = 1 + total, Script = 1 + total,
                 PartitionInfo = false, Tables = facts, PartitionData = partitionData, MeasureGroupData = groupData, Columns = columns,

@@ -1526,14 +1526,6 @@ namespace PivotWright.Tests
                 other.AddCalculatedColumn("C", "1", ColumnDataType.Int64);
                 Rejects<InvalidOperationException>(() => Saves(lonely), "table without hierarchy that is not on the many side");
             }
-            // Hidden columns next to a calculated column were seen in the hierarchy model only (H33 to H36).
-            var (hidden, _, hiddenSales) = CalcModel(hierarchy: false);
-            using (hidden)
-            {
-                hiddenSales.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
-                hiddenSales["ProductKey"].IsHidden = true;
-                Rejects<InvalidOperationException>(() => Saves(hidden), "hidden columns in a model without hierarchies");
-            }
         }
 
         // H33 (hide Sales[Qty], then add a calculated column), H36 (hide a hierarchy level) and H35 (hide the calculated column itself).
@@ -1573,6 +1565,22 @@ namespace PivotWright.Tests
             Find(levelHidden, @"Model\.25\.cub\.xml$");
             Find(levelHidden, @"Products_G\.7\.dim\.xml$");
             Find(levelHidden, @"Sales_G\.6\.dim\.xml$");
+
+            // No sample without hierarchies: the same steps on that model's fit (cube 6 + 2, measure groups 7, Sales dimension 5 + 1).
+            {
+                var (plainModel, _, plainSales) = CalcModel(hierarchy: false);
+                using (plainModel)
+                {
+                    plainSales["Qty"].IsHidden = true;
+                    plainSales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    var ms = new MemoryStream();
+                    plainModel.SaveModelPart(ms);
+                    var plainRead = ModelReader.Read(ms.ToArray());
+                    Find(plainRead, @"Model\.8\.cub\.xml$");
+                    Find(plainRead, @"Sales_G\.7\.det\.xml$");
+                    Find(plainRead, @"Sales_G\.6\.dim\.xml$");
+                }
+            }
 
             var calcHidden = Save((p, s) =>
             {
