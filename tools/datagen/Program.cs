@@ -52,7 +52,7 @@ bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain"
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
 s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
-if (args.Length > 2 && args[2] == "date") dates.MarkAsDateTable("Date");
+if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
 if (args.Length > 2 && args[2] == "calc")
 {
     // calc [currency|whole|decimal|date|boolean|text]: one calculated column, as in Excel's H10 to H15 samples
@@ -83,5 +83,8 @@ for (int n = 0; n < onSales; n++)
     var (name, formula, type) = n < salesColumns.Length ? salesColumns[n] : ($"Qty x{n + 1}", $"[Qty]*{n + 1}", ColumnDataType.Int64);
     s.AddCalculatedColumn(name, formula, type);
 }
+// calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32); both with "datetable"
+if (calcMode is "calcd" or "calcsd") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
+if (calcMode == "calcsd") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
 if (calcMode is "calcp" or "calcsp" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

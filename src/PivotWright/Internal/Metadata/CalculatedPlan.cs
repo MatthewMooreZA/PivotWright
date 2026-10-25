@@ -60,12 +60,12 @@ internal sealed class CalculatedPlan
         if (holders.Count == 0) return null;
         int total = holders.Sum(t => t.CalculatedColumns.Count);
         string what = $"'{holders[0].Name}[{holders[0].CalculatedColumns[0].Name}]'";
-        if (tables.Any(t => t.DateColumn is not null))
-            throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with a date table yet.");
         if (tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden)))
             throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with hidden columns yet.");
 
         bool plain = hierarchies.Count == 0;
+        var dateTable = tables.FirstOrDefault(t => t.DateColumn is not null);
+        bool date = dateTable is not null;
         bool Hierarchy(TableBuilder t) => hierarchies.Any(h => h.Table == t);
         bool ManySide(TableBuilder t) => relationships.Any(r => r.From == t);
         string seen = plain ? SeenPlain : Seen;
@@ -86,6 +86,8 @@ internal sealed class CalculatedPlan
                 throw new InvalidOperationException($"{name} is a calculated column on a table that has a hierarchy and is the many side of a relationship, which was never seen in an Excel-written file. " + seen);
             if (Hierarchy(t) && t.CalculatedColumns.Count > 1)
                 throw new InvalidOperationException($"'{t.Name}' has {t.CalculatedColumns.Count} calculated columns, but only one per hierarchy table was seen in an Excel-written file. " + seen);
+            if (date && Hierarchy(t) && t != dateTable)
+                throw new InvalidOperationException($"{name} is a calculated column on a primary-side table that is not the date table, in a model with a date table, which was never seen in an Excel-written file. " + seen);
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
@@ -94,20 +96,21 @@ internal sealed class CalculatedPlan
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();
-        // The primary side of the first relationship of the many-side table is saved again, whether or not it has a column itself.
-        var resaved = many.Count == 1 ? relationships.First(r => r.From == many[0]).To : null;
+        // The primary side of the first relationship is saved again, unless it holds the column itself: in the samples with a column on
+        // the many-side table, and (H31, H32) in a model with a date table whatever table holds the column.
+        var resaved = many.Count == 1 || date ? relationships.FirstOrDefault()?.To : null;
         var partitionData = new Dictionary<string, int>();
         var groupData = new Dictionary<string, int>();
         foreach (var t in tables)
         {
             // The usual values; the shapes below change some of them.
-            partitionData[t.Id] = Hierarchy(t) || t.CalculatedColumns.Count > 0 ? -1 : 0;
+            partitionData[t.Id] = date || Hierarchy(t) || t.CalculatedColumns.Count > 0 ? -1 : 0;
             groupData[t.Id] = -1;
         }
 
         // One column on the many-side table in a model with a hierarchy: H10, with the extra step Excel took when the calculation
         // mode was switched in that session.
-        if (!plain && total == 1 && many.Count == 1)
+        if (!plain && !date && total == 1 && many.Count == 1)
         {
             var t = many[0];
             facts[t.Id] = new CalculatedTableFacts { DimensionVersion = 7, DimensionCounters = (1, 2, 2, 3), TableVersion = 3, HoldsColumns = true };
@@ -126,22 +129,28 @@ internal sealed class CalculatedPlan
             int n = t.CalculatedColumns.Count;
             // Beside a column on the primary side, the many-side table in a model without a hierarchy is one step behind (H24 against H21).
             int dimension = plain ? (n == 1 ? (primary.Count == 1 ? 5 : 6) : 2 + 3 * n) : 3 + 3 * n;
+            // With a date table every counter of the many-side table starts one step higher (its base: 4, table version 1, data 1).
+            int shift = date ? 1 : 0;
+            if (date) dimension = 4 + 3 * n;
             facts[t.Id] = new CalculatedTableFacts
             {
-                DimensionVersion = dimension, DimensionCounters = (n, 1 + n, 1 + n, 1 + n), TableVersion = 1 + n, HoldsColumns = true,
+                DimensionVersion = dimension, DimensionCounters = (n, 1 + n, 1 + n, 1 + n + shift), TableVersion = 1 + n + shift, HoldsColumns = true,
             };
-            for (int j = 1; j <= n; j++) columns[(t.Id, t.CalculatedColumns[j - 1].Id)] = (1 + j, 1 + j, 1 + j);
+            for (int j = 1; j <= n; j++) columns[(t.Id, t.CalculatedColumns[j - 1].Id)] = (1 + j + shift, 1 + j + shift, 1 + j + shift);
         }
         foreach (var t in primary)
         {
             // A model with a hierarchy: dimension 9 (3, 2, 2, 3) and table version 3; without one: 5 (1, 2, 2, 1) and 1.
+            // The date table: dimension 9 (4, 3, 3, 4) and table version 4 (H31, H32).
             facts[t.Id] = plain
                 ? new CalculatedTableFacts { DimensionVersion = 5, DimensionCounters = (1, 2, 2, 1), TableVersion = 1, HoldsColumns = true }
-                : new CalculatedTableFacts { DimensionVersion = 9, DimensionCounters = (3, 2, 2, 3), TableVersion = 3, HoldsColumns = true };
-            columns[(t.Id, t.CalculatedColumns[0].Id)] = plain ? (1, 1, 1) : (3, 3, 3);
+                : date
+                    ? new CalculatedTableFacts { DimensionVersion = 9, DimensionCounters = (4, 3, 3, 4), TableVersion = 4, HoldsColumns = true }
+                    : new CalculatedTableFacts { DimensionVersion = 9, DimensionCounters = (3, 2, 2, 3), TableVersion = 3, HoldsColumns = true };
+            columns[(t.Id, t.CalculatedColumns[0].Id)] = plain ? (1, 1, 1) : date ? (4, 4, 4) : (3, 3, 3);
         }
         if (resaved is not null && !facts.ContainsKey(resaved.Id))
-            facts[resaved.Id] = new CalculatedTableFacts { DimensionVersion = plain ? 2 : 6 };
+            facts[resaved.Id] = new CalculatedTableFacts { DimensionVersion = plain ? 2 : date ? 7 : 6 };
 
         if (plain)
         {
@@ -155,6 +164,18 @@ internal sealed class CalculatedPlan
                 Cube = total == 1 && many.Count == 1 ? 7 : 2 + 4 * total, CubeStructure = 5 * total,
                 MeasureGroupStructure = total, MeasureGroupCache = 1 + total,
                 Partition = 1 + total, PartitionCache = 1 + total, Script = 1 + total,
+                PartitionInfo = false, Tables = facts, PartitionData = partitionData, MeasureGroupData = groupData, Columns = columns,
+                FormulasInMeasureGroups = true,
+            };
+        }
+
+        if (date)
+        {
+            // Excel's numbers with a date table are those of the hierarchy model moved up by the date table's own steps (H29 to H32).
+            return new CalculatedPlan
+            {
+                Cube = 22 + 4 * total, CubeStructure = 12 + 5 * total, MeasureGroupStructure = 9 + total, MeasureGroupCache = 2 + total,
+                Partition = 10 + total, PartitionCache = 1 + total, Script = 10 + total,
                 PartitionInfo = false, Tables = facts, PartitionData = partitionData, MeasureGroupData = groupData, Columns = columns,
                 FormulasInMeasureGroups = true,
             };

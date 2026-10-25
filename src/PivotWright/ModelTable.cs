@@ -161,7 +161,7 @@ public sealed class ModelTable
     /// field. The user puts it in Values once, or clicks Calculate Now in Power Pivot; Refresh All does not calculate it.
     /// <para>
     /// Written the way Excel saves calculated columns it has not calculated yet; only some shapes have been seen in Excel-written
-    /// files, so saving requires a model with relationships, no date table, no hidden columns, a table of a single segment, and
+    /// files, so saving requires a model with relationships, no hidden columns, a column on the date table only if it is the one primary-side table with a column, a table of a single segment, and
     /// any number of columns on the many-side table and at most one column on a table that is the primary side of a relationship (with a hierarchy, or in a model without hierarchies). Other combinations make <c>Save</c> throw.
     /// </para>
     /// </remarks>

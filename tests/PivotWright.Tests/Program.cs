@@ -61,6 +61,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
     ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
+    ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
 };
 
@@ -1294,6 +1295,60 @@ namespace PivotWright.Tests
                     Check.True(block.Replace("\r", "").Replace("\n", "").Replace(" ", "").Contains(runs.Replace(" ", "")), rows + " rows: run counts");
                 }
             }
+        }
+
+        // A date table keeps its own offsets: a column on Sales (H29, H30) or on the date table (H31, H32).
+        public static void CalculatedColumnsWithDateTable()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, dates, sales) = DateModel(d =>
+                {
+                    for (int i = 0; i < 70; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(day, day.Year, day.ToString("MMMM", CultureInfo.InvariantCulture)); }
+                });
+                using (model)
+                {
+                    dates.MarkAsDateTable("Date");
+                    add(dates, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            var onSales = Save((d, s) => s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64));
+            Find(onSales, @"Model\.26\.cub\.xml$");
+            Check.Equal("1,2,2,3,", Counters(onSales, @"Sales_G\.7\.dim\.xml$"), "Sales dimension counters");
+            Find(onSales, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+            Check.Equal(152, onSales.Find(@"\.0\.dim\\3\.Sales_G\.Twice\.0\.idf$").Length, "column file");
+
+            var twoOnSales = Save((d, s) =>
+            {
+                s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Thrice", "[N]*3", ColumnDataType.Int64);
+            });
+            Find(twoOnSales, @"Model\.30\.cub\.xml$");
+            Check.Equal("2,3,3,4,", Counters(twoOnSales, @"Sales_G\.10\.dim\.xml$"), "Sales dimension counters, two columns");
+            Find(twoOnSales, @"\.0\.dim\\Sales_G\.4\.tbl\.xml$");
+
+            var onDates = Save((d, s) => d.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64));
+            Find(onDates, @"Model\.26\.cub\.xml$");
+            Check.Equal("4,3,3,4,", Counters(onDates, @"Dates_G\.9\.dim\.xml$"), "Dates dimension counters");
+            Find(onDates, @"\.0\.dim\\Dates_G\.4\.tbl\.xml$");
+            Check.Equal(152, onDates.Find(@"\.0\.dim\\4\.Dates_G\.Year Month\.0\.idf$").Length, "column file");
+            Find(onDates, @"Dates_G\.0\.dim\\info\.9\.xml$");
+
+            var both = Save((d, s) =>
+            {
+                s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64);
+                d.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64);
+            });
+            Find(both, @"Model\.30\.cub\.xml$");
+            Find(both, @"Sales_G\.7\.dim\.xml$");
+            Find(both, @"Dates_G\.9\.dim\.xml$");
         }
 
         public static void CalculatedColumnValidation()
