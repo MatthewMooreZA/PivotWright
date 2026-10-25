@@ -56,17 +56,35 @@ internal sealed class ModelInfo
     /// </summary>
     public DateTime EditedAt { get; init; }
 
+    /// <summary>Ids of the tables that hold calculated columns.</summary>
+    public IReadOnlySet<string> CalculatedTables { get; init; } = new HashSet<string>();
+    /// <summary>
+    /// Ids of the tables Excel saved again, although their columns did not change, when it added a calculated column: in H6, H7 and
+    /// H10 only the primary side of the first relationship of the table with the column (SPEC section 10).
+    /// </summary>
+    public IReadOnlySet<string> ResavedTables { get; init; } = new HashSet<string>();
+    /// <summary>
+    /// Models with hierarchies and a calculated column are written the way Excel saves them after a calculated column was added in
+    /// manual calculation mode (H10; SPEC section 10).
+    /// </summary>
+    public bool CalculatedProfile => CalculatedTables.Count > 0;
+
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
+    public int CubeVersion => CalculatedProfile ? 25 : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion;
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
     public int MeasureGroupVersion => HiddenProfile ? 20 : CubeVersion;
-    public int ScriptVersion => AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion;
-    public int PartitionVersion => AnyDate ? 10 : AnyHierarchy ? 9 : 1;
+    public int ScriptVersion => CalculatedProfile ? 11 : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion;
+    public int PartitionVersion => CalculatedProfile ? 11 : AnyDate ? 10 : AnyHierarchy ? 9 : 1;
+    /// <summary>True when Excel saved the table's dimension again after an edit (H10), which drops the empty annotation values.</summary>
+    public bool Resaved(string tableId) => CalculatedProfile && (CalculatedTables.Contains(tableId) || ResavedTables.Contains(tableId));
     public int DimensionVersion(string tableId, bool manySide) =>
-        (HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1) + (AnyDate ? 1 : 0)
+        CalculatedProfile && CalculatedTables.Contains(tableId) ? 7
+        : CalculatedProfile && ResavedTables.Contains(tableId) ? 6
+        : (HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1) + (AnyDate ? 1 : 0)
         + (HiddenProfile && HiddenTables.Contains(tableId) ? (HierarchyTables.Contains(tableId) ? 2 : 1) : 0);
     /// <summary>Version of a table's .tbl.xml: 2 when it holds hierarchies, plus 1 for a date table or a table related to one.</summary>
     public int TableVersion(string tableId) =>
+        CalculatedProfile && CalculatedTables.Contains(tableId) ? 3 :
         (HierarchyTables.Contains(tableId) ? FileNames.HierarchyVersion : 0) + (DateTables.Contains(tableId) || DateReferencingTables.Contains(tableId) ? 1 : 0);
 }
 
@@ -102,6 +120,9 @@ internal static class AsslWriter
 
     private const string TableAnnotations =
         "\n            <Annotation>\n              <Name>IsQueryEditorUsed</Name>\n              <Value>False</Value>\n            </Annotation>\n            <Annotation>\n              <Name>QueryEditorSerialization</Name>\n              <Value/>\n            </Annotation>\n            <Annotation>\n              <Name>TableWidgetSerialization</Name>\n              <Value/>\n            </Annotation>\n          ";
+
+    /// <summary>Excel leaves the empty Value elements out when it saves a table again after an edit (H10).</summary>
+    private static string Annotations(bool saved) => saved ? TableAnnotations.Replace("\n              <Value/>", "") : TableAnnotations;
 
     private static string E(string s) => Xml.Esc(s);
     private static string T(DateTime d) => Xml.Time(d);
@@ -258,7 +279,7 @@ internal static class AsslWriter
         sb.Append("<ObjectDefinition><Dimension>");
         CommonHeader(sb, t.Name, t.Id, m.Created, version, ids.DimensionObjectId, schemaUpdated: m.HiddenProfile && m.HiddenTables.Contains(t.Id) ? m.EditedAt : null);
         sb.Append("<DataFileList>").Append(E(string.Join(";", dataFiles))).Append("</DataFileList><Description/>");
-        sb.Append("<Annotations").Append(NsB).Append('>').Append(TableAnnotations).Append("</Annotations>");
+        sb.Append("<Annotations").Append(NsB).Append('>').Append(Annotations(m.Resaved(t.Id))).Append("</Annotations>");
         sb.Append("<LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<EstimatedSize>").Append(estimatedSize).Append("</EstimatedSize>");
         sb.Append("<Source xsi:type=\"DataSourceViewBinding\"><DataSourceViewID>Sandbox</DataSourceViewID></Source><MiningModelID/><Type>").Append(m.DateTables.Contains(t.Id) ? "Time" : "Regular").Append("</Type>");
@@ -285,6 +306,11 @@ internal static class AsslWriter
         {
             sb.Append("<AttributeRelationship><AttributeID>").Append(E(c.Id)).Append("</AttributeID><Name>").Append(E(c.Name))
               .Append("</Name><RelationshipType>Flexible</RelationshipType><Cardinality>").Append(c.IsPrimaryKey ? "One" : "Many").Append("</Cardinality><Optionality>Mandatory</Optionality><OverrideBehavior>None</OverrideBehavior><Translations/></AttributeRelationship>");
+        }
+        foreach (var c in t.CalculatedColumns)
+        {
+            sb.Append("<AttributeRelationship><AttributeID>").Append(E(c.Id)).Append("</AttributeID><Name>").Append(E(c.Name))
+              .Append("</Name><RelationshipType>Flexible</RelationshipType><Cardinality>Many</Cardinality><Optionality>Mandatory</Optionality><OverrideBehavior>None</OverrideBehavior><Translations/></AttributeRelationship>");
         }
         sb.Append("</AttributeRelationships></Attribute>");
 
@@ -315,6 +341,7 @@ internal static class AsslWriter
                 sb.Append("<ddl300_300:FormatString>").Append(E(CurrencyFormat(m.Culture, m.Lcid).formatString)).Append("</ddl300_300:FormatString>");
             sb.Append("</Attribute>");
         }
+        foreach (var c in t.CalculatedColumns) CalculatedAttribute(sb, m, c);
         sb.Append("</Attributes>");
         if (t.Hierarchies.Count == 0) sb.Append("<Hierarchies/>");
         else
@@ -349,7 +376,9 @@ internal static class AsslWriter
             sb.Append("</ddl300_300:Relationships>");
         }
         int hv = m.HierarchyTables.Contains(t.Id) ? 2 : 0;
-        if (m.DateTables.Contains(t.Id))
+        if (m.CalculatedTables.Contains(t.Id))
+            sb.Append("<StructureVersion>" + (hv + 1) + "</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>3</DataVersion>");
+        else if (m.DateTables.Contains(t.Id))
             sb.Append("<StructureVersion>" + (hv + 1) + "</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>" + (hv + 1) + "</DataVersion>");
         else
             sb.Append("<StructureVersion>" + hv + "</StructureVersion><DataIDVersion>1</DataIDVersion><IncDataIDVersion>1</IncDataIDVersion><CacheVersion>1</CacheVersion><DataVersion>" + (hv + (m.DateReferencingTables.Contains(t.Id) ? 1 : 0)) + "</DataVersion>");
@@ -357,8 +386,9 @@ internal static class AsslWriter
         return sb.ToString();
     }
 
-    private static void AttributeCommon(StringBuilder sb, bool visible, string? orderBy = null)
+    private static void AttributeCommon(StringBuilder sb, bool visible, string? orderBy = null, bool processed = true)
     {
+        string state = processed ? "Processed" : "Unprocessed";
         sb.Append("<EstimatedCount>0</EstimatedCount><DiscretizationMethod>None</DiscretizationMethod><DiscretizationBucketCount>0</DiscretizationBucketCount>");
         sb.Append(orderBy is null ? "<OrderBy>Key</OrderBy>" : "<OrderBy>AttributeKey</OrderBy>").Append("<InstanceSelection>None</InstanceSelection><DefaultMember/>")
           .Append(orderBy is null ? "<OrderByAttributeID/>" : "<OrderByAttributeID>" + E(orderBy) + "</OrderByAttributeID>").Append("<NamingTemplate/>");
@@ -366,8 +396,35 @@ internal static class AsslWriter
         sb.Append("<KeyUniquenessGuarantee>false</KeyUniquenessGuarantee><IsAggregatable>true</IsAggregatable><AttributeHierarchyEnabled>true</AttributeHierarchyEnabled>");
         sb.Append("<AttributeHierarchyVisible>").Append(visible ? "true" : "false").Append("</AttributeHierarchyVisible>");
         sb.Append("<AttributeHierarchyOrdered>true</AttributeHierarchyOrdered><AttributeHierarchyOptimizedState>FullyOptimized</AttributeHierarchyOptimizedState><AttributeHierarchyDisplayFolder/>");
-        sb.Append("<ddl300:AttributeHierarchyProcessingState>Processed</ddl300:AttributeHierarchyProcessingState><GroupingBehavior>EncourageGrouping</GroupingBehavior><ddl200:ProcessingState>Processed</ddl200:ProcessingState>");
+        sb.Append("<ddl300:AttributeHierarchyProcessingState>").Append(state).Append("</ddl300:AttributeHierarchyProcessingState><GroupingBehavior>EncourageGrouping</GroupingBehavior><ddl200:ProcessingState>").Append(state).Append("</ddl200:ProcessingState>");
     }
+
+    /// <summary>
+    /// The dimension attribute of a calculated column as Excel saves it before the column was calculated (H10): the formula is an
+    /// ExpressionBinding, both processing states are Unprocessed, and the type is inferred from the formula.
+    /// </summary>
+    private static void CalculatedAttribute(StringBuilder sb, ModelInfo m, EncodedCalculatedColumn c)
+    {
+        sb.Append("<Attribute><Name>").Append(E(c.Name)).Append("</Name><ID>").Append(E(c.Id)).Append("</ID><Description/>");
+        sb.Append("<Annotations").Append(NsB).Append(">\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ")
+          .Append(AttributeFormat(c.DataType, m.Culture, m.Lcid)).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
+        sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
+        AttributeCommon(sb, visible: true, processed: false);
+        sb.Append("<ddl200:InferredDatatype>").Append(InferredDatatype(c.DataType)).Append("</ddl200:InferredDatatype>");
+        string expression = "<Source xsi:type=\"ddl200_200:ExpressionBinding\"><Expression>" + E(c.Expression) + "</Expression></Source>";
+        sb.Append("<KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</KeyColumn></KeyColumns>");
+        sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</NameColumn>");
+        sb.Append("<Translations/><NamingTemplateTranslations/><AttributeRelationships/>");
+        if (c.DataType == ColumnDataType.Currency)
+            sb.Append("<ddl300_300:FormatString>").Append(E(CurrencyFormat(m.Culture, m.Lcid).formatString)).Append("</ddl300_300:FormatString>");
+        sb.Append("</Attribute>");
+    }
+
+    private static string InferredDatatype(ColumnDataType t) => t switch
+    {
+        ColumnDataType.Currency => "Currency",
+        _ => throw new NotSupportedException($"Calculated columns of type {t} were never seen in an Excel-written file."),
+    };
 
     /// <summary>Dimension information file (info.N.xml in the .dim folder, [MS-XLDM] 2.6.10.2).</summary>
     public static string DimensionInfo(EncodedTable t)
@@ -382,6 +439,9 @@ internal static class AsslWriter
         sb.Append("</Properties></Dimension>");
         return sb.ToString();
     }
+
+    /// <summary>Cube information file, empty as Excel writes it.</summary>
+    public const string CubeInfo = "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>";
 
     public const string DefaultMemberName = "__XL_Count of Models";
 
@@ -409,6 +469,8 @@ internal static class AsslWriter
                   .Append(c.IsRowNumber || c.IsHidden ? "false" : "true")
                   .Append("</AttributeHierarchyVisible><AttributeHierarchyOptimizedState>FullyOptimized</AttributeHierarchyOptimizedState></Attribute>");
             }
+            foreach (var c in t.CalculatedColumns)
+                sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><AggregationUsage>Default</AggregationUsage><AttributeHierarchyEnabled>true</AttributeHierarchyEnabled><AttributeHierarchyVisible>true</AttributeHierarchyVisible><AttributeHierarchyOptimizedState>FullyOptimized</AttributeHierarchyOptimizedState></Attribute>");
             sb.Append("</Attributes>");
             if (t.Hierarchies.Count == 0) sb.Append("<Hierarchies/>");
             else
@@ -420,9 +482,9 @@ internal static class AsslWriter
             }
             sb.Append("</Dimension>");
         }
-        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
+        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.CalculatedProfile ? 17 : m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.HiddenProfile ? m.EditedAt.AddMilliseconds(200) : m.Created)).Append("</LastUpdate>");
-        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", tables.Select(t => t.Id + "." + m.MeasureGroupVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
+        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append("<PerspectiveFileList/><AssemblyFileList>MdxScript." + m.ScriptVersion + ".scr.xml</AssemblyFileList><PermissionFileList/></Cube></ObjectDefinition></Load>");
         return sb.ToString();
     }
@@ -506,7 +568,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MeasureGroup>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, m.MeasureGroupVersion, ids.MeasureGroupObjectId, m.UniqueOrdinals ? ids.Ordinal : 0);
+        CommonHeader(sb, t.Name, t.Id, m.Created, m.MeasureGroupVersion, ids.MeasureGroupObjectId, m.UniqueOrdinals ? ids.Ordinal + (m.CalculatedProfile ? 2 : 0) : 0);
         sb.Append("<DataFileList/><Description/><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Regular</Type><DataAggregation>DataAndCacheAggregatable</DataAggregation><AggregationPrefix/>");
         sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><ProcessingPriority>0</ProcessingPriority><StorageLocation/>");
@@ -529,10 +591,12 @@ internal static class AsslWriter
             ColumnBinding(sb, t.Id, c.Id);
             sb.Append("</KeyColumn></KeyColumns></Attribute>");
         }
+        foreach (var c in t.CalculatedColumns)
+            sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><Type>Regular</Type><Enabled>true</Enabled><KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:ExpressionBinding\"><Expression/></Source></KeyColumn></KeyColumns></Attribute>");
         sb.Append("</Attributes><ddl200_200:ShareDimensionStorage>Shared</ddl200_200:ShareDimensionStorage><CubeDimensionID>").Append(E(t.Id))
           .Append("</CubeDimensionID></Dimension>");
         foreach (var r in t.Relationships) ReferenceDimension(sb, t, r, tablesById[r.PrimaryTableId]);
-        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.AnyDate ? 9 : m.AnyHierarchy ? 8 : 0) + "</StructureVersion><CacheVersion>" + (m.AnyDate ? 2 : 1) + "</CacheVersion><DataVersion>" + (!m.AnyHierarchy ? 0 : m.HierarchyTables.Contains(t.Id) ? -1 : t.Relationships.Count > 0 ? 1 : 0) + "</DataVersion>");
+        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.CalculatedProfile ? 10 : m.AnyDate ? 9 : m.AnyHierarchy ? 8 : 0) + "</StructureVersion><CacheVersion>" + (m.CalculatedProfile ? 3 : m.AnyDate ? 2 : 1) + "</CacheVersion><DataVersion>" + (m.CalculatedProfile ? -1 : !m.AnyHierarchy ? 0 : m.HierarchyTables.Contains(t.Id) ? -1 : t.Relationships.Count > 0 ? 1 : 0) + "</DataVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><AggregationDesignFileList/><PartitionFileList>")
           .Append(E(t.Id)).Append(".").Append(m.PartitionVersion).Append(".prt.xml</PartitionFileList></MeasureGroup></ObjectDefinition></Load>");
         return sb.ToString();
@@ -568,15 +632,16 @@ internal static class AsslWriter
         sb.Append("<ObjectDefinition><Partition>");
         CommonHeader(sb, t.Name, t.Id, m.Created, m.PartitionVersion, ids.PartitionObjectId, m.UniqueOrdinals ? 1 : 0);
         sb.Append("<DataFileList/><Description/>");
-        sb.Append("<Annotations").Append(NsB).Append('>').Append(TableAnnotations.Replace("\n          ", "\n                  ").Replace("\n            ", "\n                    ")).Append("</Annotations>");
-        sb.Append(m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
+        sb.Append("<Annotations").Append(NsB).Append('>').Append(Annotations(m.CalculatedProfile).Replace("\n          ", "\n                  ").Replace("\n            ", "\n                    ")).Append("</Annotations>");
+        sb.Append(m.CalculatedProfile ? (m.CalculatedTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>-1</DataVersion>")
+            : m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Data</Type><AggregationPrefix/><StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><CurrentStorageMode valuens=\"ddl200_200\">InMemory</CurrentStorageMode>");
         sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
         sb.Append("<ProcessingMode>Regular</ProcessingMode><ProcessingPriority>0</ProcessingPriority>").Append(ErrorConfiguration);
         sb.Append("<StorageLocation/><RemoteDataSourceID/><Slice/><EstimatedRows>0</EstimatedRows><AggregationDesignID/>");
         string q = "SELECT [" + t.Name.Replace("]", "]]") + "].*   FROM [" + t.Name.Replace("]", "]]") + "]";
         sb.Append("<Source xsi:type=\"QueryBinding\"><DataSourceID>").Append(m.DataSourceId).Append("</DataSourceID><QueryDefinition>").Append(E(q)).Append("</QueryDefinition></Source>");
-        sb.Append(ProactiveCaching).Append("<EstimatedSize>0</EstimatedSize><CacheVersion>1</CacheVersion></Partition></ObjectDefinition></Load>");
+        sb.Append(ProactiveCaching).Append("<EstimatedSize>0</EstimatedSize><CacheVersion>" + (m.CalculatedProfile ? 2 : 1) + "</CacheVersion></Partition></ObjectDefinition></Load>");
         return sb.ToString();
     }
 

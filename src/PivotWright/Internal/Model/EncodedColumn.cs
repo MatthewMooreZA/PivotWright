@@ -96,6 +96,8 @@ internal static class FileNames
     public static string Hidx(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.hidx";
     public static string PosToId(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.POS_TO_ID.0.idf";
     public static string IdToPos(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.ID_TO_POS.0.idf";
+    /// <summary>Data file of a calculated column, which Excel versions 2 (SPEC section 10).</summary>
+    public static string CalculatedIdf(string tableId, string columnId) => $"2.{tableId}.{columnId}.0.idf";
     public static string TableXml(string tableId, int version = 0) => $"{tableId}.{version}.tbl.xml";
     /// <summary>Data version Excel gives user hierarchy tables (and the tables that hold them) when it creates them.</summary>
     public const int HierarchyVersion = 2;

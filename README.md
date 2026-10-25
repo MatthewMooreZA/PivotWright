@@ -65,6 +65,14 @@ sales.AddMeasure("Base Rate", "0.15").IsHidden = true;   // used only by other m
 
 A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. Formats: `General`, `WholeNumber`, `Decimal(n)`, `Currency(n)`, `Percentage(n)`, `Date`. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
 
+### Calculated columns
+
+```csharp
+sales.AddCalculatedColumn("Line Total", "[Qty] * [Amount]", ColumnDataType.Currency);
+```
+
+The file holds only the formula; Excel calculates the values the first time a PivotTable uses the column, so you do not supply them. The library does not parse the DAX. Written the way Excel saves a calculated column it has not calculated yet (`reference/excel-samples/H10_calculated_column_manual.xlsx`); only that case has been seen, so saving requires a model with a hierarchy, a relationship in which the table is the many side, no date table, no hidden columns, one calculated column in the model, and a table of one segment. Only `ColumnDataType.Currency` is supported so far. Not yet tested as a generated file in Excel.
+
 ### Hierarchies
 
 ```csharp

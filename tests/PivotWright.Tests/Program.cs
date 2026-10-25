@@ -56,6 +56,8 @@ var tests = new (string Name, Action Body)[]
     ("API: a value that does not fit leaves the table consistent", Tests.ApiRowsAreAtomic),
     ("API: ModelColumn.IsHidden writes the same model as ColumnDefinition.IsHidden", Tests.ApiHideColumns),
     ("API: a failed Save leaves an existing file untouched", Tests.ApiSaveIsAtomic),
+    ("Calculated column: formula, no values, counters as Excel saves them (H10)", Tests.CalculatedColumnProfile),
+    ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
 };
 
 int failed = 0;
@@ -989,6 +991,134 @@ namespace PivotWright.Tests
 
         // With every Ordinal 0 the engine told the measure groups apart only by hash order of their ids: whether Create Hierarchy and
         // Sort by Column worked in Excel depended on the random ids (ASDetail::OnClone2). Excel numbers them distinctly.
+        // Products(Category, Product) with a hierarchy and Sales(ProductKey, Qty, Amount) related to it: the shape of calcbase_v1, the
+        // base of Excel's H6, H7 and H10 samples.
+        private static (DataModelWriter model, ModelTable products, ModelTable sales) CalcModel()
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                new ColumnDefinition("Category", ColumnDataType.String),
+                new ColumnDefinition("Product", ColumnDataType.String),
+            });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var sales = model.CreateTable("Sales", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                new ColumnDefinition("Qty", ColumnDataType.Int64),
+                new ColumnDefinition("Amount", ColumnDataType.Currency),
+            });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, 1 + i % 5, (decimal)(10 + i % 7));
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            return (model, products, sales);
+        }
+
+        // H10: a calculated column added in manual calculation mode. The file holds the formula only; Excel calculates the values
+        // when a PivotTable uses the column. Compare with SPEC section 10 and tools/python/xd.py against H10_calculated_column_manual.xlsx.
+        public static void CalculatedColumnProfile()
+        {
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                var column = sales.AddCalculatedColumn("Line Total", "=[Qty]*[Amount]", ColumnDataType.Currency);
+                Check.Equal("[Qty]*[Amount]", column.Expression, "leading = removed");
+                Check.Equal("'Sales'[Line Total]", column.ToString(), "DAX notation");
+                Check.Equal(0, sales.Columns.Count(c => c.Name == "Line Total"), "not a column that takes values");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+
+                string dim = Text(@"Sales_G\.7\.dim\.xml$");
+                Check.True(dim.Contains("<Expression>[Qty]*[Amount]</Expression>"), "formula in the dimension");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(dim, "<ddl200:ProcessingState>Unprocessed</ddl200:ProcessingState>|<ddl300:AttributeHierarchyProcessingState>Unprocessed</ddl300:AttributeHierarchyProcessingState>").Count, "unprocessed states");
+                Check.True(dim.Contains("<ddl200:InferredDatatype>Currency</ddl200:InferredDatatype>"), "inferred type");
+                Check.True(dim.Contains("<DataIDVersion>2</DataIDVersion>"), "data id version");
+                Check.True(!dim.Contains("<Value/>"), "empty annotation values dropped after the edit");
+                Text(@"Products_G\.6\.dim\.xml$");
+                string cube = Text(@"Model\.25\.cub\.xml$");
+                Check.True(cube.Contains("<AttributeID>Line Total</AttributeID>"), "cube attribute");
+                Check.True(cube.Contains("<StructureVersion>17</StructureVersion>"), "cube structure version");
+                Check.True(Text(@"Sales_G\.25\.det\.xml$").Contains("ddl200_200:ExpressionBinding"), "measure group attribute");
+                Text(@"MdxScript\.11\.scr\.xml$");
+                Text(@"Sales_G\.11\.prt\.xml$");
+                Text(@"\.cub\\info\.25\.xml$");
+
+                string tbl = Text(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+                Check.True(tbl.Contains("<Settings xsi:type=\"xsd:long\">4097</Settings>"), "table settings");
+                Check.True(tbl.Contains("name=\"Line Total\"") && tbl.Contains("<ColumnFlags xsi:type=\"xsd:long\">8</ColumnFlags>"), "raw column");
+                Check.True(tbl.Contains("<IsProcessed xsi:type=\"xsd:boolean\">false</IsProcessed>"), "intrinsic hierarchy not processed");
+
+                var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Line Total\.0\.idf$");
+                Check.Equal(152, idf.Length, "stub size");
+                Check.Equal(16, (int)BitConverter.ToUInt64(idf, 0), "run slots");
+                Check.Equal(2, (int)BitConverter.ToUInt32(idf, 8), "BLANK");
+                Check.Equal(40, (int)BitConverter.ToUInt32(idf, 12), "rows");
+                Check.True(!m.Files.Keys.Any(k => k.Contains("Line Total") && (k.Contains("H$") || k.EndsWith(".dictionary", StringComparison.Ordinal))),
+                    "no hierarchy table and no dictionary");
+                Check.Equal(1, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "partition information of the table with the column only");
+            }
+        }
+
+        public static void CalculatedColumnValidation()
+        {
+            void Rejects<T>(Action a, string what) where T : Exception
+            {
+                try { a(); } catch (T) { return; }
+                throw new Exception("Expected " + typeof(T).Name + ": " + what);
+            }
+            void Saves(DataModelWriter model) { using var ms = new MemoryStream(); model.SaveModelPart(ms); }
+
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                sales.AddMeasure("Total Qty", "SUM(Sales[Qty])");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("", "1", ColumnDataType.Currency), "empty name");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("A[B]", "1", ColumnDataType.Currency), "brackets");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("Qty", "1", ColumnDataType.Currency), "name of a column");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("total qty", "1", ColumnDataType.Currency), "name of a measure");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "  ", ColumnDataType.Currency), "empty expression");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "=", ColumnDataType.Currency), "only =");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "1", ColumnDataType.String), "type not seen in Excel yet");
+                Check.Equal(0, sales.CalculatedColumns.Count, "failed calls change nothing");
+                sales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("line total", "1", ColumnDataType.Currency), "duplicate calculated column");
+                Rejects<ArgumentException>(() => sales.AddMeasure("Line Total", "1"), "measure named like a calculated column");
+                Rejects<ArgumentException>(() => products.AddHierarchy("Product Hierarchy", "Category", "Product"), "duplicate hierarchy");
+                Saves(model);
+                // One calculated column per model so far: the counters of more were never seen.
+                products.AddCalculatedColumn("Other", "1", ColumnDataType.Currency);
+                Rejects<InvalidOperationException>(() => Saves(model), "two calculated columns");
+            }
+
+            // Without a hierarchy, or on a table that is not the many side of a relationship, the case was never seen in Excel.
+            using (var noHierarchy = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
+            {
+                var a = noHierarchy.CreateTable("A", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("V", ColumnDataType.Currency) });
+                a.AddRow(1, 2m);
+                var b = noHierarchy.CreateTable("B", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                b.AddRow(1);
+                noHierarchy.AddRelationship(b["K"], a["K"]);
+                b.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
+                Rejects<InvalidOperationException>(() => Saves(noHierarchy), "no hierarchy");
+            }
+            var (oneSide, oneProducts, _) = CalcModel();
+            using (oneSide)
+            {
+                oneProducts.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
+                Rejects<InvalidOperationException>(() => Saves(oneSide), "table on the one side");
+            }
+            var (hidden, _, hiddenSales) = CalcModel();
+            using (hidden)
+            {
+                hiddenSales.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
+                hiddenSales["ProductKey"].IsHidden = true;
+                Rejects<InvalidOperationException>(() => Saves(hidden), "hidden columns");
+            }
+        }
+
         public static void DistinctOrdinals()
         {
             ModelReader Save(bool hierarchy)

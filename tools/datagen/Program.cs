@@ -53,4 +53,5 @@ if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
 s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
 if (args.Length > 2 && args[2] == "date") dates.MarkAsDateTable("Date");
+if (args.Length > 2 && args[2] == "calc") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

@@ -14,6 +14,8 @@ internal sealed class EncodedTable
     /// <summary>Relationships in which this table is the many side.</summary>
     public List<EncodedRelationship> Relationships { get; } = new();
     public List<EncodedHierarchy> Hierarchies { get; } = new();
+    /// <summary>Calculated columns: formulas without stored values.</summary>
+    public List<EncodedCalculatedColumn> CalculatedColumns { get; } = new();
     /// <summary>The table is marked as date table (dimension type Time, its date column is the key).</summary>
     public bool IsDateTable { get; init; }
     /// <summary>Version of the table's .tbl.xml: 2 with hierarchies, plus 1 for a date table and the tables that relate to one.</summary>
@@ -29,10 +31,22 @@ internal sealed class EncodedTable
     }
 }
 
+/// <summary>A calculated column after encoding: only its formula and the row count of its table are written.</summary>
+internal sealed class EncodedCalculatedColumn
+{
+    public required string Name { get; init; }
+    public required string Id { get; init; }
+    public required string Expression { get; init; }
+    public required ColumnDataType DataType { get; init; }
+    public required long Rows { get; init; }
+}
+
 /// <summary>Collects the rows of one table.</summary>
 internal sealed class TableBuilder : IDisposable
 {
     private readonly List<ColumnBuilder> _columns = new();
+    private readonly List<CalculatedColumnDefinition> _calculated = new();
+    private readonly HashSet<string> _usedIds = new(StringComparer.OrdinalIgnoreCase) { FileNames.RowNumberId };
     private readonly BuilderContext _ctx;
 
     public TableBuilder(string name, string id, IEnumerable<ColumnDefinition> columns, BuilderContext ctx)
@@ -40,7 +54,7 @@ internal sealed class TableBuilder : IDisposable
         Name = name;
         Id = id;
         _ctx = ctx;
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { FileNames.RowNumberId };
+        var used = _usedIds;
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { FileNames.RowNumberId };
         foreach (var def in columns)
@@ -163,6 +177,22 @@ internal sealed class TableBuilder : IDisposable
     public ColumnBuilder? DateColumn { get; set; }
     public long Rows { get; private set; }
     public IReadOnlyList<ColumnBuilder> Columns => _columns;
+    /// <summary>Calculated columns, in the order added; they take no row values.</summary>
+    public IReadOnlyList<CalculatedColumnDefinition> CalculatedColumns => _calculated;
+
+    /// <summary>Adds a calculated column; the caller has checked the name and the expression.</summary>
+    public CalculatedColumnDefinition AddCalculatedColumn(string name, string expression, ColumnDataType dataType)
+    {
+        var column = new CalculatedColumnDefinition
+        {
+            Name = name,
+            Id = Identifiers.Unique(Identifiers.Sanitize(name, "Column"), _usedIds),
+            Expression = expression,
+            DataType = dataType,
+        };
+        _calculated.Add(column);
+        return column;
+    }
 
     /// <summary>Throws when rows cannot be added to the table.</summary>
     public void ThrowIfReadOnly()
@@ -260,7 +290,18 @@ internal sealed class TableBuilder : IDisposable
             if (c.SortBy is not null) e.OrderByColumnId = c.SortBy.Id;
             cols.Add(e);
         }
-        return new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
+        var calculated = new List<EncodedCalculatedColumn>(_calculated.Count);
+        foreach (var c in _calculated)
+        {
+            if (Rows > segmentSize)
+                throw new InvalidOperationException($"'{Name}[{c.Name}]' is a calculated column, which is only supported for tables of one segment ({segmentSize:N0} rows); '{Name}' has {Rows:N0} rows (no Excel sample of a calculated column on a larger table exists yet).");
+            using (var idf = sink.Create(FileNames.CalculatedIdf(Id, c.Id)))
+                idf.Write(UnprocessedColumn.Segment(Rows));
+            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows });
+        }
+        var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
+        result.CalculatedColumns.AddRange(calculated);
+        return result;
     }
 
     public void Dispose()

@@ -12,7 +12,7 @@ internal static class TableXmlWriter
     {
         var x = new XmBuilder();
         x.Open("XMSimpleTable", t.Id, root: true);
-        x.Properties(p => p.Int("Version", t.Version).Long("Settings", 4353).Long("RIViolationCount", 0));
+        x.Properties(p => p.Int("Version", t.Version).Long("Settings", t.CalculatedColumns.Count > 0 ? 4097 : 4353).Long("RIViolationCount", 0));
         x.Members(m =>
         {
             m.Member("SegmentMap", s =>
@@ -48,6 +48,7 @@ internal static class TableXmlWriter
             c.Collection("Columns", cc =>
             {
                 foreach (var col in t.AllColumns) RawColumn(cc, t, col, lcid);
+                foreach (var col in t.CalculatedColumns) CalculatedColumn(cc, t, col, lcid);
             });
             c.Collection("Relationships", rc =>
             {
@@ -291,7 +292,7 @@ internal static class TableXmlWriter
                     .Int("XMType", (int)col.XmType)
                     .Int("CompressionType", 0)
                     .Long("CompressionParam", 0)
-                    .Int("EncodingHint", t.Hierarchies.Count == 0 && (col.IsRowNumber || col.IsPrimaryKey) ? 1 : 0)
+                    .Int("EncodingHint", t.Hierarchies.Count == 0 && t.CalculatedColumns.Count == 0 && (col.IsRowNumber || col.IsPrimaryKey) ? 1 : 0)
                     .Long("AggCounter", 0)
                     .Long("WhereCounter", 0)
                     .Long("OrderByCounter", 0));
@@ -309,6 +310,97 @@ internal static class TableXmlWriter
             {
                 o.Open("XMRawColumnPartitionDataObject", FileNames.Idf(t.Id, col.Id));
                 o.Properties(p => p.Int("DataVersion", 0).Int("Partition", 0).Int("SegmentCount", col.Segments.Count));
+                o.Close();
+            });
+        });
+        x.Close();
+    }
+
+    /// <summary>
+    /// A calculated column Excel has not calculated yet (H10): one run of BLANK over all rows, an intrinsic hierarchy that is not
+    /// processed, no hierarchy (H$) table and no dictionary file. Excel fills it in when a PivotTable uses the column.
+    /// </summary>
+    private static void CalculatedColumn(XmBuilder x, EncodedTable t, EncodedCalculatedColumn col, int lcid)
+    {
+        long rows = col.Rows;
+        long bookmarkBits = 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)Math.Max(1, rows));
+        x.Open("XMRawColumn", col.Id, providerVersion: 1);
+        x.Properties(p => p.Long("Settings", 3073).Long("ColumnFlags", 8).Raw("<Collation/><OrderByColumn/>").Long("Locale", lcid).UInt("BinaryCharacters", 0));
+        x.Members(m =>
+        {
+            m.Member("IntrinsicHierarchy", h =>
+            {
+                h.Open("XMHierarchy");
+                h.Properties(p => p.Int("SortOrder", 0).Bool("IsProcessed", false).Int("TypeMaterialization", -1).Long("ColumnPosition2DataID", -1)
+                    .Long("ColumnDataID2Position", -1).Long("DistinctDataIDs", -1).Raw("<TableStore/>"));
+                h.Close();
+            });
+            m.Member("ColumnStats", s =>
+            {
+                s.Open("XMColumnStats");
+                s.Properties(p => p.Int("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
+                    .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", rows).Bool("HasNulls", true)
+                    .Long("RLERuns", 0).Long("OthersRLERuns", 0).Int("Usage", 3).Short("DBType", 6).Int("XMType", 0).Int("CompressionType", 0)
+                    .Long("CompressionParam", 0).Int("EncodingHint", 0).Long("AggCounter", 0).Long("WhereCounter", 0).Long("OrderByCounter", 0));
+                s.Close();
+            });
+        });
+        x.Collections(c => c.Collection("Segments", sc =>
+        {
+            sc.Open("XMColumnSegment");
+            sc.Properties(p => p.Long("Records", rows).Long("Mask", 0));
+            sc.Members(m =>
+            {
+                m.Member("SubSegment", s =>
+                {
+                    s.Open("XMColumnSegment");
+                    s.Properties(p => p.Long("Records", 0).Long("Mask", 0));
+                    s.Members(sm =>
+                    {
+                        sm.Member("CompressionInfo", ci => { ci.Open($"XMRENoSplitCompressionInfo{LT}1>"); ci.Properties(p => p.Int("Min", DataIds.Null)); ci.Close(); });
+                        sm.Member("ColumnSegmentStats", EmptySegmentStats);
+                    });
+                    s.Close();
+                });
+                m.Member("CompressionInfo", ci =>
+                {
+                    ci.Open($"XMHybridRLECompressionInfo{LT}class XMRENoSplitCompressionInfo{LT}1>>");
+                    ci.Members(cm =>
+                    {
+                        cm.Member("RLECompression", r =>
+                        {
+                            r.Open("XMRLECompressionInfo");
+                            r.Properties(p => p.Long("BookmarkBits", bookmarkBits).Long("StorageAllocSize", UnprocessedColumn.Slots * 2)
+                                .Long("StorageUsedSize", 4).Bool("SegmentNeedsResizing", false));
+                            r.Close();
+                        });
+                        cm.Member("SubCompression", sc2 => { sc2.Open($"XMRENoSplitCompressionInfo{LT}1>"); sc2.Properties(p => p.Int("Min", DataIds.Null)); sc2.Close(); });
+                    });
+                    ci.Close();
+                });
+                m.Member("ColumnSegmentStats", s =>
+                {
+                    s.Open("XMColumnSegmentStats");
+                    s.Properties(p => p.Long("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
+                        .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", rows).Bool("HasNulls", true)
+                        .Long("RLERuns", 1).Long("OthersRLERuns", 0));
+                    s.Close();
+                });
+            });
+            sc.Close();
+        }));
+        x.DataObjects(d =>
+        {
+            d.DataObject(o =>
+            {
+                o.Open($"XMHashDataDictionary{LT}XM_Long>");
+                o.Properties(p => p.Int("DataVersion", 3).Int("LastId", DataIds.Null).Bool("Nullable", true).Bool("Unique", false).Bool("OperatingOn32", true));
+                o.Close();
+            });
+            d.DataObject(o =>
+            {
+                o.Open("XMRawColumnPartitionDataObject", FileNames.CalculatedIdf(t.Id, col.Id));
+                o.Properties(p => p.Int("DataVersion", 2).Int("Partition", 0).Int("SegmentCount", 1));
                 o.Close();
             });
         });

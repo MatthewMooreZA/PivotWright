@@ -63,9 +63,31 @@ internal sealed class ModelSerializer
         }
     }
 
+    // A calculated column is written the way Excel saves one added in manual calculation mode, to a model with hierarchies and
+    // relationships (H10, SPEC section 10). Any other shape was never seen in an Excel-written file, so it is refused.
+    private void ValidateCalculatedColumns()
+    {
+        var withColumns = _tables.Where(t => t.CalculatedColumns.Count > 0).ToList();
+        if (withColumns.Count == 0) return;
+        var table = withColumns[0];
+        var column = table.CalculatedColumns[0];
+        string what = $"'{table.Name}[{column.Name}]'";
+        if (withColumns.Count > 1 || table.CalculatedColumns.Count > 1)
+            throw new InvalidOperationException($"{what} is a calculated column, but only one calculated column per model is supported so far (Excel's counters were seen for one only).");
+        if (_hierarchies.Count == 0)
+            throw new InvalidOperationException($"{what} is a calculated column, which is only supported for models that have a hierarchy (no Excel sample of the other case exists yet).");
+        if (!_relationships.Any(r => r.From == table))
+            throw new InvalidOperationException($"{what} is a calculated column, which is only supported on the many side of a relationship ('{table.Name}' has none).");
+        if (_tables.Any(t => t.DateColumn is not null))
+            throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with a date table yet.");
+        if (_tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden)))
+            throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with hidden columns yet.");
+    }
+
     public void Write(Stream output)
     {
         ValidateDateTables();
+        ValidateCalculatedColumns();
         var now = DateTime.UtcNow;
         // Excel names the database with 20 upper-case hex digits. A GUID here loads and pivots fine, but Excel
         // then fails to edit the model (Create Hierarchy -> "ASDetail::OnClone2") once a table has two relationships.
@@ -108,6 +130,9 @@ internal sealed class ModelSerializer
             DateTables = _tables.Where(t => t.DateColumn is not null).Select(t => t.Id).ToHashSet(),
             HiddenTables = hiddenTables,
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
+            CalculatedTables = _tables.Where(t => t.CalculatedColumns.Count > 0).Select(t => t.Id).ToHashSet(),
+            ResavedTables = _tables.Where(t => t.CalculatedColumns.Count > 0)
+                .Select(t => _relationships.First(r => r.From == t).To.Id).ToHashSet(),
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);
@@ -117,7 +142,7 @@ internal sealed class ModelSerializer
         var partitionXml = _tables.ToDictionary(t => t.Id, t => AsslWriter.Partition(Info, t.Name, t.Id));
         long partInfoSize = Utf8.GetByteCount(AsslWriter.PartitionInfo);
         var partitions = AsslWriter.Partitions(Info, "LOCALHOST",
-            _tables.Select(t => (t.Name, t.Id, (long)Utf8.GetByteCount(partitionXml[t.Id]) + partInfoSize)).ToList());
+            _tables.Select(t => (t.Name, t.Id, (long)Utf8.GetByteCount(partitionXml[t.Id]) + (HasPartitionInfo(t.Id) ? partInfoSize : 0))).ToList());
         _abf.WriteRawFile("PARTITIONS", Bom(partitions));
 
         // Data: encode every table into its dimension folder.
@@ -163,7 +188,8 @@ internal sealed class ModelSerializer
         // Cube, measure groups and partitions.
         var cubeGroup = Group(BackupLog.ClassCube, "Model", "Model", Info.CubeVersion, cubeFolder, Info.CubeObjectId);
         AddText(cubeGroup, dbFolder + "\\Model." + Info.CubeVersion + ".cub.xml", AsslWriter.Cube(Info, encoded, _measures.Count > 0));
-        if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
+        if (Info.CalculatedProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
+        else if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {
             var ids = tableIds[t.Id];
@@ -173,7 +199,7 @@ internal sealed class ModelSerializer
             string prtFolder = detFolder + "\\" + t.Id + ".0.prt";
             var prt = Group(BackupLog.ClassPartition, t.Id, t.Name, Info.PartitionVersion, prtFolder, ids.PartitionObjectId);
             AddText(prt, detFolder + "\\" + t.Id + "." + Info.PartitionVersion + ".prt.xml", partitionXml[t.Id]);
-            AddText(prt, prtFolder + "\\info." + Info.PartitionVersion + ".xml", AsslWriter.PartitionInfo);
+            if (HasPartitionInfo(t.Id)) AddText(prt, prtFolder + "\\info." + Info.PartitionVersion + ".xml", AsslWriter.PartitionInfo);
         }
         var script = Group(BackupLog.ClassMdxScript, "MdxScript", "MdxScript", Info.ScriptVersion, cubeFolder, Info.MdxScriptObjectId);
         AddText(script, cubeFolder + "\\MdxScript." + Info.ScriptVersion + ".scr.xml", AsslWriter.MdxScript(Info, _measures));
@@ -200,6 +226,9 @@ internal sealed class ModelSerializer
 
         _abf.Finish(_log.ToXml(), Guid.NewGuid());
     }
+
+    // After a calculated column was added Excel keeps the partition information of the table that holds it only (H10).
+    private bool HasPartitionInfo(string tableId) => !Info.CalculatedProfile || Info.CalculatedTables.Contains(tableId);
 
     private FileGroup Group(int cls, string id, string name, int version, string path, string objectId)
     {

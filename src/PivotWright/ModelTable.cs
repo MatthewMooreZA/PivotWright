@@ -21,6 +21,7 @@ public sealed class ModelTable
     private readonly List<ModelColumn> _columns;
     private readonly List<ModelMeasure> _measures = new();
     private readonly List<ModelHierarchy> _hierarchies = new();
+    private readonly List<ModelCalculatedColumn> _calculatedColumns = new();
 
     internal ModelTable(DataModelWriter model, TableBuilder builder)
     {
@@ -51,6 +52,9 @@ public sealed class ModelTable
 
     /// <summary>Measures added to this table, in order.</summary>
     public IReadOnlyList<ModelMeasure> Measures => _measures;
+
+    /// <summary>Calculated columns added to this table, in order. They are not in <see cref="Columns"/>, which holds the columns that take row values.</summary>
+    public IReadOnlyList<ModelCalculatedColumn> CalculatedColumns => _calculatedColumns;
 
     /// <summary>Hierarchies added to this table, in order.</summary>
     public IReadOnlyList<ModelHierarchy> Hierarchies => _hierarchies;
@@ -138,13 +142,55 @@ public sealed class ModelTable
         if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
         if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)
             throw new ArgumentException($"A measure named '{name}' already exists ({taken}); measure names are unique across the model.", nameof(name));
-        if (Columns.Contains(name))
+        if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
         var definition = new MeasureDefinition { Name = name, Table = Name, Expression = expression, Format = format ?? MeasureFormat.General };
         Model.MeasureDefinitions.Add(definition);
         var measure = new ModelMeasure(this, definition);
         _measures.Add(measure);
         return measure;
+    }
+
+    /// <summary>
+    /// Adds a calculated column, like one created in Power Pivot by typing a formula into the empty column. The file holds only the
+    /// formula, not the values: Excel calculates them the first time a PivotTable uses the column. The library does not parse the
+    /// expression, so a mistake shows up in Excel, not here.
+    /// </summary>
+    /// <remarks>
+    /// Written the way Excel saves a calculated column it has not calculated yet; only that case has been seen in an Excel-written
+    /// file, so saving requires a model with a hierarchy and a relationship in which this table is the many side, no date table, no
+    /// hidden columns, at most one calculated column in the model, and a table of a single segment. Only <see cref="ColumnDataType.Currency"/> is supported.
+    /// </remarks>
+    /// <param name="name">Column name; unique among this table's columns, calculated columns, measures and hierarchies, and without [ or ].</param>
+    /// <param name="expression">DAX expression, with or without the leading "=", for example <c>[Qty]*[Amount]</c>.</param>
+    /// <param name="dataType">Data type of the result; only <see cref="ColumnDataType.Currency"/> so far.</param>
+    /// <returns>The calculated column.</returns>
+    /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters; the expression
+    /// is empty; or the data type is not supported yet.</exception>
+    public ModelCalculatedColumn AddCalculatedColumn(string name, string expression, ColumnDataType dataType)
+    {
+        Model.ThrowIfDisposed();
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Column name is required.", nameof(name));
+        if (name.IndexOfAny(new[] { '[', ']' }) >= 0)
+            throw new ArgumentException($"Column name '{name}' must not contain [ or ].", nameof(name));
+        name = Identifiers.SanitizeName(name, "Column");
+        if (name.StartsWith("__", StringComparison.Ordinal))
+            throw new ArgumentException("Column names starting with '__' are reserved.", nameof(name));
+        if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("A DAX expression is required.", nameof(expression));
+        expression = expression.Trim();
+        if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
+        if (expression.Length == 0) throw new ArgumentException("A DAX expression is required.", nameof(expression));
+        if (dataType != ColumnDataType.Currency)
+            throw new ArgumentException($"Calculated columns of type {dataType} are not supported yet: only Currency was seen in an Excel-written file.", nameof(dataType));
+        if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
+        if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)
+            throw new ArgumentException($"A measure named '{name}' already exists ({taken}); a column cannot share its name.", nameof(name));
+        if (_hierarchies.Any(h => string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{Name}' already has a hierarchy named '{name}'.", nameof(name));
+        var column = new ModelCalculatedColumn(this, Builder.AddCalculatedColumn(name, expression, dataType));
+        _calculatedColumns.Add(column);
+        return column;
     }
 
     /// <summary>
@@ -164,7 +210,7 @@ public sealed class ModelTable
         if (levels.Length < 2) throw new ArgumentException("A hierarchy needs at least two levels.", nameof(levels));
         if (_hierarchies.Any(h => string.Equals(h.Name, modelName, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a hierarchy named '{modelName}'.", nameof(name));
-        if (Columns.Contains(modelName))
+        if (Columns.Contains(modelName) || _calculatedColumns.Any(c => string.Equals(c.Name, modelName, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{modelName}'; a hierarchy needs its own name.", nameof(name));
         var columns = new List<ModelColumn>();
         foreach (var level in levels)
