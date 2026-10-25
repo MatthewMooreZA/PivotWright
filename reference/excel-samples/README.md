@@ -15,3 +15,5 @@ All files were saved by desktop Excel 365 (Windows, en-ZA) from models first gen
 | `H9_hide_one_hierarchy_level.xlsx` | V2b with only Products[Product], a hierarchy level, hidden (SPEC §8) |
 | `H8e_hide_one_column_with_edits.xlsx`, `H9e_hide_one_hierarchy_level_with_edits.xlsx` | H8 and H9 after further edits in Excel (a second hierarchy, more hidden columns): Excel can edit its own hidden-column files, which our generated equivalents could not (SPEC §8) |
 
+| `H6_calculated_column.xlsx` | `calcbase_v1` (the standard Products/Dates/Sales model) with Sales[Line Total] `=[Qty]*[Amount]` added in Power Pivot: the ground truth for calculated columns |
+| `H7_calculated_column_related.xlsx` | the same base with `=RELATED(Products[Category])` added to Sales; the column kept Excel's default name "Calculated Column 1" |
