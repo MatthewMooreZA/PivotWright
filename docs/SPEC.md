@@ -179,7 +179,19 @@ Only the configuration of `H2` has been seen, so `ModelSerializer.ValidateDateTa
 
 **No "create from scratch" case**: Excel cannot create a date table by itself; a date table is always an existing table that was marked (Matthew, 2026-10-11).
 
-## 10. Not understood (open)
+## 10. Calculated columns (observed in `H6`, `H7`, `H10`; not implemented)
+
+Base for all three: `calcbase_v1` (the standard Products/Dates/Sales model). H6: Sales `Line Total` = `[Qty]*[Amount]`. H7: Sales `RELATED(Products[Category])` (Excel's default name "Calculated Column 1"). H10: as H6 but saved in Manual Calculation Mode without Calculate Now.
+
+- **Formula**: an `ExpressionBinding` in the dimension attribute's `KeyColumn` and `NameColumn` (`<Expression>[Qty]*[Amount]</Expression>`; `DataType` Empty/WChar, `DataSize` 0, `NullProcessing` Automatic). The measure-group file (`.det.xml`) has the attribute with an empty `<Expression/>` for H6/H10 and the formula for H7. The dimension also gets an `AttributeRelationship` (Flexible, Many, Mandatory) and the cube a matching `Attribute`.
+- **Type and format**: `ddl200:InferredDatatype` (Currency for H6) plus a `Format` annotation and `ddl300_300:FormatString`. Excel infers both from the formula; PivotWright has to take or default them.
+- **tbl.xml**: an `XMRawColumn` with `ColumnFlags` 8 and `Settings` 3073 (plain columns: 0 and their own value); column `Locale` 7177. The table's `Version` and `Settings` change as for any added column.
+- **Calculated (H6, H7)**: the column is stored like a normal one (`.idf`, `.dictionary`, `H$<table>$<column>` table with `ID_TO_POS` and `POS_TO_ID`), both processing states `Processed`.
+- **Unprocessed (H10)**: both processing states `Unprocessed`; no dictionary and no `H$` table; a 152-byte `.idf` stub; the intrinsic hierarchy has `IsProcessed` false and `-1` for `ColumnPosition2DataID`, `ColumnDataID2Position`, `DistinctDataIDs`; `HasNulls` true, `RowCount` 1000. Matthew's finding (2026-10-25): in Excel the H10 values showed blank with a warning mark in the Power Pivot window, but **inserting a PivotTable showed the values**, so Excel calculates the column on demand. This is why the caller supplies only the formula, not the values.
+- **Counters**: the cube, the measure groups, the partitions, the script and the Sales dimension and table all move to new versions (compare H6/H10 with the base using `tools/python/xd.py`); the Sales dimension's `DataIDVersion` and `IncDataIDVersion` go from 1 to 2. Exact rules still to be derived.
+- **Open**: whether a generated automatic-mode file with the unprocessed column also calculates on demand (H10 was saved in manual mode and no model file records the mode); formula types other than currency; `RELATED` columns; what happens when the formula is invalid.
+
+## 11. Not understood (open)
 
 1. Why a real measure is required before Sort by Column/Create Hierarchy on relationship models.
 2. Why statistics changed one field group at a time behaved inconsistently; why many-side version must be exactly 2 (3 with hierarchies).
