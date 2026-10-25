@@ -162,7 +162,7 @@ public sealed class ModelTable
     /// <para>
     /// Written the way Excel saves calculated columns it has not calculated yet; only some shapes have been seen in Excel-written
     /// files, so saving requires a model with relationships, no date table, no hidden columns, a table of a single segment, and
-    /// one to four columns on the many-side table and at most one column on a table that is the primary side of a relationship (with a hierarchy, or in a model without hierarchies). Other combinations make <c>Save</c> throw.
+    /// any number of columns on the many-side table and at most one column on a table that is the primary side of a relationship (with a hierarchy, or in a model without hierarchies). Other combinations make <c>Save</c> throw.
     /// </para>
     /// </remarks>
     /// <param name="name">Column name; unique among this table's columns, calculated columns, measures and hierarchies, and without [ or ].</param>

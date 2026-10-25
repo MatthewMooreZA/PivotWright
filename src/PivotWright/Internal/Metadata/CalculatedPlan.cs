@@ -16,7 +16,9 @@ internal sealed class CalculatedTableFacts
 /// How Excel numbers the objects of a hierarchy model after calculated columns were added in manual calculation mode. Only the
 /// shapes of Excel's H10, H12 to H15 and H18 to H20 samples are known; <see cref="Create"/> refuses the others. The counters
 /// of one column on the many-side table are those of H10, which are Excel-verified for generated files; the others are fitted to
-/// H18 (two columns on one table), H19 (one on a primary-side hierarchy table) and H20 (one on each). A model without a hierarchy has
+/// H18 (two columns on one table), H19 (one on a primary-side hierarchy table) and H20 (one on each), and to H25 to H28 (three and
+/// four columns): every counter grows by a fixed step per column on the many-side table, so any number of columns is written by
+/// formula (Excel's samples go up to four with a hierarchy and three without). A model without a hierarchy has
 /// its own numbers (H21 to H24, the same four shapes).
 /// </summary>
 internal sealed class CalculatedPlan
@@ -45,14 +47,11 @@ internal sealed class CalculatedPlan
     public bool Resaved(string tableId) => Tables.ContainsKey(tableId);
     public bool HoldsColumns(string tableId) => Tables.TryGetValue(tableId, out var f) && f.HoldsColumns;
 
-    /// <summary>Most columns on the many-side table; Excel's samples go up to four (H26), and the counters grow in a straight line.</summary>
-    private const int MaxOnManySide = 4;
-
     private const string Seen =
-        "The shapes seen in Excel-written files are: one to four columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and both together.";
+        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and both together.";
 
     private const string SeenPlain =
-        "The shapes seen in Excel-written files are: one to four columns on the many-side table, one column on a primary-side table, and both together.";
+        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one column on a primary-side table, and both together.";
 
     public static CalculatedPlan? Create(IReadOnlyList<TableBuilder> tables, IReadOnlyList<RelationshipDefinition> relationships,
         IReadOnlyList<HierarchyDefinition> hierarchies)
@@ -90,8 +89,8 @@ internal sealed class CalculatedPlan
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
-        if (many.Count > 1 || primary.Count > 1 || (many.Count == 1 && many[0].CalculatedColumns.Count > MaxOnManySide))
-            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file (at most {MaxOnManySide} on the many-side table and one on a primary-side table). " + seen);
+        if (many.Count > 1 || primary.Count > 1)
+            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file (at most one many-side table and one primary-side table can hold columns). " + seen);
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();

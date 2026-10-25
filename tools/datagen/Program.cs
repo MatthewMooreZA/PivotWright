@@ -67,15 +67,21 @@ if (args.Length > 2 && args[2] == "calc")
     };
     s.AddCalculatedColumn(calcName, calcFormula, calcType);
 }
-// calc2, calc3, calc4: that many columns on Sales (H18, H25, H26); calcp: one on Products (H19); calcsp: one on Sales and one on
-// Products (H20); calc2p: two on Sales and one on Products (H27). Add "plain" for a model without hierarchies.
+// calcN: N columns on Sales (calc2 is H18, calc3 H25, calc4 H26); calcp: one on Products (H19); calcsp: one on Sales and one on
+// Products (H20); calcNp: N on Sales and one on Products (calc2p is H27). Add "plain" for a model without hierarchies.
 var salesColumns = new[]
 {
     ("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency), ("Double Qty", "[Qty]*2", ColumnDataType.Int64),
     ("Triple Qty", "[Qty]*3", ColumnDataType.Int64), ("Quad Qty", "[Qty]*4", ColumnDataType.Int64),
 };
 string calcMode = args.Length > 2 ? args[2] : "";
-int onSales = calcMode switch { "calc2" or "calc2p" => 2, "calc3" => 3, "calc4" => 4, "calcsp" => 1, _ => 0 };
-for (int n = 0; n < onSales; n++) s.AddCalculatedColumn(salesColumns[n].Item1, salesColumns[n].Item2, salesColumns[n].Item3);
-if (calcMode is "calcp" or "calcsp" or "calc2p") p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+// calcN (N columns on Sales), calcNp (N on Sales and one on Products), calcp, calcsp
+var countMatch = System.Text.RegularExpressions.Regex.Match(calcMode, @"^calc(\d+)(p?)$");
+int onSales = countMatch.Success ? int.Parse(countMatch.Groups[1].Value) : calcMode == "calcsp" ? 1 : 0;
+for (int n = 0; n < onSales; n++)
+{
+    var (name, formula, type) = n < salesColumns.Length ? salesColumns[n] : ($"Qty x{n + 1}", $"[Qty]*{n + 1}", ColumnDataType.Int64);
+    s.AddCalculatedColumn(name, formula, type);
+}
+if (calcMode is "calcp" or "calcsp" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

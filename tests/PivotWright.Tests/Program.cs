@@ -1175,6 +1175,16 @@ namespace PivotWright.Tests
             Check.Equal("2,3,3,3,", Counters(mixed, @"Sales_G\.9\.dim\.xml$"), "mixed: Sales dimension counters");
             Check.Equal("3,2,2,3,", Counters(mixed, @"Products_G\.9\.dim\.xml$"), "mixed: Products dimension counters");
 
+            // Beyond the samples (four columns): the same straight lines.
+            var ten = Save((p, s) =>
+            {
+                for (int i = 0; i < 10; i++) s.AddCalculatedColumn("Calc " + i, "[Qty]*" + i, ColumnDataType.Int64);
+            });
+            Find(ten, @"Model\.59\.cub\.xml$");
+            Check.Equal("10,11,11,11,", Counters(ten, @"Sales_G\.33\.dim\.xml$"), "ten columns: Sales dimension counters");
+            Find(ten, @"\.0\.dim\\Sales_G\.11\.tbl\.xml$");
+            Check.Equal(152, ten.Find(@"\.0\.dim\\11\.Sales_G\.Calc 9\.0\.idf$").Length, "tenth column file");
+
             // H19: one column on the hierarchy table that is the primary side; Sales is not touched.
             var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
             Find(primary, @"Model\.23\.cub\.xml$");
@@ -1312,15 +1322,11 @@ namespace PivotWright.Tests
                 Rejects<ArgumentException>(() => sales.AddMeasure("Line Total", "1"), "measure named like a calculated column");
                 Rejects<ArgumentException>(() => products.AddHierarchy("Product Hierarchy", "Category", "Product"), "duplicate hierarchy");
                 Saves(model);
-                // A column on the primary side as well is a shape Excel was seen to write (H20, H27); so are up to four on the many side (H26).
+                // A column on the primary side as well is a shape Excel was seen to write (H20, H27); so are many on the many side (H26).
                 products.AddCalculatedColumn("Other", "1", ColumnDataType.Int64);
                 Saves(model);
-                sales.AddCalculatedColumn("Third", "2", ColumnDataType.Int64);
-                sales.AddCalculatedColumn("Fourth", "3", ColumnDataType.Int64);
-                sales.AddCalculatedColumn("Fifth", "4", ColumnDataType.Int64);
+                for (int i = 0; i < 12; i++) sales.AddCalculatedColumn("More " + i, "2", ColumnDataType.Int64);
                 Saves(model);
-                sales.AddCalculatedColumn("Sixth", "5", ColumnDataType.Int64);
-                Rejects<InvalidOperationException>(() => Saves(model), "five columns on the many-side table");
             }
             var (twoOnProducts, twoProducts, _) = CalcModel();
             using (twoOnProducts)
