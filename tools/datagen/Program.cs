@@ -84,6 +84,12 @@ for (int n = 0; n < onSales; n++)
     var (name, formula, type) = n < salesColumns.Length ? salesColumns[n] : ($"Qty x{n + 1}", $"[Qty]*{n + 1}", ColumnDataType.Int64);
     s.AddCalculatedColumn(name, formula, type);
 }
+// calch: hide Sales[Qty] and add Line Total (H33); calchl: hide Products[Product], a hierarchy level, and add Line Total (H36);
+// calchc: add Line Total and hide it (H35 shows the calc-then-hide order, which also drops two information files)
+if (calcMode is "calch" or "calchl" or "calchc") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+if (calcMode == "calch") s["Qty"].IsHidden = true;
+if (calcMode == "calchl") p["Product"].IsHidden = true;
+if (calcMode == "calchc") s.CalculatedColumns[0].IsHidden = true;
 // calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32; with "datetable"); calcpd: one on Products and one on Dates
 if (calcMode is "calcd" or "calcsd" or "calcpd" or "calcdh") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
 // calcdh: calcd plus a hierarchy Year > Year Month over the calculated column (H31B; with "datetable")

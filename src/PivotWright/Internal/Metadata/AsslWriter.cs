@@ -66,7 +66,7 @@ internal sealed class ModelInfo
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
     public int CubeVersion => Calc?.Cube ?? (AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
-    public int MeasureGroupVersion => HiddenProfile ? 20 : CubeVersion;
+    public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? 20 : CubeVersion);
     public int ScriptVersion => Calc?.Script ?? (AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>True when Excel saved the table's dimension again after an edit (H10), which drops the empty annotation values.</summary>
@@ -405,7 +405,7 @@ internal static class AsslWriter
           .Append(c.DataType == ColumnDataType.Boolean ? "<Format Format=\"Boolean\" xmlns=\"\"/>" : AttributeFormat(c.DataType, m.Culture, m.Lcid))
           .Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
         sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
-        AttributeCommon(sb, visible: true, processed: false);
+        AttributeCommon(sb, visible: !c.IsHidden, processed: false);
         sb.Append("<ddl200:InferredDatatype>").Append(InferredDatatype(c.DataType)).Append("</ddl200:InferredDatatype>");
         string expression = "<Source xsi:type=\"ddl200_200:ExpressionBinding\"><Expression>" + E(c.Expression) + "</Expression></Source>";
         sb.Append("<KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</KeyColumn></KeyColumns>");
@@ -477,7 +477,8 @@ internal static class AsslWriter
                   .Append("</AttributeHierarchyVisible><AttributeHierarchyOptimizedState>FullyOptimized</AttributeHierarchyOptimizedState></Attribute>");
             }
             foreach (var c in t.CalculatedColumns)
-                sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><AggregationUsage>Default</AggregationUsage><AttributeHierarchyEnabled>true</AttributeHierarchyEnabled><AttributeHierarchyVisible>true</AttributeHierarchyVisible><AttributeHierarchyOptimizedState>FullyOptimized</AttributeHierarchyOptimizedState></Attribute>");
+                sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><AggregationUsage>Default</AggregationUsage><AttributeHierarchyEnabled>true</AttributeHierarchyEnabled><AttributeHierarchyVisible>")
+                  .Append(c.IsHidden ? "false" : "true").Append("</AttributeHierarchyVisible><AttributeHierarchyOptimizedState>FullyOptimized</AttributeHierarchyOptimizedState></Attribute>");
             sb.Append("</Attributes>");
             if (t.Hierarchies.Count == 0) sb.Append("<Hierarchies/>");
             else

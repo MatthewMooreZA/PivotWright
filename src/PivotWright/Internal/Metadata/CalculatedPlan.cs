@@ -26,6 +26,8 @@ internal sealed record CalculatedTableFacts
 internal sealed record CalculatedPlan
 {
     public required int Cube { get; init; }
+    /// <summary>Object version of the measure groups when it differs from the cube's: one step behind after a hide operation (H33).</summary>
+    public int? MeasureGroup { get; init; }
     public required int CubeStructure { get; init; }
     public required int MeasureGroupStructure { get; init; }
     public required int MeasureGroupCache { get; init; }
@@ -63,6 +65,16 @@ internal sealed record CalculatedPlan
     {
         var plan = CreateWithoutHierarchies(tables, relationships, hierarchies);
         if (plan is null) return null;
+        // A hide operation on top of the calculated columns: the cube two steps ahead and the measure groups one step behind it, and the
+        // dimension of every table with a hidden column one step up (H33 to H36, which are the straight-line fit plus these steps).
+        var hidden = tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Any(c => c.IsHidden)).ToList();
+        if (hidden.Count > 0)
+        {
+            var facts = new Dictionary<string, CalculatedTableFacts>(plan.Tables);
+            foreach (var t in hidden)
+                if (facts.TryGetValue(t.Id, out var f)) facts[t.Id] = f with { DimensionVersion = f.DimensionVersion + 1 };
+            plan = plan with { Cube = plan.Cube + 2, MeasureGroup = plan.Cube + 1, Tables = facts };
+        }
         // Hierarchies over calculated columns are a further edit each (H31B): the cube, the measure groups, the partitions and the script
         // step up, the table with the hierarchy takes two more table and data versions and three more dimension versions, and the primary
         // side of the first relationship is saved once more. One such hierarchy was seen; more are taken as repeated edits.
@@ -88,7 +100,7 @@ internal sealed record CalculatedPlan
             if (relationships.Any(r => r.From == t) && t.CalculatedColumns.Count == 0) groupData[t.Id] = 1;
         return plan with
         {
-            Cube = plan.Cube + 7 * count, CubeStructure = plan.CubeStructure + 5 * count,
+            Cube = plan.Cube + 7 * count, MeasureGroup = plan.MeasureGroup is { } previous ? previous + 7 * count : null, CubeStructure = plan.CubeStructure + 5 * count,
             MeasureGroupStructure = plan.MeasureGroupStructure + 3 * count, MeasureGroupCache = plan.MeasureGroupCache + 3 * count,
             Partition = plan.Partition + 3 * count, Script = plan.Script + 3 * count,
             Tables = tablesFacts, MeasureGroupData = groupData, CubeInfo = false,
@@ -102,8 +114,10 @@ internal sealed record CalculatedPlan
         if (holders.Count == 0) return null;
         int total = holders.Sum(t => t.CalculatedColumns.Count);
         string what = $"'{holders[0].Name}[{holders[0].CalculatedColumns[0].Name}]'";
-        if (tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden)))
-            throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with hidden columns yet.");
+        // Hidden columns (data columns or the calculated column itself) were seen in the hierarchy model without a date table only (H33 to H36).
+        var hiddenTables = tables.Where(t => t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Any(c => c.IsHidden)).ToList();
+        if (hiddenTables.Count > 0 && (hierarchies.Count == 0 || tables.Any(t => t.DateColumn is not null)))
+            throw new InvalidOperationException($"{what} is a calculated column in a model with hidden columns, which was only seen in a model with a hierarchy and no date table (no Excel sample of the other cases exists yet).");
 
         bool plain = hierarchies.Count == 0;
         var dateTable = tables.FirstOrDefault(t => t.DateColumn is not null);
@@ -146,7 +160,7 @@ internal sealed record CalculatedPlan
 
         // One column on the many-side table in a model with a hierarchy: H10, with the extra step Excel took when the calculation
         // mode was switched in that session.
-        if (!plain && !date && total == 1 && many.Count == 1)
+        if (!plain && !date && total == 1 && many.Count == 1 && hiddenTables.Count == 0)
         {
             var t = many[0];
             facts[t.Id] = new CalculatedTableFacts { DimensionVersion = 7, DimensionCounters = (1, 2, 2, 3), TableVersion = 3, HoldsColumns = true };

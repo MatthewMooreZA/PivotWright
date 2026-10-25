@@ -60,6 +60,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated column: the six data types as Excel infers them (H10 to H15)", Tests.CalculatedColumnTypes),
     ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
     ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
+    ("Calculated columns with hidden columns: hide a data column, a level, or the calculated column (H33 to H36)", Tests.CalculatedColumnsWithHiddenColumns),
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
     ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
@@ -1495,13 +1496,68 @@ namespace PivotWright.Tests
                 other.AddCalculatedColumn("C", "1", ColumnDataType.Int64);
                 Rejects<InvalidOperationException>(() => Saves(lonely), "table without hierarchy that is not on the many side");
             }
-            var (hidden, _, hiddenSales) = CalcModel();
+            // Hidden columns next to a calculated column were seen in the hierarchy model only (H33 to H36).
+            var (hidden, _, hiddenSales) = CalcModel(hierarchy: false);
             using (hidden)
             {
                 hiddenSales.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
                 hiddenSales["ProductKey"].IsHidden = true;
-                Rejects<InvalidOperationException>(() => Saves(hidden), "hidden columns");
+                Rejects<InvalidOperationException>(() => Saves(hidden), "hidden columns in a model without hierarchies");
             }
+        }
+
+        // H33 (hide Sales[Qty], then add a calculated column), H36 (hide a hierarchy level) and H35 (hide the calculated column itself).
+        public static void CalculatedColumnsWithHiddenColumns()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, products, sales) = CalcModel();
+                using (model)
+                {
+                    add(products, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            var salesHidden = Save((p, s) =>
+            {
+                s["Qty"].IsHidden = true;
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+            });
+            Find(salesHidden, @"Model\.25\.cub\.xml$");
+            Find(salesHidden, @"Sales_G\.24\.det\.xml$");
+            Check.Equal("1,2,2,2,", Counters(salesHidden, @"Sales_G\.7\.dim\.xml$"), "Sales dimension counters");
+            Find(salesHidden, @"Products_G\.6\.dim\.xml$");
+            Find(salesHidden, @"\.0\.dim\\Sales_G\.2\.tbl\.xml$");
+
+            var levelHidden = Save((p, s) =>
+            {
+                p["Product"].IsHidden = true;
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+            });
+            Find(levelHidden, @"Model\.25\.cub\.xml$");
+            Find(levelHidden, @"Products_G\.7\.dim\.xml$");
+            Find(levelHidden, @"Sales_G\.6\.dim\.xml$");
+
+            var calcHidden = Save((p, s) =>
+            {
+                var total = s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                total.IsHidden = true;
+                Check.True(total.IsHidden, "IsHidden reads back");
+            });
+            string dim = Find(calcHidden, @"Sales_G\.7\.dim\.xml$");
+            int at = dim.IndexOf("<Attribute><Name>Line Total</Name>", StringComparison.Ordinal);
+            string attribute = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+            Check.True(attribute.Contains("<AttributeHierarchyVisible>false</AttributeHierarchyVisible>"), "hidden attribute in the dimension");
+            string cube = Find(calcHidden, @"Model\.25\.cub\.xml$");
+            int cubeAt = cube.IndexOf("<AttributeID>Line Total</AttributeID>", StringComparison.Ordinal);
+            Check.True(cube[cubeAt..].Contains("<AttributeHierarchyVisible>false</AttributeHierarchyVisible>") &&
+                       cube[cubeAt..cube.IndexOf("</Attribute>", cubeAt, StringComparison.Ordinal)].Contains("false"), "hidden attribute in the cube");
         }
 
         public static void DistinctOrdinals()

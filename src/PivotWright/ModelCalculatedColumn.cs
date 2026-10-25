@@ -27,6 +27,20 @@ public sealed class ModelCalculatedColumn
     /// <summary>Data type of the values Excel calculates.</summary>
     public ColumnDataType DataType => _definition.DataType;
 
+    /// <summary>
+    /// Hides the column from client tools, like Power Pivot's "Hide from Client Tools": it stays in the model but is not listed in the
+    /// PivotTable field list. Written as in Excel's H35 sample.
+    /// </summary>
+    public bool IsHidden
+    {
+        get => _definition.IsHidden;
+        set
+        {
+            Table.Model.ThrowIfDisposed();
+            _definition.IsHidden = value;
+        }
+    }
+
     /// <summary>The column in DAX notation, for example <c>'Sales'[Line Total]</c>.</summary>
     public override string ToString() => $"'{Table.Name.Replace("'", "''")}'[{Name}]";
 }
