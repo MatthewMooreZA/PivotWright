@@ -160,9 +160,9 @@ public sealed class ModelTable
     /// <b>Limitation:</b> until Excel has calculated the column it can be a value in a PivotTable but not a row, column or filter
     /// field. The user puts it in Values once, or clicks Calculate Now in Power Pivot; Refresh All does not calculate it.
     /// <para>
-    /// Written the way Excel saves a calculated column it has not calculated yet; only that case has been seen in an Excel-written
-    /// file, so saving requires a model with a hierarchy and a relationship in which this table is the many side, no date table, no
-    /// hidden columns, at most one calculated column in the model, and a table of a single segment.
+    /// Written the way Excel saves calculated columns it has not calculated yet; only some shapes have been seen in Excel-written
+    /// files, so saving requires a model with a hierarchy, no date table, no hidden columns, a table of a single segment, and
+    /// one column on the many-side table, two columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, or one column on each of those two tables. Other combinations make <c>Save</c> throw.
     /// </para>
     /// </remarks>
     /// <param name="name">Column name; unique among this table's columns, calculated columns, measures and hierarchies, and without [ or ].</param>

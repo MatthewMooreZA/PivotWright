@@ -397,7 +397,7 @@ internal static class TableXmlWriter
                 o.Open($"XMHashDataDictionary{LT}XM_{StoredType(col.DataType)}>");
                 o.Properties(p =>
                 {
-                    p.Int("DataVersion", 3).Int("LastId", DataIds.Null).Bool("Nullable", true).Bool("Unique", false);
+                    p.Int("DataVersion", col.Versions.Dictionary).Int("LastId", DataIds.Null).Bool("Nullable", true).Bool("Unique", false);
                     if (col.DataType == ColumnDataType.String) p.Long("DictionaryFlags", 3);
                     else if (StoredType(col.DataType) == XmType.Long) p.Bool("OperatingOn32", true);
                 });
@@ -405,8 +405,8 @@ internal static class TableXmlWriter
             });
             d.DataObject(o =>
             {
-                o.Open("XMRawColumnPartitionDataObject", FileNames.CalculatedIdf(t.Id, col.Id));
-                o.Properties(p => p.Int("DataVersion", 2).Int("Partition", 0).Int("SegmentCount", 1));
+                o.Open("XMRawColumnPartitionDataObject", FileNames.CalculatedIdf(t.Id, col.Id, col.Versions.Prefix));
+                o.Properties(p => p.Int("DataVersion", col.Versions.File).Int("Partition", 0).Int("SegmentCount", 1));
                 o.Close();
             });
         });

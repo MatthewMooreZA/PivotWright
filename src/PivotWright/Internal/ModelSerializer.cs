@@ -63,31 +63,14 @@ internal sealed class ModelSerializer
         }
     }
 
-    // A calculated column is written the way Excel saves one added in manual calculation mode, to a model with hierarchies and
-    // relationships (H10, SPEC section 10). Any other shape was never seen in an Excel-written file, so it is refused.
-    private void ValidateCalculatedColumns()
-    {
-        var withColumns = _tables.Where(t => t.CalculatedColumns.Count > 0).ToList();
-        if (withColumns.Count == 0) return;
-        var table = withColumns[0];
-        var column = table.CalculatedColumns[0];
-        string what = $"'{table.Name}[{column.Name}]'";
-        if (withColumns.Count > 1 || table.CalculatedColumns.Count > 1)
-            throw new InvalidOperationException($"{what} is a calculated column, but only one calculated column per model is supported so far (Excel's counters were seen for one only).");
-        if (_hierarchies.Count == 0)
-            throw new InvalidOperationException($"{what} is a calculated column, which is only supported for models that have a hierarchy (no Excel sample of the other case exists yet).");
-        if (!_relationships.Any(r => r.From == table))
-            throw new InvalidOperationException($"{what} is a calculated column, which is only supported on the many side of a relationship ('{table.Name}' has none).");
-        if (_tables.Any(t => t.DateColumn is not null))
-            throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with a date table yet.");
-        if (_tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden)))
-            throw new InvalidOperationException($"{what} is a calculated column, which is not supported together with hidden columns yet.");
-    }
-
     public void Write(Stream output)
     {
         ValidateDateTables();
-        ValidateCalculatedColumns();
+        var calc = CalculatedPlan.Create(_tables, _relationships, _hierarchies);
+        if (calc is not null)
+            foreach (var table in _tables)
+                foreach (var column in table.CalculatedColumns)
+                    column.Versions = calc.Columns[(table.Id, column.Id)];
         var now = DateTime.UtcNow;
         // Excel names the database with 20 upper-case hex digits. A GUID here loads and pivots fine, but Excel
         // then fails to edit the model (Create Hierarchy -> "ASDetail::OnClone2") once a table has two relationships.
@@ -130,9 +113,7 @@ internal sealed class ModelSerializer
             DateTables = _tables.Where(t => t.DateColumn is not null).Select(t => t.Id).ToHashSet(),
             HiddenTables = hiddenTables,
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
-            CalculatedTables = _tables.Where(t => t.CalculatedColumns.Count > 0).Select(t => t.Id).ToHashSet(),
-            ResavedTables = _tables.Where(t => t.CalculatedColumns.Count > 0)
-                .Select(t => _relationships.First(r => r.From == t).To.Id).ToHashSet(),
+            Calc = calc,
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);
@@ -214,7 +195,7 @@ internal sealed class ModelSerializer
             var dim = Group(BackupLog.ClassDimension, t.Id, t.Name, dv, dimFolder, tableIds[t.Id].DimensionObjectId);
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", AsslWriter.Dimension(Info, t, names, size, dv));
-            if (!Info.HierarchyTables.Contains(t.Id)) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
+            if (!Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HoldsColumns(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
             dim.Files.AddRange(files);
         }
 
@@ -228,7 +209,7 @@ internal sealed class ModelSerializer
     }
 
     // After a calculated column was added Excel keeps the partition information of the table that holds it only (H10).
-    private bool HasPartitionInfo(string tableId) => !Info.CalculatedProfile || Info.CalculatedTables.Contains(tableId);
+    private bool HasPartitionInfo(string tableId) => Info.Calc is null || (Info.Calc.PartitionInfo && Info.Calc.HoldsColumns(tableId));
 
     private FileGroup Group(int cls, string id, string name, int version, string path, string objectId)
     {

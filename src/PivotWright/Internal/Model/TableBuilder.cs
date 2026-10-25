@@ -39,6 +39,7 @@ internal sealed class EncodedCalculatedColumn
     public required string Expression { get; init; }
     public required ColumnDataType DataType { get; init; }
     public required long Rows { get; init; }
+    public required (int Prefix, int Dictionary, int File) Versions { get; init; }
 }
 
 /// <summary>Collects the rows of one table.</summary>
@@ -295,9 +296,9 @@ internal sealed class TableBuilder : IDisposable
         {
             if (Rows > segmentSize)
                 throw new InvalidOperationException($"'{Name}[{c.Name}]' is a calculated column, which is only supported for tables of one segment ({segmentSize:N0} rows); '{Name}' has {Rows:N0} rows (no Excel sample of a calculated column on a larger table exists yet).");
-            using (var idf = sink.Create(FileNames.CalculatedIdf(Id, c.Id)))
+            using (var idf = sink.Create(FileNames.CalculatedIdf(Id, c.Id, c.Versions.Prefix)))
                 idf.Write(UnprocessedColumn.Segment(Rows));
-            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows });
+            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions });
         }
         var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
         result.CalculatedColumns.AddRange(calculated);

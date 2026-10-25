@@ -67,4 +67,8 @@ if (args.Length > 2 && args[2] == "calc")
     };
     s.AddCalculatedColumn(calcName, calcFormula, calcType);
 }
+// calc2: two columns on Sales (H18); calcp: one on Products (H19); calcsp: one on Sales and one on Products (H20)
+if (args.Length > 2 && args[2] is "calc2" or "calcsp") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+if (args.Length > 2 && args[2] == "calc2") s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+if (args.Length > 2 && args[2] is "calcp" or "calcsp") p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

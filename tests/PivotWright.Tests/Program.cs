@@ -58,6 +58,7 @@ var tests = new (string Name, Action Body)[]
     ("API: a failed Save leaves an existing file untouched", Tests.ApiSaveIsAtomic),
     ("Calculated column: formula, no values, counters as Excel saves them (H10)", Tests.CalculatedColumnProfile),
     ("Calculated column: the six data types as Excel infers them (H10 to H15)", Tests.CalculatedColumnTypes),
+    ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
 };
 
@@ -1106,6 +1107,63 @@ namespace PivotWright.Tests
             }
         }
 
+        // The counters of Excel's H18 (two columns on Sales), H19 (one on Products) and H20 (one on each); xd.py and the file lists of
+        // generated files (tools/datagen calc2, calcp, calcsp) agree with them.
+        public static void CalculatedColumnShapes()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, products, sales) = CalcModel();
+                using (model)
+                {
+                    add(products, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            // H18: two columns on the many-side table.
+            var two = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+            });
+            Find(two, @"Model\.27\.cub\.xml$");
+            Check.Equal("2,3,3,3,", Counters(two, @"Sales_G\.9\.dim\.xml$"), "Sales dimension counters");
+            Find(two, @"Products_G\.6\.dim\.xml$");
+            Find(two, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+            Check.Equal(152, two.Find(@"\.0\.dim\\2\.Sales_G\.Line Total\.0\.idf$").Length, "first column file");
+            Check.Equal(152, two.Find(@"\.0\.dim\\3\.Sales_G\.Double Qty\.0\.idf$").Length, "second column file");
+            Check.Equal(0, two.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "no partition information");
+            Check.True(Find(two, @"Model\.27\.cub\.xml$").Contains("<StructureVersion>21</StructureVersion>"), "cube structure");
+
+            // H19: one column on the hierarchy table that is the primary side; Sales is not touched.
+            var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
+            Find(primary, @"Model\.23\.cub\.xml$");
+            Check.Equal("3,2,2,3,", Counters(primary, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+            Find(primary, @"Sales_G\.3\.dim\.xml$");
+            Find(primary, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+            Find(primary, @"\.0\.dim\\Sales_G\.0\.tbl\.xml$");
+            Check.Equal(152, primary.Find(@"\.0\.dim\\3\.Products_G\.Name Length\.0\.idf$").Length, "column file");
+            Find(primary, @"Products_G\.0\.dim\\info\.9\.xml$");
+
+            // H20: one column on each.
+            var both = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            });
+            Find(both, @"Model\.27\.cub\.xml$");
+            Check.Equal("1,2,2,2,", Counters(both, @"Sales_G\.6\.dim\.xml$"), "Sales dimension counters");
+            Check.Equal("3,2,2,3,", Counters(both, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+            Find(both, @"\.0\.dim\\Sales_G\.2\.tbl\.xml$");
+            Find(both, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+        }
+
         public static void CalculatedColumnValidation()
         {
             void Rejects<T>(Action a, string what) where T : Exception
@@ -1132,9 +1190,18 @@ namespace PivotWright.Tests
                 Rejects<ArgumentException>(() => sales.AddMeasure("Line Total", "1"), "measure named like a calculated column");
                 Rejects<ArgumentException>(() => products.AddHierarchy("Product Hierarchy", "Category", "Product"), "duplicate hierarchy");
                 Saves(model);
-                // One calculated column per model so far: the counters of more were never seen.
-                products.AddCalculatedColumn("Other", "1", ColumnDataType.Currency);
-                Rejects<InvalidOperationException>(() => Saves(model), "two calculated columns");
+                // A second column on the primary side is a shape Excel was seen to write (H20); a third column is not.
+                products.AddCalculatedColumn("Other", "1", ColumnDataType.Int64);
+                Saves(model);
+                sales.AddCalculatedColumn("Third", "2", ColumnDataType.Int64);
+                Rejects<InvalidOperationException>(() => Saves(model), "three calculated columns");
+            }
+            var (twoOnProducts, twoProducts, _) = CalcModel();
+            using (twoOnProducts)
+            {
+                twoProducts.AddCalculatedColumn("A", "1", ColumnDataType.Int64);
+                twoProducts.AddCalculatedColumn("B", "2", ColumnDataType.Int64);
+                Rejects<InvalidOperationException>(() => Saves(twoOnProducts), "two columns on a hierarchy table");
             }
 
             // Without a hierarchy, or on a table that is not the many side of a relationship, the case was never seen in Excel.
@@ -1148,11 +1215,13 @@ namespace PivotWright.Tests
                 b.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
                 Rejects<InvalidOperationException>(() => Saves(noHierarchy), "no hierarchy");
             }
-            var (oneSide, oneProducts, _) = CalcModel();
-            using (oneSide)
+            var (lonely, _, _) = CalcModel();
+            using (lonely)
             {
-                oneProducts.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
-                Rejects<InvalidOperationException>(() => Saves(oneSide), "table on the one side");
+                var other = lonely.CreateTable("Lonely", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                other.AddRow(1);
+                other.AddCalculatedColumn("C", "1", ColumnDataType.Int64);
+                Rejects<InvalidOperationException>(() => Saves(lonely), "table without hierarchy that is not on the many side");
             }
             var (hidden, _, hiddenSales) = CalcModel();
             using (hidden)
