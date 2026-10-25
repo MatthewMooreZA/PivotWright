@@ -71,7 +71,11 @@ A measure is a DAX expression attached to a table, shown in the PivotTable field
 sales.AddCalculatedColumn("Line Total", "[Qty] * [Amount]", ColumnDataType.Currency);
 ```
 
-The file holds only the formula; Excel calculates the values the first time a PivotTable uses the column, so you do not supply them. The library does not parse the DAX. Written the way Excel saves a calculated column it has not calculated yet (`reference/excel-samples/H10_calculated_column_manual.xlsx`); only that case has been seen, so saving requires a model with a hierarchy, a relationship in which the table is the many side, no date table, no hidden columns, one calculated column in the model, and a table of one segment. Give the type the formula produces (`Currency`, `Int64`, `Double`, `DateTime`, `Boolean` or `String`), as Excel infers it when the column is typed in; all six are written the way Excel writes them, and currency is Excel-verified as a generated file. A calculated column that Excel has not calculated yet can be used as a value in a PivotTable, but not in Rows or Columns until it has been calculated once (put it in Values, or click Calculate Now in Power Pivot); Excel's own files behave the same way. Verified in Excel (currency): loads, the PivotTable shows the values, and adding a hierarchy or a Sort by Column, saving and refreshing afterwards all work.
+The file holds only the formula; Excel calculates the values the first time a PivotTable uses the column, so you do not supply them. The library does not parse the DAX, so give the type the formula produces (`Currency`, `Int64`, `Double`, `DateTime`, `Boolean` or `String`), as Excel infers it when the column is typed in.
+
+> **Limitation:** until Excel has calculated the column, it can be used as a value in a PivotTable but **not as a row, column or filter field**. Put it in *Values* once, or click *Calculate Now* in the Power Pivot window, and it works everywhere. *Refresh All* does not calculate it. Excel's own files behave the same way.
+
+Written the way Excel saves a calculated column it has not calculated yet (`reference/excel-samples/H10_calculated_column_manual.xlsx`, and H11 to H15 for the other types); only that case has been seen, so saving requires a model with a hierarchy, a relationship in which the table is the many side, no date table, no hidden columns, one calculated column in the model, and a table of one segment. Verified in Excel for all six types: the model loads, the PivotTable shows the values, and adding a hierarchy or a Sort by Column, saving and refreshing afterwards all work.
 
 ### Hierarchies
 
@@ -277,7 +281,8 @@ See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (worki
 
 These are not supported yet:
 
-- **Calculated columns, KPIs, and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
+- **Calculated columns cannot be a row or column field until Excel has calculated them.** `AddCalculatedColumn` writes only the formula, and Excel calculates the values on demand. A PivotTable user can put the column in *Values* straight away, but cannot drag it into *Rows*, *Columns* or a filter until it has been calculated once: use it as a value first, or click *Calculate Now* in the Power Pivot window. *Refresh All* does not calculate it. Excel's own files behave the same way. Plan reports accordingly: a calculated column is fine as a value, but a label column that people group by needs that extra step. There is no workaround in the file yet.
+- **KPIs and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
 - **Refresh.** The data is written directly. The model's data source is a placeholder OLE DB connection, stored encrypted the way Excel stores it, so *Refresh* in Excel reports a connection error and keeps the existing data. Set `ConnectionString` if you want it to point somewhere real.
 - **Excel 2010 PowerPivot add-in.** The model uses compatibility level 1103, the format of Excel 2013 and later.
 

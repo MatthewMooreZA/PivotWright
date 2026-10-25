@@ -157,9 +157,13 @@ public sealed class ModelTable
     /// expression, so a mistake shows up in Excel, not here.
     /// </summary>
     /// <remarks>
+    /// <b>Limitation:</b> until Excel has calculated the column it can be a value in a PivotTable but not a row, column or filter
+    /// field. The user puts it in Values once, or clicks Calculate Now in Power Pivot; Refresh All does not calculate it.
+    /// <para>
     /// Written the way Excel saves a calculated column it has not calculated yet; only that case has been seen in an Excel-written
     /// file, so saving requires a model with a hierarchy and a relationship in which this table is the many side, no date table, no
     /// hidden columns, at most one calculated column in the model, and a table of a single segment.
+    /// </para>
     /// </remarks>
     /// <param name="name">Column name; unique among this table's columns, calculated columns, measures and hierarchies, and without [ or ].</param>
     /// <param name="expression">DAX expression, with or without the leading "=", for example <c>[Qty]*[Amount]</c>.</param>
