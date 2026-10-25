@@ -82,8 +82,6 @@ internal sealed class CalculatedPlan
                 throw new InvalidOperationException($"{name} is a calculated column on a table that has no hierarchy and is not the many side of a relationship, which was never seen in an Excel-written file. " + seen);
             if (Hierarchy(t) && ManySide(t))
                 throw new InvalidOperationException($"{name} is a calculated column on a table that has a hierarchy and is the many side of a relationship, which was never seen in an Excel-written file. " + seen);
-            if (date && Hierarchy(t) && t != dateTable)
-                throw new InvalidOperationException($"{name} is a calculated column on a primary-side table that is not the date table, in a model with a date table, which was never seen in an Excel-written file. " + seen);
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
@@ -140,13 +138,15 @@ internal sealed class CalculatedPlan
             // (H31, H32), 5 (1, 2, 2, 1) and 1 without a hierarchy (H23, H24). Each further column steps the dimension by 3 and the
             // counters and the table version by 1, as on the many-side table; only the first column was seen on this side.
             int n = t.CalculatedColumns.Count;
-            var (dimension, s, d, c, data, tableVersion) = plain ? (5, 1, 2, 2, 1, 1) : date ? (9, 4, 3, 3, 4, 4) : (9, 3, 2, 2, 3, 3);
+            // Products in a model with a date table is taken as Products without one (no sample; its base is one dimension version higher).
+            bool isDateTable = t == dateTable;
+            var (dimension, s, d, c, data, tableVersion) = plain ? (5, 1, 2, 2, 1, 1) : isDateTable ? (9, 4, 3, 3, 4, 4) : (9, 3, 2, 2, 3, 3);
             facts[t.Id] = new CalculatedTableFacts
             {
                 DimensionVersion = dimension + 3 * (n - 1), DimensionCounters = (s + n - 1, d + n - 1, c + n - 1, data + n - 1),
                 TableVersion = tableVersion + n - 1, HoldsColumns = true,
             };
-            int first = plain ? 1 : date ? 4 : 3;
+            int first = plain ? 1 : isDateTable ? 4 : 3;
             for (int j = 1; j <= n; j++) columns[(t.Id, t.CalculatedColumns[j - 1].Id)] = (first + j - 1, first + j - 1, first + j - 1);
         }
         if (resaved is not null && !facts.ContainsKey(resaved.Id))

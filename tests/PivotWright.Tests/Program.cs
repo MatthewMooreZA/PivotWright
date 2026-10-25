@@ -1236,6 +1236,33 @@ namespace PivotWright.Tests
                 }
             }
 
+            // A column on Products in a model with a date table has no sample: it takes Products' values without a date table.
+            {
+                var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                for (int i = 0; i < 40; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(day, day.Year, day.ToString("MMMM", CultureInfo.InvariantCulture)); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(sales["Date"], dates["Date"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                dates.MarkAsDateTable("Date");
+                products.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                using (model)
+                {
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var withDate = ModelReader.Read(ms.ToArray());
+                    Find(withDate, @"Model\.26\.cub\.xml$");
+                    Check.Equal("3,2,2,3,", Counters(withDate, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+                    Find(withDate, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+                    Find(withDate, @"Dates_G\.6\.dim\.xml$");
+                }
+            }
+
             // H20: one column on each.
             var both = Save((p, s) =>
             {
