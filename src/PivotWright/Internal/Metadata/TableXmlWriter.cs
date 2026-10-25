@@ -62,8 +62,8 @@ internal static class TableXmlWriter
                     var store = new System.Text.StringBuilder("$");
                     for (int i = 0; i < h.Levels.Count; i++) store.Append(h.Levels[i].Id).Append('$').Append(h.LevelStarts[i]).Append('$');
                     hc.Open("XMUserHierarchy", h.Name);
-                    hc.Raw("<Properties><IsProcessed xsi:type=\"xsd:boolean\">true</IsProcessed><TableStore>").Raw(Xml.Esc(store.ToString()))
-                      .Raw("</TableStore><TableName>").Raw(Xml.Esc(h.TableName)).Raw("</TableName></Properties>");
+                    hc.Raw("<Properties><IsProcessed xsi:type=\"xsd:boolean\">").Raw(h.Unprocessed ? "false" : "true").Raw("</IsProcessed><TableStore>").Raw(Xml.Esc(store.ToString()))
+                      .Raw(h.Unprocessed ? "</TableStore><TableName/></Properties>" : "</TableStore><TableName>" + Xml.Esc(h.TableName) + "</TableName></Properties>");
                     hc.Close();
                 }
             });

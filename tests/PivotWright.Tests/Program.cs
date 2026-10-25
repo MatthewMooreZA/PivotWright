@@ -1408,6 +1408,28 @@ namespace PivotWright.Tests
             Check.Equal(152, onDates.Find(@"\.0\.dim\\4\.Dates_G\.Year Month\.0\.idf$").Length, "column file");
             Find(onDates, @"Dates_G\.0\.dim\\info\.9\.xml$");
 
+            // H31B: a hierarchy over the calculated column stays unprocessed (no U$ table, StructureType Unknown, level starts -1).
+            ModelHierarchy? over = null;
+            var hierarchyOver = Save((d, s) =>
+            {
+                var yearMonth = d.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64);
+                over = d.AddHierarchy("Hierarchy1", "Year", "year month");
+                Check.True(over.IsUnprocessed, "unprocessed");
+                Check.Equal("Hierarchy1 (Year > Year Month)", over.ToString(), "level names");
+                Check.Equal(1, over.Levels.Count, "only the data column is a ModelColumn level");
+                Check.Equal("Year Month", yearMonth.Name, "column name");
+            });
+            Find(hierarchyOver, @"Model\.33\.cub\.xml$");
+            Check.Equal("6,3,3,6,", Counters(hierarchyOver, @"Dates_G\.12\.dim\.xml$"), "Dates dimension counters");
+            Find(hierarchyOver, @"\.0\.dim\\Dates_G\.6\.tbl\.xml$");
+            Check.Equal(0, hierarchyOver.Files.Keys.Count(k => k.Contains("Hierarchy1")), "no hierarchy table or files");
+            Check.Equal(0, hierarchyOver.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.cub\\info\.\d+\.xml$")), "no cube information file");
+            string overDim = Find(hierarchyOver, @"Dates_G\.12\.dim\.xml$");
+            Check.True(overDim.Contains("<ddl300:ProcessingState>Unprocessed</ddl300:ProcessingState><ddl300:StructureType>Unknown</ddl300:StructureType>"), "hierarchy states");
+            string overTbl = Find(hierarchyOver, @"\.0\.dim\\Dates_G\.6\.tbl\.xml$");
+            Check.True(overTbl.Contains("<TableStore>$Year$-1$Year Month$-1$</TableStore>"), "level starts");
+            Check.True(overTbl.Contains("<IsProcessed xsi:type=\"xsd:boolean\">false</IsProcessed><TableStore>$Year"), "hierarchy not processed");
+
             var both = Save((d, s) =>
             {
                 s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64);

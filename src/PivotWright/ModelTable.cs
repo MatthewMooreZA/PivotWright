@@ -202,7 +202,9 @@ public sealed class ModelTable
     /// such as Category, Subcategory, Product that PivotTables offer as a single field.
     /// </summary>
     /// <param name="name">Hierarchy name; unique within the table and different from its column names.</param>
-    /// <param name="levels">Two or more column names of this table, from the top level down.</param>
+    /// <param name="levels">Two or more column names of this table, from the top level down. A level may be a calculated column
+    /// (<see cref="AddCalculatedColumn"/>); Excel has not calculated it, so it saves such a hierarchy unprocessed (no tree) and builds it
+    /// when the column is calculated. <see cref="ModelHierarchy.IsUnprocessed"/> tells.</param>
     /// <returns>The hierarchy.</returns>
     /// <exception cref="ArgumentException">The name is empty or taken, a column is unknown or repeated, or fewer than two levels are given.</exception>
     public ModelHierarchy AddHierarchy(string name, params string[] levels)
@@ -217,14 +219,26 @@ public sealed class ModelTable
         if (Columns.Contains(modelName) || _calculatedColumns.Any(c => string.Equals(c.Name, modelName, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{modelName}'; a hierarchy needs its own name.", nameof(name));
         var columns = new List<ModelColumn>();
+        var hierarchyLevels = new List<HierarchyLevel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var level in levels)
         {
+            ArgumentNullException.ThrowIfNull(level, nameof(levels));
+            // A calculated column is looked up first by name; any other name must be one of the table's data columns.
+            var calculated = _calculatedColumns.FirstOrDefault(x => string.Equals(x.Name, level, StringComparison.OrdinalIgnoreCase));
+            if (calculated is not null)
+            {
+                if (!seen.Add(calculated.Name)) throw new ArgumentException($"Column '{calculated.Name}' is used twice in the hierarchy.", nameof(levels));
+                hierarchyLevels.Add(new HierarchyLevel(calculated.Name, calculated.Definition.Id, null));
+                continue;
+            }
             var c = Builder.FindColumn(level, nameof(levels));
-            if (columns.Any(x => x.Builder == c)) throw new ArgumentException($"Column '{c.Definition.Name}' is used twice in the hierarchy.", nameof(levels));
+            if (!seen.Add(c.ModelName)) throw new ArgumentException($"Column '{c.Definition.Name}' is used twice in the hierarchy.", nameof(levels));
             columns.Add(_columns.First(x => x.Builder == c));
+            hierarchyLevels.Add(new HierarchyLevel(c.ModelName, c.Id, c));
         }
-        Model.HierarchyDefinitions.Add(new HierarchyDefinition { Name = modelName, Table = Builder, Columns = columns.Select(c => c.Builder).ToList() });
-        var hierarchy = new ModelHierarchy(this, modelName, columns);
+        Model.HierarchyDefinitions.Add(new HierarchyDefinition { Name = modelName, Table = Builder, Levels = hierarchyLevels });
+        var hierarchy = new ModelHierarchy(this, modelName, columns, hierarchyLevels.Select(l => l.Name).ToList());
         _hierarchies.Add(hierarchy);
         return hierarchy;
     }

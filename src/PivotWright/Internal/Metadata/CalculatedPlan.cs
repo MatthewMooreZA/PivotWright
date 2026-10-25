@@ -3,13 +3,15 @@ using PivotWright.Internal.Model;
 namespace PivotWright.Internal.Metadata;
 
 /// <summary>Version counters of one table that Excel changed when a calculated column was added (SPEC section 10).</summary>
-internal sealed class CalculatedTableFacts
+internal sealed record CalculatedTableFacts
 {
     public required int DimensionVersion { get; init; }
     /// <summary>Counters of the dimension itself, or null when Excel left them as they were (a table saved again without a column).</summary>
     public (int Structure, int DataId, int Cache, int Data)? DimensionCounters { get; init; }
     public int? TableVersion { get; init; }
     public bool HoldsColumns { get; init; }
+    /// <summary>The table keeps a dimension information file; not after a hierarchy over a calculated column was made (H31B).</summary>
+    public bool DimensionInfo { get; init; } = true;
 }
 
 /// <summary>
@@ -21,7 +23,7 @@ internal sealed class CalculatedTableFacts
 /// formula (Excel's samples go up to four with a hierarchy and three without). A model without a hierarchy has
 /// its own numbers (H21 to H24, the same four shapes).
 /// </summary>
-internal sealed class CalculatedPlan
+internal sealed record CalculatedPlan
 {
     public required int Cube { get; init; }
     public required int CubeStructure { get; init; }
@@ -35,6 +37,8 @@ internal sealed class CalculatedPlan
     /// tables' columns (every Excel sample except H10; kept off for the shapes of the hierarchy model, which are verified without).
     /// </summary>
     public bool FormulasInMeasureGroups { get; init; }
+    /// <summary>The cube folder holds an empty information file; not after a hierarchy over a calculated column was made (H31B).</summary>
+    public bool CubeInfo { get; init; } = true;
     /// <summary>Only H10 keeps the partition information of the table with the column; the other samples have none.</summary>
     public required bool PartitionInfo { get; init; }
     public required IReadOnlyDictionary<string, CalculatedTableFacts> Tables { get; init; }
@@ -46,6 +50,7 @@ internal sealed class CalculatedPlan
 
     public bool Resaved(string tableId) => Tables.ContainsKey(tableId);
     public bool HoldsColumns(string tableId) => Tables.TryGetValue(tableId, out var f) && f.HoldsColumns;
+    public bool HasDimensionInfo(string tableId) => Tables.TryGetValue(tableId, out var f) && f.HoldsColumns && f.DimensionInfo;
 
     private const string Seen =
         "The shapes seen in Excel-written files are: one or more columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and both together; more columns on the primary side, and columns on several primary-side tables, follow the same steps but were not seen.";
@@ -54,6 +59,43 @@ internal sealed class CalculatedPlan
         "The shapes seen in Excel-written files are: one or more columns on the many-side table, one or more on a primary-side table, and both together.";
 
     public static CalculatedPlan? Create(IReadOnlyList<TableBuilder> tables, IReadOnlyList<RelationshipDefinition> relationships,
+        IReadOnlyList<HierarchyDefinition> hierarchies)
+    {
+        var plan = CreateWithoutHierarchies(tables, relationships, hierarchies);
+        if (plan is null) return null;
+        // Hierarchies over calculated columns are a further edit each (H31B): the cube, the measure groups, the partitions and the script
+        // step up, the table with the hierarchy takes two more table and data versions and three more dimension versions, and the primary
+        // side of the first relationship is saved once more. One such hierarchy was seen; more are taken as repeated edits.
+        var unprocessed = hierarchies.Where(h => h.IsUnprocessed).ToList();
+        if (unprocessed.Count == 0) return plan;
+        int count = unprocessed.Count;
+        var tablesFacts = new Dictionary<string, CalculatedTableFacts>(plan.Tables);
+        foreach (var group in unprocessed.GroupBy(h => h.Table.Id))
+        {
+            int k = group.Count();
+            var f = tablesFacts[group.Key];
+            var (s, d, c, data) = f.DimensionCounters!.Value;
+            tablesFacts[group.Key] = f with
+            {
+                DimensionVersion = f.DimensionVersion + 3 * k, DimensionCounters = (s + 2 * k, d, c, data + 2 * k),
+                TableVersion = f.TableVersion + 2 * k, DimensionInfo = false,
+            };
+        }
+        foreach (var (id, f) in tablesFacts.ToList())
+            if (!f.HoldsColumns) tablesFacts[id] = f with { DimensionVersion = f.DimensionVersion + count };
+        var groupData = new Dictionary<string, int>(plan.MeasureGroupData);
+        foreach (var t in tables)
+            if (relationships.Any(r => r.From == t) && t.CalculatedColumns.Count == 0) groupData[t.Id] = 1;
+        return plan with
+        {
+            Cube = plan.Cube + 7 * count, CubeStructure = plan.CubeStructure + 5 * count,
+            MeasureGroupStructure = plan.MeasureGroupStructure + 3 * count, MeasureGroupCache = plan.MeasureGroupCache + 3 * count,
+            Partition = plan.Partition + 3 * count, Script = plan.Script + 3 * count,
+            Tables = tablesFacts, MeasureGroupData = groupData, CubeInfo = false,
+        };
+    }
+
+    private static CalculatedPlan? CreateWithoutHierarchies(IReadOnlyList<TableBuilder> tables, IReadOnlyList<RelationshipDefinition> relationships,
         IReadOnlyList<HierarchyDefinition> hierarchies)
     {
         var holders = tables.Where(t => t.CalculatedColumns.Count > 0).ToList();

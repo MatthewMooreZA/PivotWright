@@ -84,6 +84,8 @@ products.AddHierarchy("Product Hierarchy", "Category", "Subcategory", "Product")
 dates.AddHierarchy("Calendar", "Year", "Month");
 ```
 
+A level can also be a calculated column: `dates.AddHierarchy("Year and month", "Year", "Year Month")` over a calculated `Year Month`. Excel has not calculated the column, so the hierarchy is saved unprocessed, without a tree (`ModelHierarchy.IsUnprocessed`), and Excel builds it once the column is calculated; it cannot be used in a PivotTable before that. Written as in `reference/excel-samples/H31B_date_calc_on_dates_manual_with_hierarchy.xlsx` (a date-table model); other models extrapolate its steps.
+
 A hierarchy is an ordered drill-down path over two or more columns of one table; PivotTables offer it as a single field with expandable levels. The name must be unique within the table and different from its column names. The tree is built and sorted when saving (levels sort like the columns do, BLANK first), so memory use grows with the number of distinct value paths. The file layout matches what Excel writes byte for byte for the same data. BLANK values inside a level (sorted first) and values that differ only in case (merged) were confirmed in Excel.
 
 ### Date table

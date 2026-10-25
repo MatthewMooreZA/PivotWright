@@ -3,12 +3,22 @@ using PivotWright.Internal.VertiPaq;
 
 namespace PivotWright.Internal.Model;
 
+/// <summary>One level of a hierarchy: a data column, or a calculated column (then <see cref="Column"/> is null).</summary>
+internal sealed record HierarchyLevel(string Name, string Id, ColumnBuilder? Column);
+
 /// <summary>A user hierarchy (for example Category > Subcategory > Product) as declared through the public API.</summary>
 internal sealed class HierarchyDefinition
 {
     public required string Name { get; init; }
     public required TableBuilder Table { get; init; }
-    public required IReadOnlyList<ColumnBuilder> Columns { get; init; }
+    public required IReadOnlyList<HierarchyLevel> Levels { get; init; }
+    /// <summary>The data columns among the levels, from the top down (all of them unless a level is a calculated column).</summary>
+    public IReadOnlyList<ColumnBuilder> Columns => Levels.Where(l => l.Column is not null).Select(l => l.Column!).ToList();
+    /// <summary>
+    /// A level is a calculated column, which has no values yet: Excel keeps such a hierarchy unprocessed, without a tree
+    /// (SPEC section 10, H31B).
+    /// </summary>
+    public bool IsUnprocessed => Levels.Any(l => l.Column is null);
 }
 
 /// <summary>A hierarchy after its tree was written.</summary>
@@ -27,12 +37,36 @@ internal sealed class EncodedHierarchy
     /// StructureType Unnatural otherwise, for example for Quarter Q4 under two years (SPEC section 7).
     /// </summary>
     public bool Natural { get; init; } = true;
+    /// <summary>The hierarchy has a calculated level: no tree, level starts -1, StructureType Unknown.</summary>
+    public bool Unprocessed { get; init; }
 
     public static readonly string[] ColumnNames = { "MULTI_LEVEL_ID", "PARENT_POS", "FIRST_CHILD_POS", "CHILD_COUNT" };
 }
 
 internal static class HierarchyEncoder
 {
+    /// <summary>
+    /// A hierarchy with a calculated level as Excel saves it before the column was calculated (H31B): no U$ table or files, every level
+    /// starts at -1 and the structure is unknown.
+    /// </summary>
+    public static EncodedHierarchy Unprocessed(HierarchyDefinition def, EncodedTable table)
+    {
+        var levels = def.Levels.Select(l => l.Column is { } c
+            ? table.Columns.First(e => e.Id == c.Id)
+            : new EncodedColumn { Name = l.Name, Id = l.Id, DataType = ColumnDataType.Int64 }).ToList();
+        return new EncodedHierarchy
+        {
+            Name = def.Name,
+            TableId = table.Id,
+            TableName = string.Empty,
+            Levels = levels,
+            LevelStarts = levels.Select(_ => -1L).ToList(),
+            Records = 0,
+            Natural = false,
+            Unprocessed = true,
+        };
+    }
+
     /// <summary>
     /// Builds the tree of distinct value paths of a hierarchy and writes it as the four columns Excel uses:
     /// the data id of the node's value, its parent, its first child and its child count. Nodes are stored level

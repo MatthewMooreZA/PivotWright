@@ -148,7 +148,8 @@ internal sealed class ModelSerializer
 
             // User hierarchies of this table: one U$ tree table each.
             foreach (var h in _hierarchies.Where(h => h.Table == t))
-                et.Hierarchies.Add(HierarchyEncoder.Write(h, et, _strings, sink, TableXmlWriter.HierarchyTable));
+                et.Hierarchies.Add(h.IsUnprocessed ? HierarchyEncoder.Unprocessed(h, et)
+                    : HierarchyEncoder.Write(h, et, _strings, sink, TableXmlWriter.HierarchyTable));
 
             // Hierarchy tables and the table metadata.
             foreach (var c in et.Columns)
@@ -169,7 +170,10 @@ internal sealed class ModelSerializer
         // Cube, measure groups and partitions.
         var cubeGroup = Group(BackupLog.ClassCube, "Model", "Model", Info.CubeVersion, cubeFolder, Info.CubeObjectId);
         AddText(cubeGroup, dbFolder + "\\Model." + Info.CubeVersion + ".cub.xml", AsslWriter.Cube(Info, encoded, _measures.Count > 0));
-        if (Info.CalculatedProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
+        if (Info.Calc is not null)
+        {
+            if (Info.Calc.CubeInfo) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
+        }
         else if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {
@@ -195,7 +199,7 @@ internal sealed class ModelSerializer
             var dim = Group(BackupLog.ClassDimension, t.Id, t.Name, dv, dimFolder, tableIds[t.Id].DimensionObjectId);
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", AsslWriter.Dimension(Info, t, names, size, dv));
-            if (!Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HoldsColumns(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
+            if (!Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
             dim.Files.AddRange(files);
         }
 

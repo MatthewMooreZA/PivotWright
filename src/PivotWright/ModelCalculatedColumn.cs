@@ -13,6 +13,8 @@ public sealed class ModelCalculatedColumn
         _definition = definition;
     }
 
+    internal CalculatedColumnDefinition Definition => _definition;
+
     /// <summary>Table that holds the column.</summary>
     public ModelTable Table { get; }
 

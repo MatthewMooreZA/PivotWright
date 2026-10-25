@@ -85,7 +85,9 @@ for (int n = 0; n < onSales; n++)
     s.AddCalculatedColumn(name, formula, type);
 }
 // calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32; with "datetable"); calcpd: one on Products and one on Dates
-if (calcMode is "calcd" or "calcsd" or "calcpd") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
+if (calcMode is "calcd" or "calcsd" or "calcpd" or "calcdh") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
+// calcdh: calcd plus a hierarchy Year > Year Month over the calculated column (H31B; with "datetable")
+if (calcMode == "calcdh") dates.AddHierarchy("Hierarchy1", "Year", "Year Month");
 if (calcMode == "calcsd") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
 // calcpN: N columns on Products (calcp is one, H19)
 var productsMatch = System.Text.RegularExpressions.Regex.Match(calcMode, @"^calcp(\d+)$");
