@@ -48,10 +48,10 @@ internal sealed class CalculatedPlan
     public bool HoldsColumns(string tableId) => Tables.TryGetValue(tableId, out var f) && f.HoldsColumns;
 
     private const string Seen =
-        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and both together.";
+        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one or more on a hierarchy table that is the primary side of a relationship, and both together.";
 
     private const string SeenPlain =
-        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one column on a primary-side table, and both together.";
+        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one or more on a primary-side table, and both together.";
 
     public static CalculatedPlan? Create(IReadOnlyList<TableBuilder> tables, IReadOnlyList<RelationshipDefinition> relationships,
         IReadOnlyList<HierarchyDefinition> hierarchies)
@@ -76,23 +76,19 @@ internal sealed class CalculatedPlan
             {
                 if (!ManySide(t) && !relationships.Any(r => r.To == t))
                     throw new InvalidOperationException($"{name} is a calculated column on a table that has no relationship, which was never seen in an Excel-written file. " + seen);
-                if (!ManySide(t) && t.CalculatedColumns.Count > 1)
-                    throw new InvalidOperationException($"'{t.Name}' has {t.CalculatedColumns.Count} calculated columns, but only one per primary-side table was seen in an Excel-written file. " + seen);
                 continue;
             }
             if (!Hierarchy(t) && !ManySide(t))
                 throw new InvalidOperationException($"{name} is a calculated column on a table that has no hierarchy and is not the many side of a relationship, which was never seen in an Excel-written file. " + seen);
             if (Hierarchy(t) && ManySide(t))
                 throw new InvalidOperationException($"{name} is a calculated column on a table that has a hierarchy and is the many side of a relationship, which was never seen in an Excel-written file. " + seen);
-            if (Hierarchy(t) && t.CalculatedColumns.Count > 1)
-                throw new InvalidOperationException($"'{t.Name}' has {t.CalculatedColumns.Count} calculated columns, but only one per hierarchy table was seen in an Excel-written file. " + seen);
             if (date && Hierarchy(t) && t != dateTable)
                 throw new InvalidOperationException($"{name} is a calculated column on a primary-side table that is not the date table, in a model with a date table, which was never seen in an Excel-written file. " + seen);
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
         if (many.Count > 1 || primary.Count > 1)
-            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file (at most one many-side table and one primary-side table can hold columns). " + seen);
+            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file (at most one many-side table and one primary-side table can hold columns; the samples have one column on the primary side, more are extrapolated). " + seen);
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();
@@ -140,14 +136,18 @@ internal sealed class CalculatedPlan
         }
         foreach (var t in primary)
         {
-            // A model with a hierarchy: dimension 9 (3, 2, 2, 3) and table version 3; without one: 5 (1, 2, 2, 1) and 1.
-            // The date table: dimension 9 (4, 3, 3, 4) and table version 4 (H31, H32).
-            facts[t.Id] = plain
-                ? new CalculatedTableFacts { DimensionVersion = 5, DimensionCounters = (1, 2, 2, 1), TableVersion = 1, HoldsColumns = true }
-                : date
-                    ? new CalculatedTableFacts { DimensionVersion = 9, DimensionCounters = (4, 3, 3, 4), TableVersion = 4, HoldsColumns = true }
-                    : new CalculatedTableFacts { DimensionVersion = 9, DimensionCounters = (3, 2, 2, 3), TableVersion = 3, HoldsColumns = true };
-            columns[(t.Id, t.CalculatedColumns[0].Id)] = plain ? (1, 1, 1) : date ? (4, 4, 4) : (3, 3, 3);
+            // One column: dimension 9 (3, 2, 2, 3) and table version 3 in the hierarchy model, 9 (4, 3, 3, 4) and 4 for the date table
+            // (H31, H32), 5 (1, 2, 2, 1) and 1 without a hierarchy (H23, H24). Each further column steps the dimension by 3 and the
+            // counters and the table version by 1, as on the many-side table; only the first column was seen on this side.
+            int n = t.CalculatedColumns.Count;
+            var (dimension, s, d, c, data, tableVersion) = plain ? (5, 1, 2, 2, 1, 1) : date ? (9, 4, 3, 3, 4, 4) : (9, 3, 2, 2, 3, 3);
+            facts[t.Id] = new CalculatedTableFacts
+            {
+                DimensionVersion = dimension + 3 * (n - 1), DimensionCounters = (s + n - 1, d + n - 1, c + n - 1, data + n - 1),
+                TableVersion = tableVersion + n - 1, HoldsColumns = true,
+            };
+            int first = plain ? 1 : date ? 4 : 3;
+            for (int j = 1; j <= n; j++) columns[(t.Id, t.CalculatedColumns[j - 1].Id)] = (first + j - 1, first + j - 1, first + j - 1);
         }
         if (resaved is not null && !facts.ContainsKey(resaved.Id))
             facts[resaved.Id] = new CalculatedTableFacts { DimensionVersion = plain ? 2 : date ? 7 : 6 };

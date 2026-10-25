@@ -1196,6 +1196,18 @@ namespace PivotWright.Tests
             Check.Equal(152, primary.Find(@"\.0\.dim\\3\.Products_G\.Name Length\.0\.idf$").Length, "column file");
             Find(primary, @"Products_G\.0\.dim\\info\.9\.xml$");
 
+            // Several columns on the primary side are extrapolated from the first (no sample): dimension +3, counters and table version +1.
+            var primaryTwo = Save((p, s) =>
+            {
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                p.AddCalculatedColumn("Name Length x2", "LEN([Product])*2", ColumnDataType.Int64);
+            });
+            Find(primaryTwo, @"Model\.27\.cub\.xml$");
+            Check.Equal("4,3,3,4,", Counters(primaryTwo, @"Products_G\.12\.dim\.xml$"), "two columns on Products: dimension counters");
+            Find(primaryTwo, @"\.0\.dim\\Products_G\.4\.tbl\.xml$");
+            Find(primaryTwo, @"\.0\.dim\\3\.Products_G\.Name Length\.0\.idf$");
+            Find(primaryTwo, @"\.0\.dim\\4\.Products_G\.Name Length x2\.0\.idf$");
+
             // H20: one column on each.
             var both = Save((p, s) =>
             {
@@ -1383,14 +1395,6 @@ namespace PivotWright.Tests
                 for (int i = 0; i < 12; i++) sales.AddCalculatedColumn("More " + i, "2", ColumnDataType.Int64);
                 Saves(model);
             }
-            var (twoOnProducts, twoProducts, _) = CalcModel();
-            using (twoOnProducts)
-            {
-                twoProducts.AddCalculatedColumn("A", "1", ColumnDataType.Int64);
-                twoProducts.AddCalculatedColumn("B", "2", ColumnDataType.Int64);
-                Rejects<InvalidOperationException>(() => Saves(twoOnProducts), "two columns on a hierarchy table");
-            }
-
             // A model without a hierarchy is supported (H21 to H24), but not a table without any relationship.
             using (var noHierarchy = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
             {
