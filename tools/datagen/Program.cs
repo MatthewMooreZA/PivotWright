@@ -124,11 +124,11 @@ if (calcMode == "calcdatefmt")
     var za = new System.Globalization.CultureInfo("en-ZA");
     var formats = new (string Name, string Format, System.Globalization.CultureInfo Culture)[]
     {
-        ("Date d us", "d", us), ("Date d gb", "d", gb), ("Date d za", "d", za), ("Date D us", "D", us), ("Date D gb", "D", gb),
-        ("Date t us", "t", us), ("Date T us", "T", us), ("Date g us", "g", us), ("Date G gb", "G", gb), ("Date f us", "f", us),
-        ("Date F us", "F", us), ("Date M us", "M", us), ("Date Y us", "Y", us), ("Date s", "s", us), ("Date u", "u", us),
-        ("Date custom 1", "dd MMM yyyy", us), ("Date custom 2", "yyyy-MM-dd HH:mm", us), ("Date custom 3", "dddd d MMMM yyyy", gb),
-        ("Date custom 4", "MMM-yy", us), ("Date custom 5", "h:mm tt", us),
+        ("ShortDate us", "d", us), ("ShortDate gb", "d", gb), ("ShortDate za", "d", za), ("LongDate us", "D", us), ("LongDate gb", "D", gb),
+        ("ShortTime us", "t", us), ("LongTime us", "T", us), ("General short us", "g", us), ("General long gb", "G", gb), ("Full short us", "f", us),
+        ("Full long us", "F", us), ("Month day us", "M", us), ("Year month us", "Y", us), ("Sortable", "s", us), ("Universal sortable", "u", us),
+        ("Custom 1", "dd MMM yyyy", us), ("Custom 2", "yyyy-MM-dd HH:mm", us), ("Custom 3", "dddd d MMMM yyyy", gb),
+        ("Custom 4", "MMM-yy", us), ("Custom 5", "h:mm tt", us),
     };
     for (int n = 0; n < formats.Length; n++)
         s.AddCalculatedColumn(formats[n].Name, $"[Date]+{n}", ColumnDataType.DateTime, MeasureFormat.Date(formats[n].Format, formats[n].Culture));
