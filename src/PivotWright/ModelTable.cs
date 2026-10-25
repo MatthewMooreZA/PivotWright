@@ -159,14 +159,15 @@ public sealed class ModelTable
     /// <remarks>
     /// Written the way Excel saves a calculated column it has not calculated yet; only that case has been seen in an Excel-written
     /// file, so saving requires a model with a hierarchy and a relationship in which this table is the many side, no date table, no
-    /// hidden columns, at most one calculated column in the model, and a table of a single segment. Only <see cref="ColumnDataType.Currency"/> is supported.
+    /// hidden columns, at most one calculated column in the model, and a table of a single segment.
     /// </remarks>
     /// <param name="name">Column name; unique among this table's columns, calculated columns, measures and hierarchies, and without [ or ].</param>
     /// <param name="expression">DAX expression, with or without the leading "=", for example <c>[Qty]*[Amount]</c>.</param>
-    /// <param name="dataType">Data type of the result; only <see cref="ColumnDataType.Currency"/> so far.</param>
+    /// <param name="dataType">Data type of the formula's result, which Excel infers from the formula when the column is typed in; give the
+    /// type the formula produces (for example <see cref="ColumnDataType.Currency"/> for <c>[Qty]*[Amount]</c> with a Currency Amount).</param>
     /// <returns>The calculated column.</returns>
     /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters; the expression
-    /// is empty; or the data type is not supported yet.</exception>
+    /// is empty; or the data type is not a <see cref="ColumnDataType"/>.</exception>
     public ModelCalculatedColumn AddCalculatedColumn(string name, string expression, ColumnDataType dataType)
     {
         Model.ThrowIfDisposed();
@@ -180,8 +181,7 @@ public sealed class ModelTable
         expression = expression.Trim();
         if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
         if (expression.Length == 0) throw new ArgumentException("A DAX expression is required.", nameof(expression));
-        if (dataType != ColumnDataType.Currency)
-            throw new ArgumentException($"Calculated columns of type {dataType} are not supported yet: only Currency was seen in an Excel-written file.", nameof(dataType));
+        if (!Enum.IsDefined(dataType)) throw new ArgumentException($"'{dataType}' is not a data type.", nameof(dataType));
         if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
         if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)

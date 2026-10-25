@@ -407,7 +407,8 @@ internal static class AsslWriter
     {
         sb.Append("<Attribute><Name>").Append(E(c.Name)).Append("</Name><ID>").Append(E(c.Id)).Append("</ID><Description/>");
         sb.Append("<Annotations").Append(NsB).Append(">\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ")
-          .Append(AttributeFormat(c.DataType, m.Culture, m.Lcid)).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
+          .Append(c.DataType == ColumnDataType.Boolean ? "<Format Format=\"Boolean\" xmlns=\"\"/>" : AttributeFormat(c.DataType, m.Culture, m.Lcid))
+          .Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
         sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
         AttributeCommon(sb, visible: true, processed: false);
         sb.Append("<ddl200:InferredDatatype>").Append(InferredDatatype(c.DataType)).Append("</ddl200:InferredDatatype>");
@@ -415,15 +416,26 @@ internal static class AsslWriter
         sb.Append("<KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</KeyColumn></KeyColumns>");
         sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</NameColumn>");
         sb.Append("<Translations/><NamingTemplateTranslations/><AttributeRelationships/>");
-        if (c.DataType == ColumnDataType.Currency)
-            sb.Append("<ddl300_300:FormatString>").Append(E(CurrencyFormat(m.Culture, m.Lcid).formatString)).Append("</ddl300_300:FormatString>");
+        string? formatString = c.DataType switch
+        {
+            ColumnDataType.Currency => CurrencyFormat(m.Culture, m.Lcid).formatString,
+            ColumnDataType.DateTime => "General Date",
+            ColumnDataType.Boolean => "\"TRUE\";\"TRUE\";\"FALSE\"",
+            _ => null,
+        };
+        if (formatString is not null) sb.Append("<ddl300_300:FormatString>").Append(E(formatString)).Append("</ddl300_300:FormatString>");
         sb.Append("</Attribute>");
     }
 
+    /// <summary>The type Excel infers from the formula, as H10 to H15 show it.</summary>
     private static string InferredDatatype(ColumnDataType t) => t switch
     {
         ColumnDataType.Currency => "Currency",
-        _ => throw new NotSupportedException($"Calculated columns of type {t} were never seen in an Excel-written file."),
+        ColumnDataType.Int64 => "BigInt",
+        ColumnDataType.Double => "Double",
+        ColumnDataType.DateTime => "Date",
+        ColumnDataType.Boolean => "Boolean",
+        _ => "WChar",
     };
 
     /// <summary>Dimension information file (info.N.xml in the .dim folder, [MS-XLDM] 2.6.10.2).</summary>

@@ -340,7 +340,7 @@ internal static class TableXmlWriter
                 s.Open("XMColumnStats");
                 s.Properties(p => p.Int("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
                     .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", rows).Bool("HasNulls", true)
-                    .Long("RLERuns", 0).Long("OthersRLERuns", 0).Int("Usage", 3).Short("DBType", 6).Int("XMType", 0).Int("CompressionType", 0)
+                    .Long("RLERuns", 0).Long("OthersRLERuns", 0).Int("Usage", 3).Short("DBType", DbType(col.DataType)).Int("XMType", (int)StoredType(col.DataType)).Int("CompressionType", 0)
                     .Long("CompressionParam", 0).Int("EncodingHint", 0).Long("AggCounter", 0).Long("WhereCounter", 0).Long("OrderByCounter", 0));
                 s.Close();
             });
@@ -393,8 +393,14 @@ internal static class TableXmlWriter
         {
             d.DataObject(o =>
             {
-                o.Open($"XMHashDataDictionary{LT}XM_Long>");
-                o.Properties(p => p.Int("DataVersion", 3).Int("LastId", DataIds.Null).Bool("Nullable", true).Bool("Unique", false).Bool("OperatingOn32", true));
+                // The dictionary class follows the stored type; its properties are those of a dictionary with only BLANK in it.
+                o.Open($"XMHashDataDictionary{LT}XM_{StoredType(col.DataType)}>");
+                o.Properties(p =>
+                {
+                    p.Int("DataVersion", 3).Int("LastId", DataIds.Null).Bool("Nullable", true).Bool("Unique", false);
+                    if (col.DataType == ColumnDataType.String) p.Long("DictionaryFlags", 3);
+                    else if (StoredType(col.DataType) == XmType.Long) p.Bool("OperatingOn32", true);
+                });
                 o.Close();
             });
             d.DataObject(o =>
@@ -406,6 +412,24 @@ internal static class TableXmlWriter
         });
         x.Close();
     }
+
+    /// <summary>Type code of an unprocessed calculated column (DBType), from H10 to H15.</summary>
+    private static int DbType(ColumnDataType t) => t switch
+    {
+        ColumnDataType.Currency => 6,
+        ColumnDataType.Int64 => 20,
+        ColumnDataType.Double => 5,
+        ColumnDataType.DateTime => 7,
+        ColumnDataType.Boolean => 11,
+        _ => 130,
+    };
+
+    private static XmType StoredType(ColumnDataType t) => t switch
+    {
+        ColumnDataType.Double or ColumnDataType.DateTime => XmType.Real,
+        ColumnDataType.String => XmType.String,
+        _ => XmType.Long,
+    };
 
     private static void Dictionary(XmBuilder o, EncodedTable t, EncodedColumn col)
     {

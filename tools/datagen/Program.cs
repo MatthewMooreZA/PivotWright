@@ -53,5 +53,18 @@ if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
 s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
 if (args.Length > 2 && args[2] == "date") dates.MarkAsDateTable("Date");
-if (args.Length > 2 && args[2] == "calc") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+if (args.Length > 2 && args[2] == "calc")
+{
+    // calc [currency|whole|decimal|date|boolean|text]: one calculated column, as in Excel's H10 to H15 samples
+    var (calcName, calcFormula, calcType) = (args.Length > 3 ? args[3] : "currency") switch
+    {
+        "whole" => ("Double Qty", "[Qty]*2", ColumnDataType.Int64),
+        "decimal" => ("Half Qty", "[Qty]/2", ColumnDataType.Double),
+        "date" => ("Next Day", "[Date]+1", ColumnDataType.DateTime),
+        "boolean" => ("Big Order", "[Qty]>2", ColumnDataType.Boolean),
+        "text" => ("Label", "\"Qty \"&[Qty]", ColumnDataType.String),
+        _ => ("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency),
+    };
+    s.AddCalculatedColumn(calcName, calcFormula, calcType);
+}
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

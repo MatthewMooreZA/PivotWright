@@ -57,6 +57,7 @@ var tests = new (string Name, Action Body)[]
     ("API: ModelColumn.IsHidden writes the same model as ColumnDefinition.IsHidden", Tests.ApiHideColumns),
     ("API: a failed Save leaves an existing file untouched", Tests.ApiSaveIsAtomic),
     ("Calculated column: formula, no values, counters as Excel saves them (H10)", Tests.CalculatedColumnProfile),
+    ("Calculated column: the six data types as Excel infers them (H10 to H15)", Tests.CalculatedColumnTypes),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
 };
 
@@ -1062,6 +1063,49 @@ namespace PivotWright.Tests
             }
         }
 
+        // What differs between the types in the samples H10 (currency) and H11 to H15: the inferred type and format of the dimension
+        // attribute, and the type code and dictionary class of the unprocessed column in the table XML.
+        public static void CalculatedColumnTypes()
+        {
+            var expected = new (ColumnDataType Type, string Inferred, string Format, string? FormatString, int DbType, int XmType, string Dictionary)[]
+            {
+                (ColumnDataType.Currency, "Currency", "Currency", null, 6, 0, "XM_Long"),
+                (ColumnDataType.Int64, "BigInt", "General", null, 20, 0, "XM_Long"),
+                (ColumnDataType.Double, "Double", "General", null, 5, 1, "XM_Real"),
+                (ColumnDataType.DateTime, "Date", "DateTimeGeneral", "General Date", 7, 1, "XM_Real"),
+                (ColumnDataType.Boolean, "Boolean", "Boolean", "\"TRUE\";\"TRUE\";\"FALSE\"", 11, 0, "XM_Long"),
+                (ColumnDataType.String, "WChar", "Text", null, 130, 2, "XM_String"),
+            };
+            foreach (var e in expected)
+            {
+                var (model, _, sales) = CalcModel();
+                using (model)
+                {
+                    sales.AddCalculatedColumn("Calc", "1", e.Type);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var m = ModelReader.Read(ms.ToArray());
+                    string dim = Encoding.UTF8.GetString(m.Find(@"Sales_G\.7\.dim\.xml$"));
+                    string what = e.Type.ToString();
+                    Check.True(dim.Contains("<ddl200:InferredDatatype>" + e.Inferred + "</ddl200:InferredDatatype>"), what + ": inferred type");
+                    int at = dim.IndexOf("<Attribute><Name>Calc</Name>", StringComparison.Ordinal);
+                    string attribute = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+                    Check.True(attribute.Contains("<Format Format=\"" + e.Format + "\""), what + ": format annotation");
+                    string? formatString = System.Text.RegularExpressions.Regex.Match(attribute, "<ddl300_300:FormatString>([^<]*)</ddl300_300:FormatString>") is { Success: true } f
+                        ? System.Net.WebUtility.HtmlDecode(f.Groups[1].Value) : null;
+                    if (e.Type == ColumnDataType.Currency) Check.True(formatString is not null && formatString.Contains("#,0.00"), what + ": format string follows the culture");
+                    else Check.Equal(e.FormatString, formatString, what + ": format string");
+                    string tbl = Encoding.UTF8.GetString(m.Find(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$"));
+                    int col = tbl.IndexOf("name=\"Calc\"", StringComparison.Ordinal);
+                    string block = tbl[col..tbl.IndexOf("</DataObjects>", col, StringComparison.Ordinal)];
+                    Check.True(block.Contains("<DBType xsi:type=\"xsd:short\">" + e.DbType + "</DBType>"), what + ": DBType");
+                    Check.True(block.Contains("<XMType xsi:type=\"xsd:int\">" + e.XmType + "</XMType>"), what + ": XMType");
+                    Check.True(block.Contains("XMHashDataDictionary&lt;" + e.Dictionary + ">"), what + ": dictionary class");
+                    Check.Equal(e.Type == ColumnDataType.String, block.Contains("DictionaryFlags"), what + ": dictionary flags");
+                }
+            }
+        }
+
         public static void CalculatedColumnValidation()
         {
             void Rejects<T>(Action a, string what) where T : Exception
@@ -1081,7 +1125,7 @@ namespace PivotWright.Tests
                 Rejects<ArgumentException>(() => sales.AddCalculatedColumn("total qty", "1", ColumnDataType.Currency), "name of a measure");
                 Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "  ", ColumnDataType.Currency), "empty expression");
                 Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "=", ColumnDataType.Currency), "only =");
-                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "1", ColumnDataType.String), "type not seen in Excel yet");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "1", (ColumnDataType)99), "not a data type");
                 Check.Equal(0, sales.CalculatedColumns.Count, "failed calls change nothing");
                 sales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
                 Rejects<ArgumentException>(() => sales.AddCalculatedColumn("line total", "1", ColumnDataType.Currency), "duplicate calculated column");
