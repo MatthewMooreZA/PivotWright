@@ -116,6 +116,23 @@ if (calcMode == "calcfmt")
     s.AddCalculatedColumn("Fmt Date Short", "[Date]+1", ColumnDataType.DateTime, MeasureFormat.ShortDate(us));
     s.AddCalculatedColumn("Fmt Date Long", "[Date]+2", ColumnDataType.DateTime, MeasureFormat.LongDate(us));
 }
+// calcdatefmt: calculated date columns with a range of .NET date format strings (Group for patterns other than d and D is a guess)
+if (calcMode == "calcdatefmt")
+{
+    var us = new System.Globalization.CultureInfo("en-US");
+    var gb = new System.Globalization.CultureInfo("en-GB");
+    var za = new System.Globalization.CultureInfo("en-ZA");
+    var formats = new (string Name, string Format, System.Globalization.CultureInfo Culture)[]
+    {
+        ("Date d us", "d", us), ("Date d gb", "d", gb), ("Date d za", "d", za), ("Date D us", "D", us), ("Date D gb", "D", gb),
+        ("Date t us", "t", us), ("Date T us", "T", us), ("Date g us", "g", us), ("Date G gb", "G", gb), ("Date f us", "f", us),
+        ("Date F us", "F", us), ("Date M us", "M", us), ("Date Y us", "Y", us), ("Date s", "s", us), ("Date u", "u", us),
+        ("Date custom 1", "dd MMM yyyy", us), ("Date custom 2", "yyyy-MM-dd HH:mm", us), ("Date custom 3", "dddd d MMMM yyyy", gb),
+        ("Date custom 4", "MMM-yy", us), ("Date custom 5", "h:mm tt", us),
+    };
+    for (int n = 0; n < formats.Length; n++)
+        s.AddCalculatedColumn(formats[n].Name, $"[Date]+{n}", ColumnDataType.DateTime, MeasureFormat.Date(formats[n].Format, formats[n].Culture));
+}
 // calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32; with "datetable"); calcpd: one on Products and one on Dates
 if (calcMode is "calcd" or "calcsd" or "calcpd" or "calcdh") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
 // calcdh: calcd plus a hierarchy Year > Year Month over the calculated column (H31B; with "datetable")

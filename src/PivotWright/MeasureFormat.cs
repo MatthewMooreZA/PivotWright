@@ -9,11 +9,12 @@ namespace PivotWright;
 /// </summary>
 public sealed class MeasureFormat
 {
-    internal enum Kind { General, WholeNumber, Decimal, Currency, Percentage, ShortDate, LongDate }
+    internal enum Kind { General, WholeNumber, Decimal, Currency, Percentage, ShortDate, LongDate, Date }
 
-    internal MeasureFormat(Kind kind, int decimals = 2, bool thousands = true, CultureInfo? culture = null, bool noSymbol = false)
+    internal MeasureFormat(Kind kind, int decimals = 2, bool thousands = true, CultureInfo? culture = null, bool noSymbol = false, string? pattern = null)
     {
         KindValue = kind;
+        Pattern = pattern;
         Decimals = decimals;
         ThousandSeparator = thousands;
         Culture = culture;
@@ -27,6 +28,8 @@ public sealed class MeasureFormat
     internal CultureInfo? Culture { get; }
     /// <summary>Currency without a symbol (Power Pivot's Symbol "None").</summary>
     internal bool NoSymbol { get; }
+    /// <summary>The .NET date format string of <see cref="Date"/>, as given.</summary>
+    internal string? Pattern { get; }
 
     /// <summary>No formatting ("General").</summary>
     public static MeasureFormat General { get; } = new(Kind.General);
@@ -55,10 +58,58 @@ public sealed class MeasureFormat
     /// The short date pattern of a culture, for example 3/14/2001 for en-US, 14/03/2001 for en-GB, 2001/03/14 for en-ZA. With no culture, the
     /// model's culture is used, so the order of day, month and year is never fixed by the library.
     /// </summary>
-    public static MeasureFormat ShortDate(CultureInfo? culture = null) => new(Kind.ShortDate, culture: culture);
+    public static MeasureFormat ShortDate(CultureInfo? culture = null) => new(Kind.ShortDate, culture: culture, pattern: "d");
 
     /// <summary>The long date pattern of a culture, for example Wednesday, March 14, 2001 for en-US. With no culture, the model's culture is used.</summary>
-    public static MeasureFormat LongDate(CultureInfo? culture = null) => new(Kind.LongDate, culture: culture);
+    public static MeasureFormat LongDate(CultureInfo? culture = null) => new(Kind.LongDate, culture: culture, pattern: "D");
+
+    /// <summary>
+    /// A date format given as a .NET date and time format string, the same string <c>DateTime.ToString(format, culture)</c> takes: a custom
+    /// pattern such as <c>"dd MMM yyyy"</c> or <c>"yyyy-MM-dd HH:mm"</c>, or a single standard specifier (<c>"d"</c> short date, <c>"D"</c> long
+    /// date, <c>"t"</c>, <c>"T"</c>, <c>"f"</c>, <c>"F"</c>, <c>"g"</c>, <c>"G"</c>, <c>"M"</c>, <c>"Y"</c>, <c>"s"</c>, <c>"u"</c>, <c>"o"</c>,
+    /// <c>"R"</c>), which is replaced by the culture's own pattern for it: <c>"d"</c> is <c>M/d/yyyy</c> for en-US, <c>dd/MM/yyyy</c> for en-GB.
+    /// With no culture, the model's culture is used. The order of day, month and year is whatever the pattern or the culture says.
+    /// </summary>
+    /// <exception cref="ArgumentException">The format is empty or not a valid .NET date format string.</exception>
+    public static MeasureFormat Date(string format, CultureInfo? culture = null)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        if (format.Length == 0) throw new ArgumentException("A date format string is required.", nameof(format));
+        try { new DateTime(2001, 3, 14, 13, 30, 55).ToString(format, culture ?? CultureInfo.InvariantCulture); }
+        catch (FormatException e) { throw new ArgumentException($"'{format}' is not a valid date format string: {e.Message}", nameof(format), e); }
+        return new MeasureFormat(Kind.Date, culture: culture, pattern: format);
+    }
+
+    /// <summary>The pattern Excel stores for a date format: a standard specifier expanded through the culture, a custom pattern as given.</summary>
+    internal static string ExpandDatePattern(string format, CultureInfo culture)
+    {
+        if (format.Length != 1) return format;
+        // Recent culture data (ICU) puts a narrow no-break space before AM/PM; Windows, and so Excel, has a plain space (H38 screenshots).
+        return Standard(format, culture).Replace('\u202f', ' ').Replace('\u00a0', ' ');
+    }
+
+    private static string Standard(string format, CultureInfo culture)
+    {
+        var f = culture.DateTimeFormat;
+        return format[0] switch
+        {
+            'd' => f.ShortDatePattern,
+            'D' => f.LongDatePattern,
+            't' => f.ShortTimePattern,
+            'T' => f.LongTimePattern,
+            'f' => f.LongDatePattern + " " + f.ShortTimePattern,
+            'F' => f.FullDateTimePattern,
+            'g' => f.ShortDatePattern + " " + f.ShortTimePattern,
+            'G' => f.ShortDatePattern + " " + f.LongTimePattern,
+            'M' or 'm' => f.MonthDayPattern,
+            'Y' or 'y' => f.YearMonthPattern,
+            's' => f.SortableDateTimePattern,
+            'u' => f.UniversalSortableDateTimePattern,
+            'o' or 'O' => "yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fffffffK",
+            'R' or 'r' => f.RFC1123Pattern,
+            _ => throw new ArgumentException($"'{format}' is not a standard date format specifier; a one-letter custom pattern needs a leading % (for example \"%d\").", nameof(format)),
+        };
+    }
 
     private static int Check(int d)
         => d is >= 0 and <= 9 ? d : throw new ArgumentOutOfRangeException(nameof(d), "Decimals must be between 0 and 9.");
@@ -68,7 +119,7 @@ public sealed class MeasureFormat
     {
         if (format is null || format.KindValue == Kind.General) return;
         bool numeric = type is ColumnDataType.Int64 or ColumnDataType.Double or ColumnDataType.Currency;
-        bool date = format.KindValue is Kind.ShortDate or Kind.LongDate;
+        bool date = format.KindValue is Kind.ShortDate or Kind.LongDate or Kind.Date;
         if (date ? type == ColumnDataType.DateTime : numeric) return;
         string fits = date ? "a date format fits Date columns" : "a number format fits Whole Number, Decimal Number and Currency columns";
         throw new ArgumentException($"Column '{column}' is {type}; {fits}, not {format.KindValue}.", paramName);

@@ -255,13 +255,16 @@ internal static class AsslWriter
                 return CurrencyFormat(f, m, attribute: true);
             case MeasureFormat.Kind.ShortDate:
             case MeasureFormat.Kind.LongDate:
+            case MeasureFormat.Kind.Date:
             {
-                bool shortDate = f.KindValue == MeasureFormat.Kind.ShortDate;
                 var culture = f.Culture ?? m.Culture;
                 int lcid = f.Culture?.LCID ?? m.Lcid;
-                string pattern = shortDate ? culture.DateTimeFormat.ShortDatePattern : culture.DateTimeFormat.LongDatePattern;
+                string source = f.Pattern ?? "d";
+                string pattern = MeasureFormat.ExpandDatePattern(source, culture);
+                // Excel's Group is ShortDate or LongDate for those two (H37); for the other patterns the value is a guess (H38).
+                string group = source switch { "d" => "ShortDate", "D" => "LongDate", "t" => "ShortTime", "T" => "LongTime", _ => "Custom" };
                 return ("<Format Format=\"DateTimeCustom\" xmlns=\"\">\n                      <DateTimes>\n                        <DateTime LCID=\"" + lcid
-                    + "\" Group=\"" + (shortDate ? "ShortDate" : "LongDate") + "\" FormatString=\"" + E(pattern) + "\"/>\n                      </DateTimes>\n                    </Format>", pattern);
+                    + "\" Group=\"" + group + "\" FormatString=\"" + E(pattern) + "\"/>\n                      </DateTimes>\n                    </Format>", pattern);
             }
             default:
                 return (GeneralFormat, null);

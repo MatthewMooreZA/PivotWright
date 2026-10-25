@@ -62,6 +62,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
     ("Calculated columns: one block of BLANKs per segment of a larger table", Tests.CalculatedColumnSeveralSegments),
     ("Formats: the eight columns of Excel's H37 sample, currency symbols and date patterns", Tests.ColumnFormats),
+    ("Date formats are .NET date format strings: custom patterns as given, standard specifiers through the culture", Tests.DateFormatStrings),
     ("DAX text: paired brackets, parentheses and quotes are checked, real DAX is not rejected", Tests.DaxTextCheck),
     ("Calculated columns with hidden columns: hide a data column, a level, or the calculated column (H33 to H36)", Tests.CalculatedColumnsWithHiddenColumns),
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
@@ -1610,6 +1611,46 @@ namespace PivotWright.Tests
                 Rejects(() => new DataModelWriter().CreateTable("X", new[] { new ColumnDefinition("S", ColumnDataType.Boolean) { Format = MeasureFormat.WholeNumber } }), "number format on a TRUE/FALSE data column");
                 Check.Equal(0, checkSales.CalculatedColumns.Count, "failed calls change nothing");
             }
+        }
+
+        public static void DateFormatStrings()
+        {
+            var us = new CultureInfo("en-US");
+            var gb = new CultureInfo("en-GB");
+            var za = new CultureInfo("en-ZA");
+            // (format, culture, the pattern Excel gets, the Group written)
+            var cases = new (string Format, CultureInfo Culture, string Pattern, string Group)[]
+            {
+                ("d", us, "M/d/yyyy", "ShortDate"), ("d", gb, "dd/MM/yyyy", "ShortDate"), ("d", za, "yyyy/MM/dd", "ShortDate"),
+                ("D", us, "dddd, MMMM d, yyyy", "LongDate"), ("t", us, "h:mm tt", "ShortTime"), ("T", us, "h:mm:ss tt", "LongTime"),
+                ("s", us, "yyyy'-'MM'-'dd'T'HH':'mm':'ss", "Custom"), ("dd MMM yyyy", us, "dd MMM yyyy", "Custom"),
+                ("yyyy-MM-dd HH:mm", gb, "yyyy-MM-dd HH:mm", "Custom"), ("g", us, "M/d/yyyy h:mm tt", "Custom"),
+                ("G", gb, "dd/MM/yyyy HH:mm:ss", "Custom"), ("%d", us, "%d", "Custom"),
+            };
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var columns = cases.Select((c, i) => new ColumnDefinition("D" + i, ColumnDataType.DateTime) { Format = MeasureFormat.Date(c.Format, c.Culture) }).ToArray();
+            var table = model.CreateTable("T", columns);
+            table.AddRow(columns.Select(_ => (object?)new DateTime(2025, 3, 14, 13, 30, 55)).ToArray());
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"T_G\.\d+\.dim\.xml$"));
+            for (int i = 0; i < cases.Length; i++)
+            {
+                int at = dim.IndexOf("<Attribute><Name>D" + i + "</Name>", StringComparison.Ordinal);
+                string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+                var c = cases[i];
+                Check.True(a.Contains("Group=\"" + c.Group + "\""), c.Format + " " + c.Culture.Name + ": group " + c.Group);
+                Check.True(a.Contains("FormatString=\"" + System.Net.WebUtility.HtmlEncode(c.Pattern).Replace("&#39;", "&apos;") + "\"") || a.Contains("FormatString=\"" + c.Pattern + "\""), c.Format + " " + c.Culture.Name + ": pattern " + c.Pattern);
+                Check.True(a.Contains("LCID=\"" + c.Culture.LCID + "\""), c.Format + " " + c.Culture.Name + ": locale");
+            }
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date(""), "empty format");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("x"), "a letter that is no standard specifier");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("dd 'open"), "an unclosed literal");
+            Tests.Throws<ArgumentNullException>(() => MeasureFormat.Date(null!), "null format");
+            using var other = new DataModelWriter();
+            var t2 = other.CreateTable("U", new[] { new ColumnDefinition("N", ColumnDataType.Int64) });
+            Tests.Throws<ArgumentException>(() => t2.AddCalculatedColumn("C", "1", ColumnDataType.Int64, MeasureFormat.Date("d")), "a date format on a number column");
+            Tests.Throws<ArgumentException>(() => t2.AddMeasure("M", "1", MeasureFormat.Date("d")), "a custom date format on a measure");
         }
 
         public static void CalculatedColumnValidation()

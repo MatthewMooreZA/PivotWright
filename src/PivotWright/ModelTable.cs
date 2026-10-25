@@ -145,8 +145,8 @@ public sealed class ModelTable
             throw new ArgumentException($"A measure named '{name}' already exists ({taken}); measure names are unique across the model.", nameof(name));
         if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
-        if (format is { KindValue: MeasureFormat.Kind.LongDate } or { KindValue: MeasureFormat.Kind.ShortDate, Culture: not null })
-            throw new ArgumentException("A measure can only take the short date of the model's culture, MeasureFormat.ShortDate(); other date formats were never seen for measures.", nameof(format));
+        if (format is { KindValue: MeasureFormat.Kind.LongDate or MeasureFormat.Kind.Date } or { KindValue: MeasureFormat.Kind.ShortDate, Culture: not null })
+            throw new ArgumentException("A measure can only take the short date of the model's culture, MeasureFormat.ShortDate(); other date formats (including MeasureFormat.Date) were never seen for measures.", nameof(format));
         var definition = new MeasureDefinition { Name = name, Table = Name, Expression = expression, Format = format ?? MeasureFormat.General };
         Model.MeasureDefinitions.Add(definition);
         var measure = new ModelMeasure(this, definition);
