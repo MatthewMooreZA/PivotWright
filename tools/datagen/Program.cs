@@ -55,7 +55,7 @@ s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
 if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
 if (args.Length > 2 && args[2] == "calc")
 {
-    // calc [currency|whole|decimal|date|boolean|text]: one calculated column, as in Excel's H10 to H15 samples
+    // calc [currency|whole|decimal|date|boolean|text|related]: one calculated column, as in Excel's H10 to H15 samples
     var (calcName, calcFormula, calcType) = (args.Skip(3).FirstOrDefault(a => a != "plain") ?? "currency") switch
     {
         "whole" => ("Double Qty", "[Qty]*2", ColumnDataType.Int64),
@@ -63,6 +63,7 @@ if (args.Length > 2 && args[2] == "calc")
         "date" => ("Next Day", "[Date]+1", ColumnDataType.DateTime),
         "boolean" => ("Big Order", "[Qty]>2", ColumnDataType.Boolean),
         "text" => ("Label", "\"Qty \"&[Qty]", ColumnDataType.String),
+        "related" => ("Category", "RELATED(Products[Category])", ColumnDataType.String),
         _ => ("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency),
     };
     s.AddCalculatedColumn(calcName, calcFormula, calcType);
