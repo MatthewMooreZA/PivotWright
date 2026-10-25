@@ -1208,6 +1208,34 @@ namespace PivotWright.Tests
             Find(primaryTwo, @"\.0\.dim\\3\.Products_G\.Name Length\.0\.idf$");
             Find(primaryTwo, @"\.0\.dim\\4\.Products_G\.Name Length x2\.0\.idf$");
 
+            // Columns on both primary-side tables (Products and Dates) are extrapolated too: each table gets its own first-column values.
+            {
+                var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                for (int i = 0; i < 40; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(day, day.Year, day.ToString("MMMM", CultureInfo.InvariantCulture)); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(sales["Date"], dates["Date"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                products.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                dates.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64);
+                using (model)
+                {
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var bothPrimary = ModelReader.Read(ms.ToArray());
+                    Find(bothPrimary, @"Model\.27\.cub\.xml$");
+                    Check.Equal("3,2,2,3,", Counters(bothPrimary, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+                    Check.Equal("3,2,2,3,", Counters(bothPrimary, @"Dates_G\.9\.dim\.xml$"), "Dates dimension counters");
+                    Find(bothPrimary, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+                    Find(bothPrimary, @"\.0\.dim\\Dates_G\.3\.tbl\.xml$");
+                }
+            }
+
             // H20: one column on each.
             var both = Save((p, s) =>
             {

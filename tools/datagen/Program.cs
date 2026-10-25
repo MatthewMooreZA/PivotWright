@@ -83,13 +83,13 @@ for (int n = 0; n < onSales; n++)
     var (name, formula, type) = n < salesColumns.Length ? salesColumns[n] : ($"Qty x{n + 1}", $"[Qty]*{n + 1}", ColumnDataType.Int64);
     s.AddCalculatedColumn(name, formula, type);
 }
-// calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32); both with "datetable"
-if (calcMode is "calcd" or "calcsd") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
+// calcd: one column on Dates (H31); calcsd: one on Sales and one on Dates (H32; with "datetable"); calcpd: one on Products and one on Dates
+if (calcMode is "calcd" or "calcsd" or "calcpd") dates.AddCalculatedColumn("Year Month", "[Year]*100+[MonthNumber]", ColumnDataType.Int64);
 if (calcMode == "calcsd") s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
 // calcpN: N columns on Products (calcp is one, H19)
 var productsMatch = System.Text.RegularExpressions.Regex.Match(calcMode, @"^calcp(\d+)$");
 if (productsMatch.Success)
     for (int n = 1; n <= int.Parse(productsMatch.Groups[1].Value); n++)
         p.AddCalculatedColumn(n == 1 ? "Name Length" : $"Name Length x{n}", n == 1 ? "LEN([Product])" : $"LEN([Product])*{n}", ColumnDataType.Int64);
-if (calcMode is "calcp" or "calcsp" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+if (calcMode is "calcp" or "calcsp" or "calcpd" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

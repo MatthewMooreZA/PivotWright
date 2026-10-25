@@ -48,7 +48,7 @@ internal sealed class CalculatedPlan
     public bool HoldsColumns(string tableId) => Tables.TryGetValue(tableId, out var f) && f.HoldsColumns;
 
     private const string Seen =
-        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one or more on a hierarchy table that is the primary side of a relationship, and both together.";
+        "The shapes seen in Excel-written files are: one or more columns on the many-side table, one column on a hierarchy table that is the primary side of a relationship, and both together; more columns on the primary side, and columns on several primary-side tables, follow the same steps but were not seen.";
 
     private const string SeenPlain =
         "The shapes seen in Excel-written files are: one or more columns on the many-side table, one or more on a primary-side table, and both together.";
@@ -87,8 +87,8 @@ internal sealed class CalculatedPlan
         }
         var many = holders.Where(ManySide).ToList();
         var primary = holders.Where(t => !ManySide(t)).ToList();
-        if (many.Count > 1 || primary.Count > 1)
-            throw new InvalidOperationException($"The model has {total} calculated columns on {holders.Count} tables, which was never seen in an Excel-written file (at most one many-side table and one primary-side table can hold columns; the samples have one column on the primary side, more are extrapolated). " + seen);
+        if (many.Count > 1)
+            throw new InvalidOperationException($"The model has calculated columns on {many.Count} many-side tables, which was never seen in an Excel-written file (at most one many-side table can hold columns). " + seen);
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();
