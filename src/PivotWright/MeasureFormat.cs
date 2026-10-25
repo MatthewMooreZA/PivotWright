@@ -77,7 +77,24 @@ public sealed class MeasureFormat
         if (format.Length == 0) throw new ArgumentException("A date format string is required.", nameof(format));
         try { new DateTime(2001, 3, 14, 13, 30, 55).ToString(format, culture ?? CultureInfo.InvariantCulture); }
         catch (FormatException e) { throw new ArgumentException($"'{format}' is not a valid date format string: {e.Message}", nameof(format), e); }
+        string expanded = ExpandDatePattern(format, culture ?? CultureInfo.InvariantCulture);
+        if (format is "o" or "O" || UnquotedContains(expanded, "Kz"))
+            throw new ArgumentException($"'{format}' shows a time zone or offset (K, z); the Data Model has no time zones, so it cannot be used.", nameof(format));
         return new MeasureFormat(Kind.Date, culture: culture, pattern: format);
+    }
+
+    private static bool UnquotedContains(string pattern, string chars)
+    {
+        char q = '\0';
+        for (int i = 0; i < pattern.Length; i++)
+        {
+            char c = pattern[i];
+            if (q != '\0') { if (c == q) q = '\0'; }
+            else if (c == '\\') i++;
+            else if (c is '\'' or '"') q = c;
+            else if (chars.IndexOf(c) >= 0) return true;
+        }
+        return false;
     }
 
     /// <summary>The pattern Excel stores for a date format: a standard specifier expanded through the culture, a custom pattern as given.</summary>
@@ -86,6 +103,64 @@ public sealed class MeasureFormat
         if (format.Length != 1) return format;
         // Recent culture data (ICU) puts a narrow no-break space before AM/PM; Windows, and so Excel, has a plain space (H38 screenshots).
         return Standard(format, culture).Replace('\u202f', ' ').Replace('\u00a0', ' ');
+    }
+
+    /// <summary>
+    /// The engine's own format string for a .NET date pattern: Excel cell-format syntax, where <c>tt</c> is <c>AM/PM</c> and literals are
+    /// in double quotes (H38). Fractional seconds <c>fff</c> become <c>000</c>.
+    /// </summary>
+    internal static string ToEngineDatePattern(string pattern)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < pattern.Length;)
+        {
+            char c = pattern[i];
+            if (c == '\'' || c == '"')
+            {
+                int end = pattern.IndexOf(c, i + 1);
+                if (end < 0) end = pattern.Length;
+                string text = pattern.Substring(i + 1, end - i - 1);
+                if (text.Length > 0) sb.Append('"').Append(text.Replace("\"", "")).Append('"');
+                i = end + 1;
+            }
+            else if (c == '\\' && i + 1 < pattern.Length) { sb.Append('"').Append(pattern[i + 1]).Append('"'); i += 2; }
+            else if (c == 't' || c == 'f' || c == 'F')
+            {
+                int n = 1;
+                while (i + n < pattern.Length && pattern[i + n] == c) n++;
+                if (c == 't') sb.Append(n >= 2 ? "AM/PM" : "A/P");
+                else sb.Append('0', n);
+                i += n;
+            }
+            else { sb.Append(c); i++; }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>The Group Excel files a date pattern under in its format list (H37, H38); custom patterns are classified by what they show.</summary>
+    internal static string DateGroup(string source, string pattern)
+    {
+        switch (source)
+        {
+            case "d": return "ShortDate";
+            case "D": return "LongDate";
+            case "t": return "ShortTime";
+            case "T": return "LongTime";
+            case "s": return "SortableDateTime";
+        }
+        bool inQuote = false; char q = '\0';
+        bool date = false, time = false, seconds = false;
+        foreach (char c in pattern)
+        {
+            if (inQuote) { if (c == q) inQuote = false; continue; }
+            if (c == '\'' || c == '"') { inQuote = true; q = c; }
+            else if (c is 'd' or 'M' or 'y') date = true;
+            else if (c is 'h' or 'H' or 'm') time = true;
+            else if (c == 's') { time = true; seconds = true; }
+        }
+        if (date && time) return seconds ? "GeneralLongDateTime" : "GeneralShortDateTime";
+        if (time) return seconds ? "LongTime" : "ShortTime";
+        return source.Length == 1 && source[0] is 'M' or 'm' or 'Y' or 'y' ? "LongDate" : "ShortDate";
     }
 
     private static string Standard(string format, CultureInfo culture)

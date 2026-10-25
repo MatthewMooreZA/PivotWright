@@ -261,10 +261,11 @@ internal static class AsslWriter
                 int lcid = f.Culture?.LCID ?? m.Lcid;
                 string source = f.Pattern ?? "d";
                 string pattern = MeasureFormat.ExpandDatePattern(source, culture);
-                // Excel's Group is ShortDate or LongDate for those two (H37); for the other patterns the value is a guess (H38).
-                string group = source switch { "d" => "ShortDate", "D" => "LongDate", "t" => "ShortTime", "T" => "LongTime", _ => "Custom" };
+                // The annotation keeps the .NET pattern; the engine's format string is the same pattern in Excel's syntax (H38).
+                string group = MeasureFormat.DateGroup(source, pattern);
                 return ("<Format Format=\"DateTimeCustom\" xmlns=\"\">\n                      <DateTimes>\n                        <DateTime LCID=\"" + lcid
-                    + "\" Group=\"" + group + "\" FormatString=\"" + E(pattern) + "\"/>\n                      </DateTimes>\n                    </Format>", pattern);
+                    + "\" Group=\"" + group + "\" FormatString=\"" + E(pattern) + "\"/>\n                      </DateTimes>\n                    </Format>",
+                    MeasureFormat.ToEngineDatePattern(pattern));
             }
             default:
                 return (GeneralFormat, null);

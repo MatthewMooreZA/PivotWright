@@ -116,7 +116,7 @@ if (calcMode == "calcfmt")
     s.AddCalculatedColumn("Fmt Date Short", "[Date]+1", ColumnDataType.DateTime, MeasureFormat.ShortDate(us));
     s.AddCalculatedColumn("Fmt Date Long", "[Date]+2", ColumnDataType.DateTime, MeasureFormat.LongDate(us));
 }
-// calcdatefmt: calculated date columns with a range of .NET date format strings (Group for patterns other than d and D is a guess)
+// calcdatefmt: calculated date columns with a range of .NET date format strings 
 if (calcMode == "calcdatefmt")
 {
     var us = new System.Globalization.CultureInfo("en-US");

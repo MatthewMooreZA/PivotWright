@@ -1623,9 +1623,9 @@ namespace PivotWright.Tests
             {
                 ("d", us, "M/d/yyyy", "ShortDate"), ("d", gb, "dd/MM/yyyy", "ShortDate"), ("d", za, "yyyy/MM/dd", "ShortDate"),
                 ("D", us, "dddd, MMMM d, yyyy", "LongDate"), ("t", us, "h:mm tt", "ShortTime"), ("T", us, "h:mm:ss tt", "LongTime"),
-                ("s", us, "yyyy'-'MM'-'dd'T'HH':'mm':'ss", "Custom"), ("dd MMM yyyy", us, "dd MMM yyyy", "Custom"),
-                ("yyyy-MM-dd HH:mm", gb, "yyyy-MM-dd HH:mm", "Custom"), ("g", us, "M/d/yyyy h:mm tt", "Custom"),
-                ("G", gb, "dd/MM/yyyy HH:mm:ss", "Custom"), ("%d", us, "%d", "Custom"),
+                ("s", us, "yyyy'-'MM'-'dd'T'HH':'mm':'ss", "SortableDateTime"), ("dd MMM yyyy", us, "dd MMM yyyy", "ShortDate"),
+                ("yyyy-MM-dd HH:mm", gb, "yyyy-MM-dd HH:mm", "GeneralShortDateTime"), ("g", us, "M/d/yyyy h:mm tt", "GeneralShortDateTime"),
+                ("G", gb, "dd/MM/yyyy HH:mm:ss", "GeneralLongDateTime"), ("%d", us, "%d", "ShortDate"),
             };
             using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             var columns = cases.Select((c, i) => new ColumnDefinition("D" + i, ColumnDataType.DateTime) { Format = MeasureFormat.Date(c.Format, c.Culture) }).ToArray();
@@ -1643,6 +1643,12 @@ namespace PivotWright.Tests
                 Check.True(a.Contains("FormatString=\"" + System.Net.WebUtility.HtmlEncode(c.Pattern).Replace("&#39;", "&apos;") + "\"") || a.Contains("FormatString=\"" + c.Pattern + "\""), c.Format + " " + c.Culture.Name + ": pattern " + c.Pattern);
                 Check.True(a.Contains("LCID=\"" + c.Culture.LCID + "\""), c.Format + " " + c.Culture.Name + ": locale");
             }
+            // Engine strings as Excel wrote them in H38
+            Check.Equal("M/d/yyyy h:mm:ss AM/PM", MeasureFormat.ToEngineDatePattern("M/d/yyyy h:mm:ss tt"), "tt is AM/PM");
+            Check.Equal("yyyy\"-\"MM\"-\"dd\"T\"HH\":\"mm\":\"ss", MeasureFormat.ToEngineDatePattern("yyyy'-'MM'-'dd'T'HH':'mm':'ss"), "literals in double quotes");
+            Check.Equal("dd-MMM-yy h:mm AM/PM", MeasureFormat.ToEngineDatePattern("dd-MMM-yy h:mm tt"), "short date and time");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("o"), "round-trip format has a time zone");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("yyyy-MM-dd zzz"), "time zone offset");
             Tests.Throws<ArgumentException>(() => MeasureFormat.Date(""), "empty format");
             Tests.Throws<ArgumentException>(() => MeasureFormat.Date("x"), "a letter that is no standard specifier");
             Tests.Throws<ArgumentException>(() => MeasureFormat.Date("dd 'open"), "an unclosed literal");
