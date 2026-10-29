@@ -170,3 +170,7 @@ Each takes under two minutes in a fresh Excel session.
   - SQLBI "Automate PowerPivot data refresh in Excel"
 - The attribute name `excludeFromRefreshAll` and the exact XMLA accepted by `ADOConnection.Execute` are unverified.
 - No experiment here has been run in Excel.
+
+## 9. Result of D2 (Matthew, 2026-10-29, `refresh_diag_d2`, automatic mode)
+
+Putting `Qty` in Values and then `Line Total` ([Qty]*[Amount]) in Rows worked; putting `ProductKey`, which the formula does not use, in Values first also worked. So a model change (here a new implicit measure) makes Excel calculate the whole model, not a dependency chain. The remaining question is how to make that happen on open or on refresh without a user adding a field. D3 (opening the Power Pivot window) is next, then X1.
