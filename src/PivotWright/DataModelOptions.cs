@@ -75,6 +75,13 @@ public sealed class DataModelOptions
         "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=PivotWright;Persist Security Info=false";
 
     /// <summary>
+    /// Leave the data source out of Excel's Refresh All (the connection's "Refresh this connection on Refresh All" box is unticked, as in
+    /// Excel's H41 sample). The source is a placeholder, so Refresh All otherwise asks for a user name and password. Refresh All then
+    /// refreshes the PivotTables only. Default false.
+    /// </summary>
+    public bool ExcludeSourceFromRefreshAll { get; init; }
+
+    /// <summary>
     /// Compress the files inside the data model with Xpress (LZ77), as Excel does. Default true.
     /// Turning it off stores every chunk verbatim, which Excel also accepts, at the cost of a larger file.
     /// </summary>

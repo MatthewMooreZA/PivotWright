@@ -186,3 +186,5 @@ The `Workbook_Open` macro (ProcessRecalc, DatabaseID read from the DMV) worked i
 ## 12. Result of X2 (Matthew, 2026-10-29, `refresh_xl_x2a`)
 
 The connection's "Refresh this connection on Refresh All" box is ticked in our file and can be unticked. With it unticked, Refresh All shows no credentials prompt, but `Line Total` still does not work in Rows, so Refresh All does not calculate the column. Useful as a side benefit: the prompt goes away. Open: how Excel writes the unticked setting (ask for the saved file, H41).
+
+H41 (Matthew's file with the box unticked): `<x15:connection id="..." excludeFromRefreshAll="1"/>` inside the connection's extLst; Excel also adds `saveData="1"`. `DataModelOptions.ExcludeSourceFromRefreshAll` writes it (default false). Decision: the DAX-subset fallback is not wanted; X3 is next.

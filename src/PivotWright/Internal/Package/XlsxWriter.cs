@@ -23,7 +23,7 @@ internal static class XlsxWriter
         Text(zip, "xl/_rels/workbook.xml.rels", WorkbookRels);
         Text(zip, "xl/worksheets/sheet1.xml", Sheet);
         Text(zip, "xl/styles.xml", Styles);
-        Text(zip, "xl/connections.xml", Connections(info));
+        Text(zip, "xl/connections.xml", Connections(info, options.ExcludeSourceFromRefreshAll));
 
         // Excel stores the data model part uncompressed; keep it that way unless asked otherwise.
         var entry = zip.CreateEntry("xl/model/item.data",
@@ -107,13 +107,13 @@ internal static class XlsxWriter
         return sb.ToString();
     }
 
-    private static string Connections(ModelInfo info)
+    private static string Connections(ModelInfo info, bool excludeFromRefreshAll)
     {
         var sb = new StringBuilder(Decl);
         sb.Append("<connections xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
         sb.Append("<connection id=\"1\" name=\"").Append(Xml.Esc(info.DataSourceName))
           .Append("\" type=\"100\" refreshedVersion=\"8\" minRefreshableVersion=\"5\"><extLst><ext uri=\"{DE250136-89BD-433C-8126-D09CA5730AF9}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:connection id=\"")
-          .Append(info.DataSourceId).Append("\"/></ext></extLst></connection>");
+          .Append(info.DataSourceId).Append(excludeFromRefreshAll ? "\" excludeFromRefreshAll=\"1" : "").Append("\"/></ext></extLst></connection>");
         sb.Append("<connection id=\"2\" keepAlive=\"1\" name=\"ThisWorkbookDataModel\" description=\"Data Model\" type=\"5\" refreshedVersion=\"8\" minRefreshableVersion=\"5\" background=\"1\">");
         sb.Append("<dbPr connection=\"Data Model Connection\" command=\"Model\" commandType=\"1\"/><olapPr sendLocale=\"1\" rowDrillCount=\"1000\"/>");
         sb.Append("<extLst><ext uri=\"{DE250136-89BD-433C-8126-D09CA5730AF9}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:connection id=\"\" model=\"1\"/></ext></extLst></connection>");

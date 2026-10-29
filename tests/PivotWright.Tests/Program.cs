@@ -46,6 +46,7 @@ var tests = new (string Name, Action Body)[]
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
+    ("Options: ExcludeSourceFromRefreshAll writes the H41 attribute", Tests.ExcludeFromRefreshAll),
     ("Calculated column: Sort by Column with another calculated column (H39)", Tests.CalculatedColumnSortBy),
     ("AddDateTable: DateFormat formats the Date column", Tests.DateTableDateFormat),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
@@ -1854,6 +1855,22 @@ namespace PivotWright.Tests
             model.SaveModelPart(ms);
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
             Check.Equal(1 + 6, System.Text.RegularExpressions.Regex.Matches(dim, "<AttributeHierarchyVisible>false</AttributeHierarchyVisible>").Count, "row number plus six hidden attributes");
+        }
+
+        public static void ExcludeFromRefreshAll()
+        {
+            string Connections(bool exclude)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, ExcludeSourceFromRefreshAll = exclude });
+                model.CreateTable("T", new[] { new ColumnDefinition("N", ColumnDataType.Int64) }).AddRow(1L);
+                var ms = new MemoryStream();
+                model.Save(ms);
+                using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(ms.ToArray()));
+                using var r = new StreamReader(zip.GetEntry("xl/connections.xml")!.Open());
+                return r.ReadToEnd();
+            }
+            Check.True(!Connections(false).Contains("excludeFromRefreshAll"), "off by default");
+            Check.True(Connections(true).Contains("<x15:connection id=\"fe61cfce-2c03-495c-87ad-e281a1607748\" excludeFromRefreshAll=\"1\"/>") || Connections(true).Contains("excludeFromRefreshAll=\"1\"/>"), "attribute as in H41");
         }
 
         public static void CalculatedColumnSortBy()
