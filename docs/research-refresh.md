@@ -174,3 +174,7 @@ Each takes under two minutes in a fresh Excel session.
 ## 9. Result of D2 (Matthew, 2026-10-29, `refresh_diag_d2`, automatic mode)
 
 Putting `Qty` in Values and then `Line Total` ([Qty]*[Amount]) in Rows worked; putting `ProductKey`, which the formula does not use, in Values first also worked. So a model change (here a new implicit measure) makes Excel calculate the whole model, not a dependency chain. The remaining question is how to make that happen on open or on refresh without a user adding a field. D3 (opening the Power Pivot window) is next, then X1.
+
+## 10. Results of D3 and X1 (Matthew, 2026-10-29)
+
+D3: opening the Power Pivot window does not calculate the column (blanks with a warning, `Line Total` still fails in Rows). X1, `refresh_vba_x1`: in the VBA Immediate window, `Set c = ThisWorkbook.Model.DataModelConnection.ModelConnection.ADOConnection` works, and `c.Execute "<Process xmlns=...><Type>ProcessRecalc</Type><Object><DatabaseID>...</DatabaseID></Object></Process>"` calculates the whole model: `Line Total` then works in Rows with no field added. The DatabaseID is not the id inside our file but the `DATABASE_ID` Excel reports for the open workbook (`SELECT * FROM $SYSTEM.DBSCHEMA_CATALOGS`; `3E0EBD029C0F450FA3E2` that time), and `Microsoft_SQLServer_AnalysisServices` is its `CATALOG_NAME`, so a macro must read it at run time. The first attempt with the file's own id failed with run-time error -1055719414 (c113000a), an automation error. Next: the same code in `Workbook_Open` in a macro-enabled workbook.
