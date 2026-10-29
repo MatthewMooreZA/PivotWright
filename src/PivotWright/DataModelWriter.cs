@@ -227,7 +227,7 @@ public sealed class DataModelWriter : IDisposable
         var spec = new List<(ColumnDefinition column, Func<DateOnly, object> value)>();
         void Add(string column, ColumnDataType type, Func<DateOnly, object> value, string? sortBy = null, bool sortKey = false)
             => spec.Add((new ColumnDefinition(column, type) { SortByColumn = sortBy, IsHidden = sortKey && hideSortColumns }, value));
-        Add("Date", ColumnDataType.DateTime, d => d);
+        spec.Add((new ColumnDefinition("Date", ColumnDataType.DateTime) { Format = options.DateFormat }, d => d));
         Add("Year", ColumnDataType.Int64, d => (long)d.Year);
         Add("QuarterNumber", ColumnDataType.Int64, d => (long)((d.Month - 1) / 3 + 1), sortKey: true);
         Add("Quarter", ColumnDataType.String, d => "Q" + ((d.Month - 1) / 3 + 1), "QuarterNumber");

@@ -37,6 +37,7 @@ if (generated)
             CompleteYears = !(args.Length > 7 && args[7].Contains("exact")),
             IncludeYearMonth = !(args.Length > 7 && args[7].Contains("noym")),
             HideSortColumns = !(args.Length > 7 && args[7].Contains("nohide")),
+            DateFormat = args.Length > 7 && args[7].Contains("datefmt") ? MeasureFormat.Date("dd MMM yyyy") : null,   // "datefmt" in the options word
         });
 else
 {

@@ -46,6 +46,7 @@ var tests = new (string Name, Action Body)[]
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
+    ("AddDateTable: DateFormat formats the Date column", Tests.DateTableDateFormat),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
     ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
     ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
@@ -1852,6 +1853,24 @@ namespace PivotWright.Tests
             model.SaveModelPart(ms);
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
             Check.Equal(1 + 6, System.Text.RegularExpressions.Regex.Matches(dim, "<AttributeHierarchyVisible>false</AttributeHierarchyVisible>").Count, "row number plus six hidden attributes");
+        }
+
+        public static void DateTableDateFormat()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), new DateTableOptions { DateFormat = MeasureFormat.Date("dd MMM yyyy") });
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2025, 1, 1));
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"Dates_G\.\d+\.dim\.xml$"));
+            int at = dim.IndexOf("<Attribute><Name>Date</Name>", StringComparison.Ordinal);
+            string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+            Check.True(a.Contains("FormatString=\"dd MMM yyyy\""), "the Date column carries the format");
+            Check.True(!dim[(at + a.Length)..].Contains("dd MMM yyyy"), "no other column does");
+            Tests.Throws<ArgumentException>(() => new DateTableOptions { DateFormat = MeasureFormat.WholeNumber }, "a number format");
+            Check.True(new DateTableOptions().DateFormat is null, "default is Excel's general date");
         }
 
         public static void DateTableYearLabel()
