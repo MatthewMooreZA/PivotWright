@@ -131,6 +131,7 @@ public sealed class ModelTable
     public ModelMeasure AddMeasure(string name, string expression, MeasureFormat? format = null)
     {
         Model.ThrowIfDisposed();
+        ThrowIfCalculationTrigger();
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Measure name is required.", nameof(name));
         name = name.Trim();
         if (name.IndexOfAny(new[] { '[', ']' }) >= 0 || name.Any(char.IsControl))
@@ -181,6 +182,7 @@ public sealed class ModelTable
     public ModelCalculatedColumn AddCalculatedColumn(string name, string expression, ColumnDataType dataType, MeasureFormat? format = null)
     {
         Model.ThrowIfDisposed();
+        ThrowIfCalculationTrigger();
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Column name is required.", nameof(name));
         if (name.IndexOfAny(new[] { '[', ']' }) >= 0)
             throw new ArgumentException($"Column name '{name}' must not contain [ or ].", nameof(name));
@@ -218,6 +220,7 @@ public sealed class ModelTable
     public ModelHierarchy AddHierarchy(string name, params string[] levels)
     {
         Model.ThrowIfDisposed();
+        ThrowIfCalculationTrigger();
         ArgumentNullException.ThrowIfNull(levels);
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Hierarchy name is required.", nameof(name));
         string modelName = Identifiers.SanitizeName(name, "Hierarchy");
@@ -266,6 +269,7 @@ public sealed class ModelTable
     public void MarkAsDateTable(string dateColumn)
     {
         Model.ThrowIfDisposed();
+        ThrowIfCalculationTrigger();
         var c = Builder.FindColumn(dateColumn, nameof(dateColumn));
         if (c.Definition.DataType != ColumnDataType.DateTime)
             throw new ArgumentException($"'{Name}[{c.Definition.Name}]' is {c.Definition.DataType}; a date table needs a DateTime column.", nameof(dateColumn));
@@ -278,6 +282,15 @@ public sealed class ModelTable
     }
 
     /// <summary>The table name and row count.</summary>
+    /// <summary>True for the table made by <see cref="DataModelWriter.AddCalculationTrigger"/>.</summary>
+    public bool IsCalculationTrigger => Builder.IsLinked;
+
+    internal void ThrowIfCalculationTrigger()
+    {
+        if (Builder.IsLinked)
+            throw new InvalidOperationException($"Table '{Name}' was made by AddCalculationTrigger and only triggers the calculation; it cannot take measures, columns, hierarchies, relationships or a date table.");
+    }
+
     public override string ToString() => $"{Name} ({RowCount.ToString("N0", CultureInfo.InvariantCulture)} rows)";
 
     private static Action<IDataRecord> CreateAppender(TableBuilder table, int ordinal, Type fieldType)
