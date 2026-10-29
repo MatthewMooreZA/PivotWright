@@ -200,3 +200,7 @@ H42 (a one-cell linked table `Trigger` in the model, made in manual mode) patche
 ## 15. Results of X3c and X7 (Matthew, 2026-10-29)
 
 `refresh_trig_x3c` (H42, ManualCalcMode False only, connections untouched): loads with the external content prompt, `Line Total` works in Rows. So the exclusion from Refresh All is irrelevant. `refresh_h10_auto_x7` (Excel-written H10 with ManualCalcMode False, no linked table): loads with the external content warning, `Line Total` does not work in Rows until a recalculation is forced. So an Excel-written model plus automatic mode does not calculate on open; **the linked table is the trigger**. Likely mechanism (speculation): Excel re-syncs a linked table from its worksheet table on open, which is a model change, and automatic mode recalculates the whole model after one. Next: make the library write a linked table (worksheet, table part, worksheet connection, hidden defined name, model table, ManualCalcMode part).
+
+## 16. Result of X8 (Matthew, 2026-10-29, `refresh_dangling_x8`)
+
+Our plain file plus the workbook parts of a linked table (Sheet2 with a one-cell table, worksheet connection, modelTable entry) but no Trigger table in the model: opens without a repair prompt, Line Total does not work in Rows, and the data model contains no Trigger table (Excel ignored the entry). So the table has to be in the model itself. Side note: both sheets showed as selected because both had tabSelected; only one sheet may carry it.
