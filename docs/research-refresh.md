@@ -178,3 +178,7 @@ Putting `Qty` in Values and then `Line Total` ([Qty]*[Amount]) in Rows worked; p
 ## 10. Results of D3 and X1 (Matthew, 2026-10-29)
 
 D3: opening the Power Pivot window does not calculate the column (blanks with a warning, `Line Total` still fails in Rows). X1, `refresh_vba_x1`: in the VBA Immediate window, `Set c = ThisWorkbook.Model.DataModelConnection.ModelConnection.ADOConnection` works, and `c.Execute "<Process xmlns=...><Type>ProcessRecalc</Type><Object><DatabaseID>...</DatabaseID></Object></Process>"` calculates the whole model: `Line Total` then works in Rows with no field added. The DatabaseID is not the id inside our file but the `DATABASE_ID` Excel reports for the open workbook (`SELECT * FROM $SYSTEM.DBSCHEMA_CATALOGS`; `3E0EBD029C0F450FA3E2` that time), and `Microsoft_SQLServer_AnalysisServices` is its `CATALOG_NAME`, so a macro must read it at run time. The first attempt with the file's own id failed with run-time error -1055719414 (c113000a), an automation error. Next: the same code in `Workbook_Open` in a macro-enabled workbook.
+
+## 11. Decision on the macro route (Matthew, 2026-10-29)
+
+The `Workbook_Open` macro (ProcessRecalc, DatabaseID read from the DMV) worked in an .xlsm made by hand, but Matthew does not think forcing an .xlsm output is worth it. The library will not write macro-enabled workbooks. The macro stays documented as a manual workaround. Remaining routes: X2 (exclude the source from Refresh All), X3 (trigger table refreshed on open), or the fallback (the library evaluates a DAX subset).
