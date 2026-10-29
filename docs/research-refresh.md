@@ -192,3 +192,7 @@ H41 (Matthew's file with the box unticked): `<x15:connection id="..." excludeFro
 ## 13. Result of X3 (Matthew, 2026-10-29, `refresh_trig_x3`)
 
 H42 (a one-cell linked table `Trigger` in the model, made in manual mode) patched with ManualCalcMode False, `refreshOnLoad="1"` on the type 102 worksheet connection of `Trigger`, and `excludeFromRefreshAll` on PivotWright: it loaded, after clicking Enable External Content in the security bar, and `Line Total` went straight into Rows with no other field. So a macro-free trigger exists. Not yet known: which of the three patches matters, and whether the prompt can be avoided. Bisecting next (`refresh_trig_x3b`: without refreshOnLoad).
+
+## 14. Results of X3b and X6 (Matthew, 2026-10-29)
+
+`refresh_trig_x3b` (H42 with ManualCalcMode False and the source excluded from Refresh All, no refreshOnLoad): `Line Total` goes straight into Rows. So `refreshOnLoad` is not needed. `refresh_gemini_x6` (our plain file plus only the ManualCalcMode=False customXml part): loads with the External Data Connections warning, and `Line Total` does not work in Rows without forcing a calculation. So the part alone does not trigger a calculation. Left in x3b: the linked table `Trigger`, the exclusion from Refresh All, and the fact that Excel wrote the model. Next `refresh_trig_x3c`: H42 with ManualCalcMode False only, connections untouched.
