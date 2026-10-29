@@ -46,6 +46,7 @@ var tests = new (string Name, Action Body)[]
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
+    ("Calculated column: Sort by Column with another calculated column (H39)", Tests.CalculatedColumnSortBy),
     ("AddDateTable: DateFormat formats the Date column", Tests.DateTableDateFormat),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
     ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
@@ -1853,6 +1854,36 @@ namespace PivotWright.Tests
             model.SaveModelPart(ms);
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
             Check.Equal(1 + 6, System.Text.RegularExpressions.Regex.Matches(dim, "<AttributeHierarchyVisible>false</AttributeHierarchyVisible>").Count, "row number plus six hidden attributes");
+        }
+
+        public static void CalculatedColumnSortBy()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var dim0 = model.CreateTable("Products", new[] { new ColumnDefinition("Key", ColumnDataType.Int64) });
+            dim0.AddRow(1L);
+            var t = model.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
+            for (int i = 0; i < 100; i++) t.AddRow(1L, (decimal)i);
+            model.AddRelationship(t["Key"], dim0["Key"]);
+            var band = t.AddCalculatedColumn("Band", "IF([Amount]>30,\"High\",\"Low\")", ColumnDataType.String);
+            var order = t.AddCalculatedColumn("Band Order", "IF([Amount]>30,2,1)", ColumnDataType.Int64);
+            band.SortByColumn = order;
+            Check.True(band.SortByColumn == order, "getter returns the sort column");
+            Tests.Throws<ArgumentException>(() => band.SortByColumn = band, "itself");
+            Tests.Throws<ArgumentException>(() => order.SortByColumn = band, "sort column that is itself sorted");
+            var third = t.AddCalculatedColumn("Third", "1", ColumnDataType.Int64);
+            Tests.Throws<ArgumentException>(() => third.SortByColumn = band, "a sorted column as sort column");
+            Tests.Throws<ArgumentException>(() => order.SortByColumn = third, "a sort column cannot be sorted");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            var files = ModelReader.Read(ms.ToArray());
+            string dim = Encoding.UTF8.GetString(files.Find(@"Sales_G\.\d+\.dim\.xml$"));
+            int at = dim.IndexOf("<Attribute><Name>Band</Name>", StringComparison.Ordinal);
+            string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+            Check.True(a.Contains("<OrderBy>AttributeKey</OrderBy>") && a.Contains("<OrderByAttributeID>" + order.Definition.Id + "</OrderByAttributeID>"), "attribute sorted by the other column: " + a[..300]);
+            Check.True(a.Contains("<ddl200:ProcessingState>Unprocessed</ddl200:ProcessingState>"), "still unprocessed");
+            Check.True(Encoding.UTF8.GetString(files.Find(@"Sales_G\.\d+\.tbl\.xml$")).Contains("<OrderByColumn>" + order.Definition.Id + "</OrderByColumn>"), "tbl.xml names the sort column");
+            band.SortByColumn = null;
+            Check.True(band.SortByColumn is null, "cleared");
         }
 
         public static void DateTableDateFormat()

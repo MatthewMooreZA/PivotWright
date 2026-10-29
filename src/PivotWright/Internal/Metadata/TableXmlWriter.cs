@@ -324,7 +324,7 @@ internal static class TableXmlWriter
     {
         long rows = col.Rows;
         x.Open("XMRawColumn", col.Id, providerVersion: 1);
-        x.Properties(p => p.Long("Settings", 3073).Long("ColumnFlags", 8).Raw("<Collation/><OrderByColumn/>").Long("Locale", lcid).UInt("BinaryCharacters", 0));
+        x.Properties(p => p.Long("Settings", 3073).Long("ColumnFlags", 8).Raw(col.OrderByColumnId is null ? "<Collation/><OrderByColumn/>" : "<Collation/><OrderByColumn>" + System.Security.SecurityElement.Escape(col.OrderByColumnId) + "</OrderByColumn>").Long("Locale", lcid).UInt("BinaryCharacters", 0));
         x.Members(m =>
         {
             m.Member("IntrinsicHierarchy", h =>

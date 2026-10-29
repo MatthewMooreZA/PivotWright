@@ -118,6 +118,13 @@ if (calcMode == "calcfmt")
     s.AddCalculatedColumn("Fmt Date Long", "[Date]+2", ColumnDataType.DateTime, MeasureFormat.LongDate(us));
 }
 // calcdatefmt: calculated date columns with a range of .NET date format strings 
+// calcsort: Line Total Band sorted by Band Order (H39)
+if (calcMode == "calcsort")
+{
+    var band = s.AddCalculatedColumn("Line Total Band", "IF([Amount]>30,\"High\",\"Low\")", ColumnDataType.String);
+    var order = s.AddCalculatedColumn("Band Order", "IF([Amount]>30,2,1)", ColumnDataType.Int64);
+    band.SortByColumn = order;
+}
 if (calcMode == "calcdatefmt")
 {
     var us = new System.Globalization.CultureInfo("en-US");

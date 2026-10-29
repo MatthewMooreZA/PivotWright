@@ -44,6 +44,8 @@ internal sealed class EncodedCalculatedColumn
     public required IReadOnlyList<EncodedSegment> Segments { get; init; }
     public bool IsHidden { get; init; }
     public MeasureFormat? Format { get; init; }
+    /// <summary>Id of the calculated column that orders this one, or null.</summary>
+    public string? OrderByColumnId { get; init; }
 }
 
 /// <summary>Collects the rows of one table.</summary>
@@ -316,7 +318,7 @@ internal sealed class TableBuilder : IDisposable
                     segments.Add(segment);
                 }
             }
-            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden, Format = c.Format });
+            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden, Format = c.Format, OrderByColumnId = c.SortBy?.Id });
         }
         var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
         result.CalculatedColumns.AddRange(calculated);

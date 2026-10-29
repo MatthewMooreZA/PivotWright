@@ -467,7 +467,7 @@ internal static class AsslWriter
         sb.Append("<Annotations").Append(NsB).Append(">\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ")
           .Append(annotation).Append("\n                  </Value>\n                </Annotation>\n              </Annotations>");
         sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
-        AttributeCommon(sb, visible: !c.IsHidden, processed: false);
+        AttributeCommon(sb, visible: !c.IsHidden, orderBy: c.OrderByColumnId, processed: false);
         sb.Append("<ddl200:InferredDatatype>").Append(InferredDatatype(c.DataType)).Append("</ddl200:InferredDatatype>");
         string expression = "<Source xsi:type=\"ddl200_200:ExpressionBinding\"><Expression>" + E(c.Expression) + "</Expression></Source>";
         sb.Append("<KeyColumns><KeyColumn><DataType>Empty</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>").Append(expression).Append("</KeyColumn></KeyColumns>");
