@@ -188,3 +188,7 @@ The `Workbook_Open` macro (ProcessRecalc, DatabaseID read from the DMV) worked i
 The connection's "Refresh this connection on Refresh All" box is ticked in our file and can be unticked. With it unticked, Refresh All shows no credentials prompt, but `Line Total` still does not work in Rows, so Refresh All does not calculate the column. Useful as a side benefit: the prompt goes away. Open: how Excel writes the unticked setting (ask for the saved file, H41).
 
 H41 (Matthew's file with the box unticked): `<x15:connection id="..." excludeFromRefreshAll="1"/>` inside the connection's extLst; Excel also adds `saveData="1"`. `DataModelOptions.ExcludeSourceFromRefreshAll` writes it (default false). Decision: the DAX-subset fallback is not wanted; X3 is next.
+
+## 13. Result of X3 (Matthew, 2026-10-29, `refresh_trig_x3`)
+
+H42 (a one-cell linked table `Trigger` in the model, made in manual mode) patched with ManualCalcMode False, `refreshOnLoad="1"` on the type 102 worksheet connection of `Trigger`, and `excludeFromRefreshAll` on PivotWright: it loaded, after clicking Enable External Content in the security bar, and `Line Total` went straight into Rows with no other field. So a macro-free trigger exists. Not yet known: which of the three patches matters, and whether the prompt can be avoided. Bisecting next (`refresh_trig_x3b`: without refreshOnLoad).
