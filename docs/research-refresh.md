@@ -182,3 +182,7 @@ D3: opening the Power Pivot window does not calculate the column (blanks with a 
 ## 11. Decision on the macro route (Matthew, 2026-10-29)
 
 The `Workbook_Open` macro (ProcessRecalc, DatabaseID read from the DMV) worked in an .xlsm made by hand, but Matthew does not think forcing an .xlsm output is worth it. The library will not write macro-enabled workbooks. The macro stays documented as a manual workaround. Remaining routes: X2 (exclude the source from Refresh All), X3 (trigger table refreshed on open), or the fallback (the library evaluates a DAX subset).
+
+## 12. Result of X2 (Matthew, 2026-10-29, `refresh_xl_x2a`)
+
+The connection's "Refresh this connection on Refresh All" box is ticked in our file and can be unticked. With it unticked, Refresh All shows no credentials prompt, but `Line Total` still does not work in Rows, so Refresh All does not calculate the column. Useful as a side benefit: the prompt goes away. Open: how Excel writes the unticked setting (ask for the saved file, H41).
