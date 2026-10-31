@@ -1903,7 +1903,7 @@ namespace PivotWright.Tests
                 try { System.Xml.Linq.XDocument.Parse(r.ReadToEnd()); } catch (Exception x) { throw new Exception("Not well-formed: " + e.FullName + ": " + x.Message); }
             }
             string workbook = Part("xl/workbook.xml"), connections = Part("xl/connections.xml");
-            Check.True(workbook.Contains("<sheet name=\"Sheet2\" sheetId=\"2\" r:id=\"rId5\"/>"), "second sheet");
+            Check.True(workbook.Contains("<sheet name=\"Sheet2\" sheetId=\"2\" state=\"veryHidden\" r:id=\"rId5\"/>"), "second sheet");
             Check.True(workbook.Contains("<definedName name=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\" hidden=\"1\">Trigger[]</definedName>"), "hidden defined name");
             Check.True(workbook.Contains("<x15:modelTable id=\"Trigger\" name=\"Trigger\" connection=\"WorksheetConnection_PivotWright.xlsx!Trigger\"/>"), "model table of the linked connection");
             Check.True(connections.Contains("type=\"102\" refreshOnLoad=\"1\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\"/>"), "worksheet connection");

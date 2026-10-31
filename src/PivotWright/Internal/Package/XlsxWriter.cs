@@ -78,7 +78,7 @@ internal static class XlsxWriter
         sb.Append("<workbookPr/>");
         sb.Append("<bookViews><workbookView xWindow=\"-110\" yWindow=\"-110\" windowWidth=\"19420\" windowHeight=\"11500\"/></bookViews>");
         sb.Append("<sheets><sheet name=\"").Append(Xml.Esc(sheetName)).Append("\" sheetId=\"1\" r:id=\"rId1\"/>");
-        if (linked is not null) sb.Append("<sheet name=\"").Append(LinkedSheetName).Append("\" sheetId=\"2\" r:id=\"rId5\"/>");
+        if (linked is not null) sb.Append("<sheet name=\"").Append(LinkedSheetName).Append("\" sheetId=\"2\" state=\"veryHidden\" r:id=\"rId5\"/>");
         sb.Append("</sheets>");
         if (linked is not null) sb.Append("<definedNames><definedName name=\"").Append(LinkedSourceName(linked)).Append("\" hidden=\"1\">").Append(Xml.Esc(linked.Name)).Append("[]</definedName></definedNames>");
         sb.Append("<calcPr calcId=\"191029\"/>");
