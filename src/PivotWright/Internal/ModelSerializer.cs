@@ -63,9 +63,41 @@ internal sealed class ModelSerializer
         }
     }
 
+    // A KPI is written the way Excel saves it right after "Create KPI" on a model with hierarchies, relationships and one measure with a
+    // KPI (SPEC section 12, H47 to H49). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
+    // saves again, or null without a KPI.
+    private string? ValidateKpis()
+    {
+        var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
+        if (withKpi.Count == 0) return null;
+        string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
+        string seen = " Excel-written samples exist only for one KPI in a model with hierarchies and relationships, without a date table, hidden columns or calculated columns.";
+        if (withKpi.Count > 1)
+            throw new InvalidOperationException($"The model has {withKpi.Count} KPIs, but only one KPI per model was ever seen in an Excel-written file.{seen}");
+        var kpiMeasure = withKpi[0];
+        if (_hierarchies.Count == 0)
+            throw new InvalidOperationException($"The KPI of {name} is in a model without hierarchies, which was never seen in an Excel-written file. Add a hierarchy (AddHierarchy).{seen}");
+        if (_relationships.Count == 0)
+            throw new InvalidOperationException($"The KPI of {name} is in a model without relationships, which was never seen in an Excel-written file. Add a relationship (AddRelationship).{seen}");
+        if (_tables.Any(t => t.DateColumn is not null))
+            throw new InvalidOperationException($"The KPI of {name} is in a model with a date table, which was never seen in an Excel-written file.{seen}");
+        if (_tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Count > 0))
+            throw new InvalidOperationException($"The KPI of {name} is in a model with hidden or calculated columns, which was never seen in an Excel-written file.{seen}");
+        if (kpiMeasure.Hidden)
+            throw new InvalidOperationException($"{name} is hidden and has a KPI, which was never seen in an Excel-written file.{seen}");
+        if (kpiMeasure.Kpi!.GoalMeasure is { Hidden: true } goal)
+            throw new InvalidOperationException($"The target of the KPI of {name}, '{goal.Table}'[{goal.Name}], is hidden, which was never seen in an Excel-written file.{seen}");
+        // Power Pivot creates two hidden measures for the KPI, named after the measure.
+        foreach (var hidden in new[] { "_" + kpiMeasure.Name + " Goal", "_" + kpiMeasure.Name + " Status" })
+            if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
+                throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
+        return _relationships[0].To.Id;
+    }
+
     public void Write(Stream output)
     {
         ValidateDateTables();
+        string? kpiTable = ValidateKpis();
         var calc = CalculatedPlan.Create(_tables.Where(t => !t.IsLinked).ToList(), _relationships, _hierarchies);
         if (calc is not null)
             foreach (var table in _tables)
@@ -115,6 +147,7 @@ internal sealed class ModelSerializer
             LinkedTables = _tables.Where(t => t.IsLinked).Select(t => t.Id).ToHashSet(),
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
             Calc = calc,
+            KpiResavedTable = kpiTable,
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);
@@ -175,6 +208,7 @@ internal sealed class ModelSerializer
         {
             if (Info.Calc.CubeInfo) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         }
+        else if (Info.KpiProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         else if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {

@@ -63,11 +63,19 @@ internal sealed class ModelInfo
     public CalculatedPlan? Calc { get; init; }
     public bool CalculatedProfile => Calc is not null;
 
+    /// <summary>
+    /// Id of the table Excel saves again when a KPI is created (the primary side of the first relationship), or null without a KPI.
+    /// A model with a KPI is written the way Excel saves it right after "Create KPI" on a model with hierarchies (H47 to H49, SPEC
+    /// section 12): the cube, the measure groups and the script one step up and that table's dimension one step up.
+    /// </summary>
+    public string? KpiResavedTable { get; init; }
+    public bool KpiProfile => KpiResavedTable is not null;
+
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => Calc?.Cube ?? (AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
+    public int CubeVersion => Calc?.Cube ?? (KpiProfile ? 19 : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
     public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? 20 : CubeVersion);
-    public int ScriptVersion => Calc?.Script ?? (AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
+    public int ScriptVersion => Calc?.Script ?? (KpiProfile ? 10 : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
     public int MeasureGroupVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : MeasureGroupVersion;
@@ -79,11 +87,12 @@ internal sealed class ModelInfo
     /// <summary>Dimension version of a linked table: 2, as Excel writes it (H42).</summary>
     public const int LinkedDimensionVersion = 2;
     /// <summary>True when Excel saved the table's dimension again after an edit (H10), which drops the empty annotation values.</summary>
-    public bool Resaved(string tableId) => Calc is not null && Calc.Resaved(tableId);
+    public bool Resaved(string tableId) => (Calc is not null && Calc.Resaved(tableId)) || tableId == KpiResavedTable;
     public int DimensionVersion(string tableId, bool manySide) =>
         Calc is not null && Calc.Tables.TryGetValue(tableId, out var calc) ? calc.DimensionVersion
         : (HierarchyTables.Contains(tableId) ? 5 : manySide ? (AnyHierarchy ? 3 : 2) : 1) + (AnyDate ? 1 : 0)
-        + (HiddenProfile && HiddenTables.Contains(tableId) ? (HierarchyTables.Contains(tableId) ? 2 : 1) : 0);
+        + (HiddenProfile && HiddenTables.Contains(tableId) ? (HierarchyTables.Contains(tableId) ? 2 : 1) : 0)
+        + (tableId == KpiResavedTable ? 1 : 0);
     /// <summary>Version of a table's .tbl.xml: 2 when it holds hierarchies, plus 1 for a date table or a table related to one.</summary>
     public int TableVersion(string tableId) =>
         Calc is not null && Calc.Tables.TryGetValue(tableId, out var calc) && calc.TableVersion is { } version ? version :
@@ -556,13 +565,15 @@ internal static class AsslWriter
         }
         sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.Calc?.CubeStructure ?? (m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0)) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.HiddenProfile ? m.EditedAt.AddMilliseconds(200) : m.Created)).Append("</LastUpdate>");
-        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersionOf(t.Id) + ".det.xml")))).Append("</MeasureGroupFileList>");
+        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile || m.KpiProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersionOf(t.Id) + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append("<PerspectiveFileList/><AssemblyFileList>MdxScript." + m.ScriptVersion + ".scr.xml</AssemblyFileList><PermissionFileList/></Cube></ObjectDefinition></Load>");
         return sb.ToString();
     }
 
     public static string MdxScript(ModelInfo m, IReadOnlyList<MeasureDefinition> measures)
     {
+        // With a KPI the commands and properties are listed by measure name, as in H48 (Target Qty before Total Qty, though it was added later).
+        if (m.KpiProfile) measures = measures.OrderBy(me => me.Name, StringComparer.Ordinal).ToList();
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MdxScript>");
@@ -576,7 +587,7 @@ internal static class AsslWriter
             sb.Append("<Command><Text>----------------------------------------------------------\n")
               .Append("-- PowerPivot measures command (do not modify manually) --\n")
               .Append("----------------------------------------------------------\n\n\n")
-              .Append(E("CREATE MEASURE '" + me.Table.Replace("'", "''") + "'[" + me.Name + "]=" + me.Expression + ";\n"))
+              .Append(E("CREATE MEASURE '" + me.Table.Replace("'", "''") + "'[" + me.Name + "]=" + me.Expression + ";\n" + (me.Kpi is { } kpi ? KpiScript(me, kpi) : "")))
               .Append("</Text><Annotations").Append(NsA).Append(">\n                <Annotation>\n                  <Name>FullName</Name>\n                  <Value>")
               .Append(E(me.Name)).Append("</Value>\n                </Annotation>\n                <Annotation>\n                  <Name>Table</Name>\n                  <Value>")
               .Append(E(me.Table)).Append("</Value>\n                </Annotation>\n              </Annotations></Command>");
@@ -592,15 +603,83 @@ internal static class AsslWriter
                 sb.Append("<CalculationProperty><CalculationReference>[").Append(E(me.Name)).Append("]</CalculationReference><CalculationType>Member</CalculationType><Description/><FormatString>")
                   .Append(E("'" + formatString.Replace("'", "''") + "'"))
                   .Append("</FormatString><ForeColor/><BackColor/><FontName/><FontSize/><FontFlags/><NonEmptyBehavior/><AssociatedMeasureGroupID/><DisplayFolder/><Language/><Annotations>")
-                  .Append("\n                <Annotation>\n                  <Name>Type</Name>\n                  <Value>User</Value>\n                </Annotation>")
+                  .Append("\n                <Annotation>\n                  <Name>Type</Name>\n                  <Value>").Append(me.Kpi is null ? "User" : "Kpi").Append("</Value>\n                </Annotation>")
                   .Append("\n                <Annotation>\n                  <Name>IsPrivate</Name>\n                  <Value>").Append(me.Hidden ? "True" : "False").Append("</Value>\n                </Annotation>")
                   .Append("\n                <Annotation>\n                  <Name>Format</Name>\n                  <Value>\n                    ").Append(formatXml)
-                  .Append("\n                  </Value>\n                </Annotation>\n              </Annotations><Translations/></CalculationProperty>");
+                  .Append("\n                  </Value>\n                </Annotation>");
+                if (me.Kpi is { } kpi) sb.Append(KpiAnnotations(kpi));
+                sb.Append("\n              </Annotations><Translations/></CalculationProperty>");
+                if (me.Kpi is not null) sb.Append(KpiProperties(me));
             }
+            // Excel adds the default member as a calculation property once the model has a KPI (H47).
+            if (measures.Any(me => me.Kpi is not null))
+                sb.Append("<CalculationProperty><CalculationReference>Measures.[").Append(DefaultMemberName).Append("]</CalculationReference><CalculationType>Member</CalculationType><Description/><Visible>false</Visible><FormatString/><ForeColor/><BackColor/><FontName/><FontSize/><FontFlags/><NonEmptyBehavior/><AssociatedMeasureGroupID/><DisplayFolder/><Language/><Translations/></CalculationProperty>");
             sb.Append("</CalculationProperties>");
         }
         sb.Append("</MdxScript></ObjectDefinition></Load>");
         return sb.ToString();
+    }
+
+    // ---- KPIs (SPEC section 12; Excel's H47, H48 and H49) ----
+
+    private static string DaxTable(string table) => "'" + table.Replace("'", "''") + "'";
+    private static string Num(decimal d) => d.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
+    private static string GoalName(MeasureDefinition me) => "_" + me.Name + " Goal";
+    private static string StatusName(MeasureDefinition me) => "_" + me.Name + " Status";
+
+    /// <summary>The hidden goal and status measures and the CREATE KPI command that follow the measure in its command.</summary>
+    private static string KpiScript(MeasureDefinition me, KpiDefinition k)
+    {
+        string t = DaxTable(me.Table), value = t + "[" + me.Name + "]";
+        bool ratio = k.GoalMeasure is not null;
+        // A fixed target compares the value with absolute thresholds; a measure as target compares value / target with fractions.
+        string v = ratio ? value + "/" + t + "[" + GoalName(me) + "]" : value;
+        var th = k.Thresholds.Select(f => ratio ? Num((decimal)f) : Num((decimal)f * (decimal)k.GoalValue!.Value)).ToList();
+        string goal = ratio ? DaxTable(k.GoalMeasure!.Table) + "[" + k.GoalMeasure.Name + "]" : Num((decimal)k.GoalValue!.Value);
+        string s12 = new(' ', 12), s16 = new(' ', 16), s20 = new(' ', 20);
+        string status = "if(ISBLANK(" + v + "),BLANK(),\n";
+        if (k.Scale == KpiScale.Linear)
+            status += s20 + "If(" + v + "<" + th[0] + ",-1,\n\t" + s16 + "If(" + v + "<" + th[1] + ",0,1)\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
+        else
+            status += s16 + "If(" + v + "<" + th[1] + ",\n\t" + s16 + "If(" + v + "<" + th[0] + ",-1,0),\n\t" + s16 + "If(" + v + "<" + th[2] + ",1,\n\t\t"
+                + s16 + "If(" + v + "<" + th[3] + ",0,-1)\n\t" + s16 + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
+        return "CREATE MEASURE " + t + "[" + GoalName(me) + "] = " + goal + "; \n"
+             + "CREATE MEASURE " + t + "[" + StatusName(me) + "] = " + status
+             + "CREATE KPI CURRENTCUBE.[" + me.Name + "] AS Measures.[" + me.Name + "], ASSOCIATED_MEASURE_GROUP = '" + me.Table.Replace("'", "''")
+             + "', GOAL = Measures.[" + GoalName(me) + "], STATUS = Measures.[" + StatusName(me) + "], STATUS_GRAPHIC = '" + k.Graphic + "';\n";
+    }
+
+    private static string Annotation(string name, string value) =>
+        "\n                <Annotation>\n                  <Name>" + E(name) + "</Name>\n                  " + (value.Length == 0 ? "<Value/>" : "<Value>" + E(value) + "</Value>") + "\n                </Annotation>";
+
+    /// <summary>The KPI annotations of the base measure, in the order Excel writes them for a new KPI.</summary>
+    private static string KpiAnnotations(KpiDefinition k)
+    {
+        bool ratio = k.GoalMeasure is not null;
+        var sb = new StringBuilder();
+        sb.Append(Annotation("GoalType", ratio ? "Measure" : "StaticValue"));
+        if (!ratio) sb.Append(Annotation("GoalValue", Num((decimal)k.GoalValue!.Value)));
+        sb.Append(Annotation("KpiStatusType", k.Scale.ToString()))
+          .Append(Annotation("KpiThresholdType", ratio ? "Percentage" : "Absolute"))
+          .Append(Annotation("KpiThresholdOrdering", "Ascending"))
+          .Append(Annotation("KpiThresholdCount", k.Thresholds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        for (int i = 0; i < k.Thresholds.Count; i++)
+            sb.Append(Annotation("KpiThreshold_" + i, Num(ratio ? (decimal)k.Thresholds[i] * 100m : (decimal)k.Thresholds[i] * (decimal)k.GoalValue!.Value)));
+        sb.Append(Annotation("ValueDescription", "")).Append(Annotation("GoalDescription", "")).Append(Annotation("StatusDescription", "")).Append(Annotation("TrendDescription", ""));
+        if (ratio) sb.Append(Annotation("GoalMeasure", k.GoalMeasure!.Name)).Append(Annotation("GoalMeasureTableName", k.GoalMeasure.Table));
+        return sb.ToString();
+    }
+
+    /// <summary>The goal and status measures and the KPI itself as calculation properties.</summary>
+    private static string KpiProperties(MeasureDefinition me)
+    {
+        string Support(string reference, bool visibleElement, string type) =>
+            "<CalculationProperty><CalculationReference>" + E(reference) + "</CalculationReference><CalculationType>Member</CalculationType><Description/>"
+            + (visibleElement ? "<Visible>false</Visible>" : "")
+            + "<FormatString/><ForeColor/><BackColor/><FontName/><FontSize/><FontFlags/><NonEmptyBehavior/><AssociatedMeasureGroupID/><DisplayFolder/><Language/><Annotations>"
+            + Annotation("Type", type) + Annotation("MainObjectType", "Measure") + Annotation("MainObjectName", me.Name)
+            + "\n              </Annotations><Translations/></CalculationProperty>";
+        return Support("[" + GoalName(me) + "]", true, "SupportMdx") + Support("[" + StatusName(me) + "]", true, "SupportMdx") + Support("KPIs.[" + me.Name + "]", false, "SupportKpi");
     }
 
     // General and WholeNumber are verified against Excel-written files; the rest follow the same pattern.

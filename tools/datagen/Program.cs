@@ -63,7 +63,12 @@ if (args.Length > 2 && args[2] == "calcmf")
 bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain", or a trailing "plain" after a calc mode)
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
-s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+// kpi: a KPI on Total Qty with a target of 1000 and the default thresholds (H47); kpimeasure: the target is the measure Target Qty (H48);
+// kpistyle: the Centered scale with the Road Signs icons (H49)
+if (args.Length > 2 && args[2] == "kpi") totalQty.AddKpi(1000);
+if (args.Length > 2 && args[2] == "kpimeasure") totalQty.AddKpi(s.AddMeasure("Target Qty", "1000"));
+if (args.Length > 2 && args[2] == "kpistyle") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
 if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
 if (args.Length > 2 && args[2] == "calc")
 {

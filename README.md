@@ -65,6 +65,17 @@ sales.AddMeasure("Base Rate", "0.15").IsHidden = true;   // used only by other m
 
 A measure is a DAX expression attached to a table, shown in the PivotTable field list under that table. Names must be unique across the model and must not contain `[` or `]`. The expression is stored as written and evaluated by Excel; the library does not parse DAX, so a mistake appears as an error in the PivotTable. The one thing it checks, for measures and calculated columns alike, is that brackets, parentheses, braces and quotes are paired (comments and quoted text are skipped), so a typo like `SUM(Sales[Qty]` is rejected where it is written. Formats: see Formats below. General, WholeNumber, Currency and Date match files written by Excel; Decimal and Percentage were confirmed to display correctly.
 
+### KPIs
+
+```csharp
+var total = sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+total.AddKpi(1000);                                                  // target 1000, status turns at 400 and 800
+total.AddKpi(sales.AddMeasure("Target Qty", "1000"));                // or: the target is another measure
+total.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });   // five bands
+```
+
+Like Power Pivot's *Create KPI* on a measure: the PivotTable field list shows the KPI's Value, Goal, Status and Trend under the measure. Thresholds are fractions of the target (`0.4, 0.8` is 40 % and 80 %). A measure has at most one KPI. Written the way Excel saves a KPI (SPEC section 12); only the shapes of Excel's samples are known, so `Save` refuses a model with more than one KPI, without hierarchies or relationships, or with a date table, hidden columns or calculated columns. **Not yet tested in Excel.**
+
 ### Calculated columns
 
 ```csharp
@@ -303,7 +314,7 @@ See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (worki
 These are not supported yet:
 
 - **Calculated columns cannot be a row or column field until Excel has calculated them.** `AddCalculatedColumn` writes only the formula, and Excel calculates the values on demand. A PivotTable user can put the column in *Values* straight away, but cannot drag it into *Rows*, *Columns* or a filter until it has been calculated once: use it as a value first, or click *Calculate Now* in the Power Pivot window. *Refresh All* does not calculate it. Excel's own files behave the same way. Plan reports accordingly: a calculated column is fine as a value, but a label column that people group by needs that extra step. There is no workaround in the file yet.
-- **KPIs and perspectives.** You can add them in Excel after opening the file. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
+- **Perspectives, and KPI variants.** You can add perspectives in Excel after opening the file. KPIs are written for the shapes listed under KPIs above; other KPI shapes (a second KPI, lower-is-better thresholds, other layouts) can be added in Excel. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
 - **Refresh.** The data is written directly. The model's data source is a placeholder OLE DB connection, stored encrypted the way Excel stores it, so *Refresh All* in Excel asks for a username and password (and reports a connection error if you cancel), and keeps the existing data. Refreshing a PivotTable (right-click > Refresh) works on the file as generated, because it reads the model in the file; after the model has been changed in Excel (a new hierarchy, for example) the same refresh asks for credentials too, because the changed model has to be reprocessed from its data source. Set `ConnectionString` if you want it to point somewhere real, or `ExcludeSourceFromRefreshAll = true` to leave the source out of Refresh All (no prompt; Refresh All then refreshes the PivotTables only, and still does not calculate calculated columns).
 - **Excel 2010 PowerPivot add-in.** The model uses compatibility level 1103, the format of Excel 2013 and later.
 
