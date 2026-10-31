@@ -174,7 +174,7 @@ internal static class XlsxWriter
         Text(zip, "xl/worksheets/sheet2.xml", Decl +
             "<worksheet " + main + " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
             "<dimension ref=\"A1:A2\"/><sheetViews><sheetView workbookViewId=\"0\"/></sheetViews><sheetFormatPr defaultRowHeight=\"15\"/>" +
-            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row><row r=\"2\"><c r=\"A2\"><v>2</v></c></row></sheetData>" +
+            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row><row r=\"2\"><c r=\"A2\"><v>1</v></c></row></sheetData>" +
             "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/><tableParts count=\"1\"><tablePart r:id=\"rId1\"/></tableParts></worksheet>");
         Text(zip, "xl/worksheets/_rels/sheet2.xml.rels", Decl +
             "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table1.xml\"/></Relationships>");

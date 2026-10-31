@@ -73,7 +73,7 @@ internal sealed class ModelInfo
     public int MeasureGroupVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : MeasureGroupVersion;
     /// <summary>Object version of a partition: 1 for the linked trigger table (H42).</summary>
     public int PartitionVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : PartitionVersion;
-    /// <summary>Ids of the linked worksheet tables (the trigger table of <see cref="DataModelWriter.AddCalculationTrigger"/>).</summary>
+    /// <summary>Ids of the linked worksheet tables (the trigger table of <see cref="DataModelOptions.CalculateOnOpen"/>).</summary>
     public IReadOnlySet<string> LinkedTables { get; init; } = new HashSet<string>();
     public const int LinkedVersion = 1;
     /// <summary>Dimension version of a linked table: 2, as Excel writes it (H42).</summary>

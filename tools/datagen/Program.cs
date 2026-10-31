@@ -11,7 +11,7 @@ var hiddenSet = (args.Length > 2 ? args[2] : "") switch
     _ => new HashSet<string>(),
 };
 ColumnDefinition Col(string table, string name, ColumnDataType type, string? sortBy = null) => new(name, type) { SortByColumn = sortBy, IsHidden = hiddenSet.Contains(table + "." + name) };
-using var m = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(7177), ExcludeSourceFromRefreshAll = args.Skip(2).Contains("exclude") }   /* "exclude" token */);
+using var m = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(7177), ExcludeSourceFromRefreshAll = args.Skip(2).Contains("exclude"), CalculateOnOpen = !args.Skip(2).Contains("notrigger") }   /* "exclude" token */);
 if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship, no measure, no hierarchy
 {
     var pr = m.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Product", ColumnDataType.String) });
@@ -152,5 +152,5 @@ if (productsMatch.Success)
     for (int n = 1; n <= int.Parse(productsMatch.Groups[1].Value); n++)
         p.AddCalculatedColumn(n == 1 ? "Name Length" : $"Name Length x{n}", n == 1 ? "LEN([Product])" : $"LEN([Product])*{n}", ColumnDataType.Int64);
 if (calcMode is "calcp" or "calcsp" or "calcpd" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
-if (args.Skip(2).Contains("trigger")) m.AddCalculationTrigger();   // "trigger" token: the linked trigger table (H42)
+// the linked trigger table is automatic when there are calculated columns; "notrigger" token: DataModelOptions.CalculateOnOpen = false
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

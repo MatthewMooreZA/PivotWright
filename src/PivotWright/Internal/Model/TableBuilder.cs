@@ -18,7 +18,7 @@ internal sealed class EncodedTable
     public List<EncodedCalculatedColumn> CalculatedColumns { get; } = new();
     /// <summary>The table is marked as date table (dimension type Time, its date column is the key).</summary>
     public bool IsDateTable { get; init; }
-    /// <summary>The table is the linked trigger table (<see cref="DataModelWriter.AddCalculationTrigger"/>), written as Excel writes a linked worksheet table (H42).</summary>
+    /// <summary>The table is the linked trigger table (<see cref="DataModelOptions.CalculateOnOpen"/>), written as Excel writes a linked worksheet table (H42).</summary>
     public bool IsLinked { get; init; }
     /// <summary>Version of the table's .tbl.xml: 2 with hierarchies, plus 1 for a date table and the tables that relate to one.</summary>
     public int Version { get; set; }
@@ -185,7 +185,7 @@ internal sealed class TableBuilder : IDisposable
 
     public string Name { get; }
     public string Id { get; }
-    /// <summary>True for the linked worksheet table of <see cref="DataModelWriter.AddCalculationTrigger"/>: plain id, own row number name, no data source query.</summary>
+    /// <summary>True for the linked worksheet table of <see cref="DataModelOptions.CalculateOnOpen"/>: plain id, own row number name, no data source query.</summary>
     public bool IsLinked { get; init; }
     /// <summary>Id of the row number column: Excel calls it RowNumber in a linked table (H42), __XL_RowNumber otherwise.</summary>
     public string RowNumberId => IsLinked ? "RowNumber" : FileNames.RowNumberId;

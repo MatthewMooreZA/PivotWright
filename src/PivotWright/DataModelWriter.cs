@@ -164,8 +164,6 @@ public sealed class DataModelWriter : IDisposable
         CheckOwned(oneColumn, nameof(oneColumn));
         var many = manyColumn.Table;
         var one = oneColumn.Table;
-        many.ThrowIfCalculationTrigger();
-        one.ThrowIfCalculationTrigger();
         if (many == one) throw new ArgumentException($"A relationship needs two different tables; {manyColumn} and {oneColumn} are both in '{many.Name}'.", nameof(oneColumn));
         if (manyColumn.DataType != oneColumn.DataType)
             throw new ArgumentException(
@@ -341,37 +339,6 @@ public sealed class DataModelWriter : IDisposable
         }
     }
 
-    /// <summary>
-    /// Adds a one-row table that Excel treats as a linked worksheet table, which makes Excel calculate every calculated column when the
-    /// workbook opens (<see cref="ModelTable.AddCalculatedColumn"/> only stores the formula). Without it a calculated column works
-    /// as a PivotTable value but not as a row, column, filter or hierarchy level until it has been calculated once. The table has one
-    /// column, Key, with the value 1, and a worksheet "Sheet2" holds the table it is linked to; Excel refreshes it on open and recalculates
-    /// the model, and shows its usual Enable External Content bar for the workbook's data connections. Do not delete the sheet or its table.
-    /// </summary>
-    /// <param name="name">Table name: letters, digits and underscores, starting with a letter. It is also the worksheet table's name, so it
-    /// must not be the name of another table of the model. Default Trigger.</param>
-    /// <returns>The table. It is complete (adding rows throws <see cref="InvalidOperationException"/>) and takes no measures, columns,
-    /// hierarchies or relationships; <see cref="ModelTable.IsCalculationTrigger"/> is true.</returns>
-    /// <exception cref="ArgumentException">The name is not letters, digits and underscores starting with a letter, or a table of that name exists.</exception>
-    /// <exception cref="InvalidOperationException">The model already has a calculation trigger.</exception>
-    public ModelTable AddCalculationTrigger(string name = "Trigger")
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(name);
-        if (name.Length == 0 || !char.IsAsciiLetter(name[0]) || !name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))
-            throw new ArgumentException($"'{name}' is not a valid trigger table name; use letters, digits and underscores, starting with a letter (for example \"Trigger\").", nameof(name));
-        if (_tables.FirstOrDefault(t => t.IsCalculationTrigger) is { } existing)
-            throw new InvalidOperationException($"'{existing.Name}' is already the calculation trigger; a model needs only one.");
-        if (_tables.Any(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException($"A table named '{name}' already exists.", nameof(name));
-        var builder = new TableBuilder(name, name, new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }, _ctx) { IsLinked = true };
-        var table = new ModelTable(this, builder);
-        _tables.Add(table);
-        table.AddRow(1L);
-        builder.ReadOnlyReason = $"Table '{name}' was made by AddCalculationTrigger and is complete.";
-        return table;
-    }
-
     /// <summary>Encodes the model and writes the workbook to a stream.</summary>
     /// <remarks>Nothing is written to <paramref name="output"/> unless the model is valid; the stream is left open.</remarks>
     public void Save(Stream output)
@@ -383,7 +350,7 @@ public sealed class DataModelWriter : IDisposable
         string tempPath = Path.Combine(dir, "ppw-model-" + Guid.NewGuid().ToString("N") + ".tmp");
         using var model = new FileStream(tempPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
             1 << 20, FileOptions.DeleteOnClose);
-        var serializer = CreateSerializer();
+        var serializer = CreateSerializer(forWorkbook: true);
         serializer.Write(model);
         XlsxWriter.Write(output, model, serializer.Info, serializer.EncodedTables, _options);
     }
@@ -401,8 +368,24 @@ public sealed class DataModelWriter : IDisposable
         CreateSerializer().Write(output);
     }
 
-    private ModelSerializer CreateSerializer()
-        => new(_options, _tables.Select(t => t.Builder).ToList(), _relationshipDefinitions, _ctx.StringComparer, MeasureDefinitions, HierarchyDefinitions);
+    /// <summary>Name of the linked table that makes Excel calculate on open (see <see cref="DataModelOptions.CalculateOnOpen"/>).</summary>
+    private const string CalculationTriggerName = "PivotWrightTrigger";
+
+    private ModelSerializer CreateSerializer(bool forWorkbook = false)
+    {
+        var builders = _tables.Select(t => t.Builder).ToList();
+        // A model with calculated columns gets a one-row linked worksheet table, refreshed when the workbook opens, which makes Excel
+        // calculate the columns (research: docs/research-refresh.md). It is not part of Tables and not written by SaveModelPart.
+        if (forWorkbook && _options.CalculateOnOpen && builders.Any(b => b.CalculatedColumns.Count > 0))
+        {
+            if (builders.Any(b => string.Equals(b.Name, CalculationTriggerName, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException($"A table named '{CalculationTriggerName}' exists; PivotWright uses that name for the table that makes Excel calculate on open. Rename your table or set DataModelOptions.CalculateOnOpen to false.");
+            var trigger = new TableBuilder(CalculationTriggerName, CalculationTriggerName, new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }, _ctx) { IsLinked = true };
+            trigger.AddRow(new object?[] { 1L });
+            builders.Add(trigger);
+        }
+        return new(_options, builders, _relationshipDefinitions, _ctx.StringComparer, MeasureDefinitions, HierarchyDefinitions);
+    }
 
     private void ThrowIfEmpty()
     {

@@ -47,7 +47,7 @@ var tests = new (string Name, Action Body)[]
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
     ("Options: ExcludeSourceFromRefreshAll writes the H41 attribute", Tests.ExcludeFromRefreshAll),
-    ("AddCalculationTrigger: a linked worksheet table that makes Excel calculate on open (H42)", Tests.CalculationTrigger),
+    ("CalculateOnOpen: a linked worksheet table makes Excel calculate the columns when the workbook opens (H42, e1)", Tests.CalculationTrigger),
     ("Calculated column: Sort by Column with another calculated column (H39)", Tests.CalculatedColumnSortBy),
     ("AddDateTable: DateFormat formats the Date column", Tests.DateTableDateFormat),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
@@ -1884,9 +1884,7 @@ namespace PivotWright.Tests
             model.AddRelationship(sales["Key"], products["Key"]);
             products.AddHierarchy("H", "Name", "Key");
             sales.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
-            var trigger = model.AddCalculationTrigger();
-            Check.True(trigger.IsCalculationTrigger && trigger.Name == "Trigger" && trigger.RowCount == 1, "one row table");
-            Check.Equal(1, model.Tables.Count(t => t.IsCalculationTrigger), "only one");
+            Check.Equal(2, model.Tables.Count, "the trigger table is not in Tables");
 
             var ms = new MemoryStream();
             model.Save(ms);
@@ -1904,12 +1902,12 @@ namespace PivotWright.Tests
             }
             string workbook = Part("xl/workbook.xml"), connections = Part("xl/connections.xml");
             Check.True(workbook.Contains("<sheet name=\"Sheet2\" sheetId=\"2\" state=\"veryHidden\" r:id=\"rId5\"/>"), "second sheet");
-            Check.True(workbook.Contains("<definedName name=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\" hidden=\"1\">Trigger[]</definedName>"), "hidden defined name");
-            Check.True(workbook.Contains("<x15:modelTable id=\"Trigger\" name=\"Trigger\" connection=\"WorksheetConnection_PivotWright.xlsx!Trigger\"/>"), "model table of the linked connection");
-            Check.True(connections.Contains("type=\"102\" refreshOnLoad=\"1\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\"/>"), "worksheet connection");
+            Check.True(workbook.Contains("<definedName name=\"_xlcn.WorksheetConnection_PivotWright.xlsxPivotWrightTrigger\" hidden=\"1\">PivotWrightTrigger[]</definedName>"), "hidden defined name");
+            Check.True(workbook.Contains("<x15:modelTable id=\"PivotWrightTrigger\" name=\"PivotWrightTrigger\" connection=\"WorksheetConnection_PivotWright.xlsx!PivotWrightTrigger\"/>"), "model table of the linked connection");
+            Check.True(connections.Contains("type=\"102\" refreshOnLoad=\"1\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxPivotWrightTrigger\"/>"), "worksheet connection");
             Check.True(Part("xl/worksheets/sheet1.xml").Contains("tabSelected=\"1\"") && !Part("xl/worksheets/sheet2.xml").Contains("tabSelected"), "only the first sheet is selected");
-            Check.True(Part("xl/worksheets/sheet2.xml").Contains("<c r=\"A2\"><v>2</v></c>"), "the sheet differs from the model value 1, so Excel has data to process on open");
-            Check.True(Part("xl/tables/table1.xml").Contains("name=\"Trigger\"") && Part("xl/sharedStrings.xml").Contains("<t>Key</t>"), "worksheet table");
+            Check.True(Part("xl/worksheets/sheet2.xml").Contains("<c r=\"A2\"><v>1</v></c>"), "the sheet holds the same value as the model");
+            Check.True(Part("xl/tables/table1.xml").Contains("name=\"PivotWrightTrigger\"") && Part("xl/sharedStrings.xml").Contains("<t>Key</t>"), "worksheet table");
             Check.True(Part("[Content_Types].xml").Contains("/xl/tables/table1.xml") && Part("docProps/app.xml").Contains("<vt:lpstr>Sheet2</vt:lpstr>"), "content types and sheet list");
             string manual = Part("customXml/item1.xml");
             Check.True(manual.Contains("ManualCalcMode") && manual.Contains("[CDATA[False]]"), "automatic calculation");
@@ -1918,11 +1916,11 @@ namespace PivotWright.Tests
             byte[] itemData;
             using (var es = zip.GetEntry("xl/model/item.data")!.Open()) { var buf = new MemoryStream(); es.CopyTo(buf); itemData = buf.ToArray(); }
             var m = ModelReader.Read(itemData);
-            string dim = Encoding.UTF8.GetString(m.Find(@"Trigger\.2\.dim\.xml$"));
+            string dim = Encoding.UTF8.GetString(m.Find(@"PivotWrightTrigger\.2\.dim\.xml$"));
             Check.True(!dim.Contains("DataSourceViewBinding") && dim.Contains("<ID>RowNumber</ID>") && dim.Contains("<Value>A</Value>"), "linked dimension");
-            string prt = Encoding.UTF8.GetString(m.Find(@"Trigger\.1\.prt\.xml$"));
+            string prt = Encoding.UTF8.GetString(m.Find(@"PivotWrightTrigger\.1\.prt\.xml$"));
             Check.True(!prt.Contains("QueryBinding") && !prt.Contains("ErrorConfiguration") && prt.Contains("<CacheVersion>1</CacheVersion>"), "linked partition has no query");
-            m.Find(@"Trigger\.1\.det\.xml$"); m.Find(@"Trigger\.0\.dim\\0\.Trigger\.RowNumber\.0\.idf$"); m.Find(@"Trigger\.0\.dim\\Trigger\.0\.tbl\.xml$");
+            m.Find(@"PivotWrightTrigger\.1\.det\.xml$"); m.Find(@"PivotWrightTrigger\.0\.dim\\0\.PivotWrightTrigger\.RowNumber\.0\.idf$"); m.Find(@"PivotWrightTrigger\.0\.dim\\PivotWrightTrigger\.0\.tbl\.xml$");
             Check.True(!Encoding.UTF8.GetString(m.Find(@"Sandbox\.0\.dsv\.xml$")).Contains("Trigger"), "the view lists only the source tables");
             // Every group of the log has a file named for its version (SPEC section 5).
             foreach (var g in m.Log.Element("FileGroups")!.Elements("FileGroup"))
@@ -1936,16 +1934,34 @@ namespace PivotWright.Tests
                     $"group {id} has a file for version {version}");
             }
 
-            Tests.Throws<InvalidOperationException>(() => model.AddCalculationTrigger("Other"), "a second trigger");
-            Tests.Throws<InvalidOperationException>(() => trigger.AddRow(2L), "rows");
-            Tests.Throws<InvalidOperationException>(() => trigger.AddMeasure("M", "1"), "measure");
-            Tests.Throws<InvalidOperationException>(() => trigger.AddCalculatedColumn("C", "1", ColumnDataType.Int64), "calculated column");
-            Tests.Throws<InvalidOperationException>(() => model.AddRelationship(sales["Key"], trigger["Key"]), "relationship");
-            using var other = new DataModelWriter();
-            other.CreateTable("Trigger", new[] { new ColumnDefinition("N", ColumnDataType.Int64) });
-            Tests.Throws<ArgumentException>(() => other.AddCalculationTrigger(), "table name taken");
-            foreach (var bad in new[] { "", "1a", "a b", "a-b", "_x" })
-                Tests.Throws<ArgumentException>(() => other.AddCalculationTrigger(bad), "invalid name '" + bad + "'");
+
+            // Only with calculated columns, and not when switched off.
+            var ms2 = new MemoryStream();
+            using (var off = new DataModelWriter(new DataModelOptions { XpressCompression = false, CalculateOnOpen = false }))
+            {
+                var t = off.CreateTable("T", new[] { new ColumnDefinition("N", ColumnDataType.Int64) }); t.AddRow(1L);
+                off.Save(ms2);
+            }
+            using (var plain = new System.IO.Compression.ZipArchive(new MemoryStream(ms2.ToArray())))
+                Check.True(plain.GetEntry("xl/worksheets/sheet2.xml") is null, "no calculated column, no trigger");
+            using var noTrigger = new DataModelWriter(new DataModelOptions { XpressCompression = false, CalculateOnOpen = false });
+            var nt = noTrigger.CreateTable("Products", new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }); nt.AddRow(1L);
+            var ns = noTrigger.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) }); ns.AddRow(1L, 2L);
+            noTrigger.AddRelationship(ns["Key"], nt["Key"]);
+            ns.AddCalculatedColumn("Q2", "[Qty]*2", ColumnDataType.Int64);
+            var ms3 = new MemoryStream(); noTrigger.Save(ms3);
+            using (var z3 = new System.IO.Compression.ZipArchive(new MemoryStream(ms3.ToArray())))
+                Check.True(z3.GetEntry("xl/worksheets/sheet2.xml") is null, "switched off");
+            // SaveModelPart writes the tables only.
+            var part = new MemoryStream(); model.SaveModelPart(part);
+            Check.True(!ModelReader.Read(part.ToArray()).Files.Keys.Any(k2 => k2.Contains("PivotWrightTrigger")), "SaveModelPart has no trigger");
+            // A table of the same name is reported.
+            using var clash = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var ct = clash.CreateTable("PivotWrightTrigger", new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }); ct.AddRow(1L);
+            var cs = clash.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) }); cs.AddRow(1L, 2L);
+            clash.AddRelationship(cs["Key"], ct["Key"]);
+            cs.AddCalculatedColumn("Q2", "[Qty]*2", ColumnDataType.Int64);
+            Tests.Throws<InvalidOperationException>(() => clash.Save(new MemoryStream()), "a table with the trigger's name");
         }
 
         public static void CalculatedColumnSortBy()
