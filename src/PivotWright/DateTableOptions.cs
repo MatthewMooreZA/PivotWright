@@ -54,4 +54,22 @@ public sealed class DateTableOptions
     /// DayOfWeekNumber and the year columns' numbers) from client tools, as is usual practice. Default true.
     /// </summary>
     public bool HideSortColumns { get; init; } = true;
+
+    /// <summary>
+    /// How the Date column is displayed, for example <c>MeasureFormat.Date("dd MMM yyyy")</c> or <c>MeasureFormat.LongDate()</c>.
+    /// Null (the default) leaves Excel's general date format.
+    /// </summary>
+    /// <exception cref="ArgumentException">The format is a number format.</exception>
+    public MeasureFormat? DateFormat
+    {
+        get => _dateFormat;
+        init
+        {
+            if (value is not null && value.KindValue is not (MeasureFormat.Kind.General or MeasureFormat.Kind.ShortDate or MeasureFormat.Kind.LongDate or MeasureFormat.Kind.Date))
+                throw new ArgumentException("The date format must be a date format (MeasureFormat.ShortDate, LongDate or Date).", nameof(DateFormat));
+            _dateFormat = value;
+        }
+    }
+
+    private MeasureFormat? _dateFormat;
 }

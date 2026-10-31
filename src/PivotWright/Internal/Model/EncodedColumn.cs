@@ -26,6 +26,8 @@ internal sealed class EncodedColumn
     public required string Id { get; init; }
     public required ColumnDataType DataType { get; init; }
     public bool IsHidden { get; init; }
+    /// <summary>The number or date format chosen for the column, or null for the type's default.</summary>
+    public MeasureFormat? Format { get; init; }
     /// <summary>Id of the column whose order this column follows (Sort by Column), or null.</summary>
     public string? OrderByColumnId { get; set; }
     public bool IsRowNumber { get; init; }
@@ -96,6 +98,8 @@ internal static class FileNames
     public static string Hidx(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.hidx";
     public static string PosToId(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.POS_TO_ID.0.idf";
     public static string IdToPos(string tableId, string columnId, int version = 0) => $"{version}.H${tableId}${columnId}.ID_TO_POS.0.idf";
+    /// <summary>Data file of a calculated column, which Excel versions 2 (SPEC section 10).</summary>
+    public static string CalculatedIdf(string tableId, string columnId, int prefix = 2) => $"{prefix}.{tableId}.{columnId}.0.idf";
     public static string TableXml(string tableId, int version = 0) => $"{tableId}.{version}.tbl.xml";
     /// <summary>Data version Excel gives user hierarchy tables (and the tables that hold them) when it creates them.</summary>
     public const int HierarchyVersion = 2;

@@ -14,8 +14,12 @@ internal sealed class EncodedTable
     /// <summary>Relationships in which this table is the many side.</summary>
     public List<EncodedRelationship> Relationships { get; } = new();
     public List<EncodedHierarchy> Hierarchies { get; } = new();
+    /// <summary>Calculated columns: formulas without stored values.</summary>
+    public List<EncodedCalculatedColumn> CalculatedColumns { get; } = new();
     /// <summary>The table is marked as date table (dimension type Time, its date column is the key).</summary>
     public bool IsDateTable { get; init; }
+    /// <summary>The table is the linked trigger table (<see cref="DataModelOptions.CalculateOnOpen"/>), written as Excel writes a linked worksheet table (H42).</summary>
+    public bool IsLinked { get; init; }
     /// <summary>Version of the table's .tbl.xml: 2 with hierarchies, plus 1 for a date table and the tables that relate to one.</summary>
     public int Version { get; set; }
 
@@ -23,16 +27,37 @@ internal sealed class EncodedTable
     {
         get
         {
+            // Excel lists the columns of a linked table before its row number attribute (H42).
+            if (IsLinked) { foreach (var c in Columns) yield return c; yield return RowNumber; yield break; }
             yield return RowNumber;
             foreach (var c in Columns) yield return c;
         }
     }
 }
 
+/// <summary>A calculated column after encoding: only its formula and the row count of its table are written.</summary>
+internal sealed class EncodedCalculatedColumn
+{
+    public required string Name { get; init; }
+    public required string Id { get; init; }
+    public required string Expression { get; init; }
+    public required ColumnDataType DataType { get; init; }
+    public required long Rows { get; init; }
+    public required (int Prefix, int Dictionary, int File) Versions { get; init; }
+    /// <summary>The column's only segment: BLANK in every row, as run-length or bit-packed entries by the usual rule.</summary>
+    public required IReadOnlyList<EncodedSegment> Segments { get; init; }
+    public bool IsHidden { get; init; }
+    public MeasureFormat? Format { get; init; }
+    /// <summary>Id of the calculated column that orders this one, or null.</summary>
+    public string? OrderByColumnId { get; init; }
+}
+
 /// <summary>Collects the rows of one table.</summary>
 internal sealed class TableBuilder : IDisposable
 {
     private readonly List<ColumnBuilder> _columns = new();
+    private readonly List<CalculatedColumnDefinition> _calculated = new();
+    private readonly HashSet<string> _usedIds = new(StringComparer.OrdinalIgnoreCase) { FileNames.RowNumberId };
     private readonly BuilderContext _ctx;
 
     public TableBuilder(string name, string id, IEnumerable<ColumnDefinition> columns, BuilderContext ctx)
@@ -40,13 +65,14 @@ internal sealed class TableBuilder : IDisposable
         Name = name;
         Id = id;
         _ctx = ctx;
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { FileNames.RowNumberId };
+        var used = _usedIds;
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modelNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { FileNames.RowNumberId };
         foreach (var def in columns)
         {
             if (!names.Add(def.Name))
                 throw new ArgumentException($"Table '{name}' already has a column named '{def.Name}'.", "columns");
+            MeasureFormat.CheckFits(def.Format, def.DataType, def.Name, "columns");
             string modelName = Identifiers.Unique(Identifiers.SanitizeName(def.Name, "Column"), modelNames);
             string colId = Identifiers.Unique(Identifiers.Sanitize(modelName, "Column"), used);
             ColumnBuilder builder = def.DataType switch
@@ -118,7 +144,7 @@ internal sealed class TableBuilder : IDisposable
     {
         if (c.SortBy is null) return;
         c.SortBy = null;
-        c.Definition = new ColumnDefinition(c.Definition.Name, c.Definition.DataType) { IsHidden = c.Definition.IsHidden };
+        c.Definition = new ColumnDefinition(c.Definition.Name, c.Definition.DataType) { IsHidden = c.Definition.IsHidden, Format = c.Definition.Format };
     }
 
     // For every sorted column: checks that each of its values belongs to exactly one value of the sort column
@@ -159,10 +185,31 @@ internal sealed class TableBuilder : IDisposable
 
     public string Name { get; }
     public string Id { get; }
+    /// <summary>True for the linked worksheet table of <see cref="DataModelOptions.CalculateOnOpen"/>: plain id, own row number name, no data source query.</summary>
+    public bool IsLinked { get; init; }
+    /// <summary>Id of the row number column: Excel calls it RowNumber in a linked table (H42), __XL_RowNumber otherwise.</summary>
+    public string RowNumberId => IsLinked ? "RowNumber" : FileNames.RowNumberId;
     /// <summary>The date column when the table is marked as date table, else null.</summary>
     public ColumnBuilder? DateColumn { get; set; }
     public long Rows { get; private set; }
     public IReadOnlyList<ColumnBuilder> Columns => _columns;
+    /// <summary>Calculated columns, in the order added; they take no row values.</summary>
+    public IReadOnlyList<CalculatedColumnDefinition> CalculatedColumns => _calculated;
+
+    /// <summary>Adds a calculated column; the caller has checked the name and the expression.</summary>
+    public CalculatedColumnDefinition AddCalculatedColumn(string name, string expression, ColumnDataType dataType, MeasureFormat? format = null)
+    {
+        var column = new CalculatedColumnDefinition
+        {
+            Name = name,
+            Id = Identifiers.Unique(Identifiers.Sanitize(name, "Column"), _usedIds),
+            Expression = expression,
+            DataType = dataType,
+            Format = format,
+        };
+        _calculated.Add(column);
+        return column;
+    }
 
     /// <summary>Throws when rows cannot be added to the table.</summary>
     public void ThrowIfReadOnly()
@@ -224,8 +271,8 @@ internal sealed class TableBuilder : IDisposable
 
         var rowNumber = new EncodedColumn
         {
-            Name = FileNames.RowNumberId,
-            Id = FileNames.RowNumberId,
+            Name = RowNumberId,
+            Id = RowNumberId,
             DataType = ColumnDataType.Int64,
             IsHidden = true,
             IsRowNumber = true,
@@ -238,7 +285,7 @@ internal sealed class TableBuilder : IDisposable
             MinDataId = DataIds.First,
             MaxDataId = (uint)(DataIds.First + Rows - 1),
         };
-        using (var idf = sink.Create(FileNames.Idf(Id, FileNames.RowNumberId)))
+        using (var idf = sink.Create(FileNames.Idf(Id, RowNumberId)))
         {
             long done = 0;
             do
@@ -260,7 +307,30 @@ internal sealed class TableBuilder : IDisposable
             if (c.SortBy is not null) e.OrderByColumnId = c.SortBy.Id;
             cols.Add(e);
         }
-        return new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
+        var calculated = new List<EncodedCalculatedColumn>(_calculated.Count);
+        foreach (var c in _calculated)
+        {
+            if (Rows == 0)
+                throw new InvalidOperationException($"'{Name}[{c.Name}]' is a calculated column on a table without rows, which was never seen in an Excel-written file.");
+            // One block of BLANKs per segment, written one after the other like the segments of any column.
+            var segments = new List<EncodedSegment>();
+            using (var idf = sink.Create(FileNames.CalculatedIdf(Id, c.Id, c.Versions.Prefix)))
+            {
+                for (long done = 0; done < Rows; done += segmentSize)
+                {
+                    var blanks = new uint[Math.Min(segmentSize, Rows - done)];
+                    Array.Fill(blanks, DataIds.Null);
+                    var segment = HybridRleEncoder.Encode(blanks);
+                    idf.Write(segment.Data);
+                    segment.Data = Array.Empty<byte>();
+                    segments.Add(segment);
+                }
+            }
+            calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden, Format = c.Format, OrderByColumnId = c.SortBy?.Id });
+        }
+        var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null, IsLinked = IsLinked };
+        result.CalculatedColumns.AddRange(calculated);
+        return result;
     }
 
     public void Dispose()

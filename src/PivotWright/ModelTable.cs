@@ -21,6 +21,7 @@ public sealed class ModelTable
     private readonly List<ModelColumn> _columns;
     private readonly List<ModelMeasure> _measures = new();
     private readonly List<ModelHierarchy> _hierarchies = new();
+    private readonly List<ModelCalculatedColumn> _calculatedColumns = new();
 
     internal ModelTable(DataModelWriter model, TableBuilder builder)
     {
@@ -51,6 +52,9 @@ public sealed class ModelTable
 
     /// <summary>Measures added to this table, in order.</summary>
     public IReadOnlyList<ModelMeasure> Measures => _measures;
+
+    /// <summary>Calculated columns added to this table, in order. They are not in <see cref="Columns"/>, which holds the columns that take row values.</summary>
+    public IReadOnlyList<ModelCalculatedColumn> CalculatedColumns => _calculatedColumns;
 
     /// <summary>Hierarchies added to this table, in order.</summary>
     public IReadOnlyList<ModelHierarchy> Hierarchies => _hierarchies;
@@ -120,10 +124,10 @@ public sealed class ModelTable
     /// in the PivotTable, not here. Hide it with <see cref="ModelMeasure.IsHidden"/>.
     /// </summary>
     /// <param name="name">Measure name; unique across the model, different from this table's column names, and without [ or ].</param>
-    /// <param name="expression">DAX expression, with or without the leading "=", for example <c>SUM(Sales[Qty])</c>.</param>
+    /// <param name="expression">DAX expression, with or without the leading "=", for example <c>SUM(Sales[Qty])</c>. Brackets, parentheses, braces and quotes must be paired; nothing else is checked.</param>
     /// <param name="format">Number format; <see cref="MeasureFormat.General"/> when omitted.</param>
     /// <returns>The measure.</returns>
-    /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters, or the expression is empty.</exception>
+    /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters, or the expression is empty or malformed (unpaired brackets, parentheses or quotes).</exception>
     public ModelMeasure AddMeasure(string name, string expression, MeasureFormat? format = null)
     {
         Model.ThrowIfDisposed();
@@ -136,10 +140,13 @@ public sealed class ModelTable
         if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("A DAX expression is required.", nameof(expression));
         expression = expression.Trim();
         if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
+        PivotWright.Internal.DaxText.Check(expression, nameof(expression));
         if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)
             throw new ArgumentException($"A measure named '{name}' already exists ({taken}); measure names are unique across the model.", nameof(name));
-        if (Columns.Contains(name))
+        if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
+        if (format is { KindValue: MeasureFormat.Kind.LongDate or MeasureFormat.Kind.Date } or { KindValue: MeasureFormat.Kind.ShortDate, Culture: not null })
+            throw new ArgumentException("A measure can only take the short date of the model's culture, MeasureFormat.ShortDate(); other date formats (including MeasureFormat.Date) were never seen for measures.", nameof(format));
         var definition = new MeasureDefinition { Name = name, Table = Name, Expression = expression, Format = format ?? MeasureFormat.General };
         Model.MeasureDefinitions.Add(definition);
         var measure = new ModelMeasure(this, definition);
@@ -148,11 +155,64 @@ public sealed class ModelTable
     }
 
     /// <summary>
+    /// Adds a calculated column, like one created in Power Pivot by typing a formula into the empty column. The file holds only the
+    /// formula, not the values: Excel calculates them the first time a PivotTable uses the column. The library does not parse the
+    /// expression, so a mistake shows up in Excel, not here.
+    /// </summary>
+    /// <remarks>
+    /// <b>Limitation:</b> until Excel has calculated the column it can be a value in a PivotTable but not a row, column or filter
+    /// field. The user puts it in Values once, or clicks Calculate Now in Power Pivot; Refresh All does not calculate it.
+    /// <para>
+    /// Written the way Excel saves calculated columns it has not calculated yet; only some shapes have been seen in Excel-written
+    /// files, so saving requires a model with relationships, no hidden columns, a column on the date table only if it is the one primary-side table with a column, hidden columns (samples exist for the hierarchy model without a date table; the other models extrapolate), and
+    /// any number of columns on the many-side table and any number on each table that is the primary side of a relationship (with a hierarchy, or in a model without hierarchies). Other combinations make <c>Save</c> throw.
+    /// </para>
+    /// </remarks>
+    /// <param name="name">Column name; unique among this table's columns, calculated columns, measures and hierarchies, and without [ or ].</param>
+    /// <param name="expression">DAX expression, with or without the leading "=", for example <c>[Qty]*[Amount]</c>.</param>
+    /// <param name="dataType">Data type of the formula's result, which Excel infers from the formula when the column is typed in; give the
+    /// type the formula produces (for example <see cref="ColumnDataType.Currency"/> for <c>[Qty]*[Amount]</c> with a Currency Amount).</param>
+    /// <param name="format">Number or date format of the column, like Power Pivot's Format command, for example <c>MeasureFormat.Decimal(3)</c>,
+    /// <c>MeasureFormat.Currency(2, new CultureInfo("en-US"))</c> or <c>MeasureFormat.CurrencyWithoutSymbol()</c>; it must fit <paramref name="dataType"/>.
+    /// Null keeps the one Excel gives the type (a general date, the model culture's currency, General).</param>
+    /// <returns>The calculated column.</returns>
+    /// <exception cref="ArgumentException">The name is empty, reserved, taken or contains [, ] or control characters; the expression
+    /// is empty; or the data type is not a <see cref="ColumnDataType"/>.</exception>
+    public ModelCalculatedColumn AddCalculatedColumn(string name, string expression, ColumnDataType dataType, MeasureFormat? format = null)
+    {
+        Model.ThrowIfDisposed();
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Column name is required.", nameof(name));
+        if (name.IndexOfAny(new[] { '[', ']' }) >= 0)
+            throw new ArgumentException($"Column name '{name}' must not contain [ or ].", nameof(name));
+        name = Identifiers.SanitizeName(name, "Column");
+        if (name.StartsWith("__", StringComparison.Ordinal))
+            throw new ArgumentException("Column names starting with '__' are reserved.", nameof(name));
+        if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("A DAX expression is required.", nameof(expression));
+        expression = expression.Trim();
+        if (expression.StartsWith('=')) expression = expression[1..].TrimStart();
+        if (expression.Length == 0) throw new ArgumentException("A DAX expression is required.", nameof(expression));
+        PivotWright.Internal.DaxText.Check(expression, nameof(expression));
+        if (!Enum.IsDefined(dataType)) throw new ArgumentException($"'{dataType}' is not a data type.", nameof(dataType));
+        MeasureFormat.CheckFits(format, dataType, name, nameof(format));
+        if (Columns.Contains(name) || _calculatedColumns.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{Name}' already has a column named '{name}'.", nameof(name));
+        if (Model.Tables.SelectMany(t => t.Measures).FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) is { } taken)
+            throw new ArgumentException($"A measure named '{name}' already exists ({taken}); a column cannot share its name.", nameof(name));
+        if (_hierarchies.Any(h => string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{Name}' already has a hierarchy named '{name}'.", nameof(name));
+        var column = new ModelCalculatedColumn(this, Builder.AddCalculatedColumn(name, expression, dataType, format));
+        _calculatedColumns.Add(column);
+        return column;
+    }
+
+    /// <summary>
     /// Adds a hierarchy, like the one Power Pivot's diagram view creates with "Create Hierarchy": an ordered drill-down path
     /// such as Category, Subcategory, Product that PivotTables offer as a single field.
     /// </summary>
     /// <param name="name">Hierarchy name; unique within the table and different from its column names.</param>
-    /// <param name="levels">Two or more column names of this table, from the top level down.</param>
+    /// <param name="levels">Two or more column names of this table, from the top level down. A level may be a calculated column
+    /// (<see cref="AddCalculatedColumn"/>); Excel has not calculated it, so it saves such a hierarchy unprocessed (no tree) and builds it
+    /// when the column is calculated. <see cref="ModelHierarchy.IsUnprocessed"/> tells.</param>
     /// <returns>The hierarchy.</returns>
     /// <exception cref="ArgumentException">The name is empty or taken, a column is unknown or repeated, or fewer than two levels are given.</exception>
     public ModelHierarchy AddHierarchy(string name, params string[] levels)
@@ -164,17 +224,29 @@ public sealed class ModelTable
         if (levels.Length < 2) throw new ArgumentException("A hierarchy needs at least two levels.", nameof(levels));
         if (_hierarchies.Any(h => string.Equals(h.Name, modelName, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a hierarchy named '{modelName}'.", nameof(name));
-        if (Columns.Contains(modelName))
+        if (Columns.Contains(modelName) || _calculatedColumns.Any(c => string.Equals(c.Name, modelName, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{Name}' already has a column named '{modelName}'; a hierarchy needs its own name.", nameof(name));
         var columns = new List<ModelColumn>();
+        var hierarchyLevels = new List<HierarchyLevel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var level in levels)
         {
+            ArgumentNullException.ThrowIfNull(level, nameof(levels));
+            // A calculated column is looked up first by name; any other name must be one of the table's data columns.
+            var calculated = _calculatedColumns.FirstOrDefault(x => string.Equals(x.Name, level, StringComparison.OrdinalIgnoreCase));
+            if (calculated is not null)
+            {
+                if (!seen.Add(calculated.Name)) throw new ArgumentException($"Column '{calculated.Name}' is used twice in the hierarchy.", nameof(levels));
+                hierarchyLevels.Add(new HierarchyLevel(calculated.Name, calculated.Definition.Id, null));
+                continue;
+            }
             var c = Builder.FindColumn(level, nameof(levels));
-            if (columns.Any(x => x.Builder == c)) throw new ArgumentException($"Column '{c.Definition.Name}' is used twice in the hierarchy.", nameof(levels));
+            if (!seen.Add(c.ModelName)) throw new ArgumentException($"Column '{c.Definition.Name}' is used twice in the hierarchy.", nameof(levels));
             columns.Add(_columns.First(x => x.Builder == c));
+            hierarchyLevels.Add(new HierarchyLevel(c.ModelName, c.Id, c));
         }
-        Model.HierarchyDefinitions.Add(new HierarchyDefinition { Name = modelName, Table = Builder, Columns = columns.Select(c => c.Builder).ToList() });
-        var hierarchy = new ModelHierarchy(this, modelName, columns);
+        Model.HierarchyDefinitions.Add(new HierarchyDefinition { Name = modelName, Table = Builder, Levels = hierarchyLevels });
+        var hierarchy = new ModelHierarchy(this, modelName, columns, hierarchyLevels.Select(l => l.Name).ToList());
         _hierarchies.Add(hierarchy);
         return hierarchy;
     }

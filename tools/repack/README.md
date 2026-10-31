@@ -4,4 +4,4 @@ Scratch tool used for the hidden-column bisect (SPEC §8): reads the model of an
 
 `dotnet run --project tools/repack -- <in.xlsx> <out.xlsx|outdir> <mode> [args]`
 
-Modes: `verbatim`, `dump` (unpack to a folder), `ourlog`, `dbfolder`, `tsmap`, `idmap` (rename ids to those of another workbook; letters t r s d o), `swap` (take ASSL files from another workbook; letters d p c s v t x, O keep ObjectIDs, T keep timestamps), `rswap`, `rename old=new,...`, `ordinal kind:Name=value,...`, `detfix`. Not part of the library or its tests.
+Modes: `verbatim`, `dump` (unpack to a folder), `ourlog`, `dbfolder`, `tsmap`, `idmap` (rename ids to those of another workbook; letters t r s d o), `swap` (take ASSL files from another workbook; letters d p c s v t x, O keep ObjectIDs, T keep timestamps; args[5] limits it to paths containing that text), `rswap`, `rename old=new,...`, `ordinal kind:Name=value,...`, `detfix`. Not part of the library or its tests.

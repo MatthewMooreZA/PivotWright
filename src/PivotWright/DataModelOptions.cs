@@ -75,6 +75,23 @@ public sealed class DataModelOptions
         "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=PivotWright;Persist Security Info=false";
 
     /// <summary>
+    /// Make Excel calculate calculated columns when the workbook opens. Default true. A column that Excel has not calculated works as
+    /// a PivotTable value but not as a row, column, filter or hierarchy level. With a calculated column in the model, <see cref="DataModelWriter.Save(Stream)"/>
+    /// adds a one-row linked table, <c>PivotWrightTrigger</c> (column Key, value 1, hidden from client tools), and a very hidden
+    /// worksheet that holds the table it is linked to; the table refreshes when the workbook opens, and Excel calculates the model after
+    /// processing it. Excel shows its usual Enable Editing and Enable Content bars. Set false to write only the formulas (the column
+    /// then calculates once a field is put in a PivotTable's Values or after Calculate Now). Not used by <see cref="DataModelWriter.SaveModelPart"/>.
+    /// </summary>
+    public bool CalculateOnOpen { get; init; } = true;
+
+    /// <summary>
+    /// Leave the data source out of Excel's Refresh All (the connection's "Refresh this connection on Refresh All" box is unticked, as in
+    /// Excel's H41 sample). The source is a placeholder, so Refresh All otherwise asks for a user name and password. Refresh All then
+    /// refreshes the PivotTables only. Default false.
+    /// </summary>
+    public bool ExcludeSourceFromRefreshAll { get; init; }
+
+    /// <summary>
     /// Compress the files inside the data model with Xpress (LZ77), as Excel does. Default true.
     /// Turning it off stores every chunk verbatim, which Excel also accepts, at the cost of a larger file.
     /// </summary>

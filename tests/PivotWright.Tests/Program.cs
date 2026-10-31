@@ -46,6 +46,10 @@ var tests = new (string Name, Action Body)[]
     ("Fiscal Calendar hierarchy lists quarters in fiscal order under every year", Tests.FiscalHierarchyOrder),
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
+    ("Options: ExcludeSourceFromRefreshAll writes the H41 attribute", Tests.ExcludeFromRefreshAll),
+    ("CalculateOnOpen: a linked worksheet table makes Excel calculate the columns when the workbook opens (H42, e1)", Tests.CalculationTrigger),
+    ("Calculated column: Sort by Column with another calculated column (H39)", Tests.CalculatedColumnSortBy),
+    ("AddDateTable: DateFormat formats the Date column", Tests.DateTableDateFormat),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
     ("Hidden columns: plain table keeps the base profile", Tests.HiddenColumnsPlainTable),
     ("Hidden columns: keys and hierarchy levels, as in Excel's H1 sample", Tests.HiddenColumnsKeysAndLevels),
@@ -56,6 +60,18 @@ var tests = new (string Name, Action Body)[]
     ("API: a value that does not fit leaves the table consistent", Tests.ApiRowsAreAtomic),
     ("API: ModelColumn.IsHidden writes the same model as ColumnDefinition.IsHidden", Tests.ApiHideColumns),
     ("API: a failed Save leaves an existing file untouched", Tests.ApiSaveIsAtomic),
+    ("Calculated column: formula, no values, counters as Excel saves them (H10)", Tests.CalculatedColumnProfile),
+    ("Calculated column: the six data types as Excel infers them (H10 to H15)", Tests.CalculatedColumnTypes),
+    ("Calculated columns: counters for two columns and for columns on the primary side (H18 to H20)", Tests.CalculatedColumnShapes),
+    ("Calculated columns without a hierarchy: the four shapes of H21 to H24", Tests.CalculatedColumnShapesWithoutHierarchy),
+    ("Calculated columns: one block of BLANKs per segment of a larger table", Tests.CalculatedColumnSeveralSegments),
+    ("Formats: the eight columns of Excel's H37 sample, currency symbols and date patterns", Tests.ColumnFormats),
+    ("Date formats are .NET date format strings: custom patterns as given, standard specifiers through the culture", Tests.DateFormatStrings),
+    ("DAX text: paired brackets, parentheses and quotes are checked, real DAX is not rejected", Tests.DaxTextCheck),
+    ("Calculated columns with hidden columns: hide a data column, a level, or the calculated column (H33 to H36)", Tests.CalculatedColumnsWithHiddenColumns),
+    ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
+    ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
+    ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
 };
 
 int failed = 0;
@@ -592,11 +608,11 @@ namespace PivotWright.Tests
                 Check.True(x.Contains("<FormatString>''</FormatString>"), "general format string");
                 Check.True(x.Contains("<Format Format=\"General\"/>"), "general format");
                 Check.True(x.Contains("<FormatString>'0.0%'</FormatString>"), "percentage");
-                model.Tables["Many"].AddMeasure("When", "MAX(Many[N])", MeasureFormat.Date);
+                model.Tables["Many"].AddMeasure("When", "MAX(Many[N])", MeasureFormat.ShortDate());
                 model.Tables["Many"].AddMeasure("Money", "SUM(Many[N])", MeasureFormat.Currency());
                 string y = Script(model);
                 Check.True(y.Contains("<FormatString>'Short Date'</FormatString>") && y.Contains("<Format Format=\"DateTimeShortDatePattern\"/>"), "short date");
-                Check.True(y.Contains("<FormatString>'\"$\"#,0.00;-\"$\"#,0.00;\"$\"#,0.00'</FormatString>"), "currency (en-US default)");
+                Check.True(y.Contains("<FormatString>'\"$\"#,0.00;(\"$\"#,0.00);\"$\"#,0.00'</FormatString>"), "currency (en-US default; negatives in parentheses as Windows has them)");
                 Check.True(System.Text.RegularExpressions.Regex.IsMatch(x, @"<Name>IsPrivate</Name>\s*<Value>True</Value>"), "hidden");
                 var ms = new MemoryStream();
                 model.SaveModelPart(ms);
@@ -989,6 +1005,791 @@ namespace PivotWright.Tests
 
         // With every Ordinal 0 the engine told the measure groups apart only by hash order of their ids: whether Create Hierarchy and
         // Sort by Column worked in Excel depended on the random ids (ASDetail::OnClone2). Excel numbers them distinctly.
+        // Products(Category, Product) with a hierarchy and Sales(ProductKey, Qty, Amount) related to it: the shape of calcbase_v1, the
+        // base of Excel's H6, H7 and H10 samples.
+        private static (DataModelWriter model, ModelTable products, ModelTable sales) CalcModel(bool hierarchy = true, int salesRows = 40)
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                new ColumnDefinition("Category", ColumnDataType.String),
+                new ColumnDefinition("Product", ColumnDataType.String),
+            });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var sales = model.CreateTable("Sales", new[]
+            {
+                new ColumnDefinition("ProductKey", ColumnDataType.Int64),
+                new ColumnDefinition("Qty", ColumnDataType.Int64),
+                new ColumnDefinition("Amount", ColumnDataType.Currency),
+            });
+            for (int i = 0; i < salesRows; i++) sales.AddRow(1 + i % 6, 1 + i % 5, (decimal)(10 + i % 7));
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            if (hierarchy) products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            return (model, products, sales);
+        }
+
+        // H10: a calculated column added in manual calculation mode. The file holds the formula only; Excel calculates the values
+        // when a PivotTable uses the column. Compare with SPEC section 10 and tools/python/xd.py against H10_calculated_column_manual.xlsx.
+        public static void CalculatedColumnProfile()
+        {
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                var column = sales.AddCalculatedColumn("Line Total", "=[Qty]*[Amount]", ColumnDataType.Currency);
+                Check.Equal("[Qty]*[Amount]", column.Expression, "leading = removed");
+                Check.Equal("'Sales'[Line Total]", column.ToString(), "DAX notation");
+                Check.Equal(0, sales.Columns.Count(c => c.Name == "Line Total"), "not a column that takes values");
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+
+                string dim = Text(@"Sales_G\.7\.dim\.xml$");
+                Check.True(dim.Contains("<Expression>[Qty]*[Amount]</Expression>"), "formula in the dimension");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(dim, "<ddl200:ProcessingState>Unprocessed</ddl200:ProcessingState>|<ddl300:AttributeHierarchyProcessingState>Unprocessed</ddl300:AttributeHierarchyProcessingState>").Count, "unprocessed states");
+                Check.True(dim.Contains("<ddl200:InferredDatatype>Currency</ddl200:InferredDatatype>"), "inferred type");
+                Check.True(dim.Contains("<DataIDVersion>2</DataIDVersion>"), "data id version");
+                Check.True(!dim.Contains("<Value/>"), "empty annotation values dropped after the edit");
+                Text(@"Products_G\.6\.dim\.xml$");
+                string cube = Text(@"Model\.25\.cub\.xml$");
+                Check.True(cube.Contains("<AttributeID>Line Total</AttributeID>"), "cube attribute");
+                Check.True(cube.Contains("<StructureVersion>17</StructureVersion>"), "cube structure version");
+                Check.True(Text(@"Sales_G\.25\.det\.xml$").Contains("ddl200_200:ExpressionBinding"), "measure group attribute");
+                Text(@"MdxScript\.11\.scr\.xml$");
+                Text(@"Sales_G\.11\.prt\.xml$");
+                Text(@"\.cub\\info\.25\.xml$");
+
+                string tbl = Text(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+                Check.True(tbl.Contains("<Settings xsi:type=\"xsd:long\">4097</Settings>"), "table settings");
+                Check.True(tbl.Contains("name=\"Line Total\"") && tbl.Contains("<ColumnFlags xsi:type=\"xsd:long\">8</ColumnFlags>"), "raw column");
+                Check.True(tbl.Contains("<IsProcessed xsi:type=\"xsd:boolean\">false</IsProcessed>"), "intrinsic hierarchy not processed");
+
+                var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Line Total\.0\.idf$");
+                Check.Equal(152, idf.Length, "stub size");
+                Check.Equal(16, (int)BitConverter.ToUInt64(idf, 0), "run slots");
+                // 40 rows are fewer than the 64 of a run-length entry, so they are bit-packed (SPEC section 10, H23).
+                Check.Equal(0xFFFFFFFFu, BitConverter.ToUInt32(idf, 8), "bit-packed entry");
+                Check.Equal(40, (int)BitConverter.ToUInt32(idf, 12), "rows");
+                Check.True(!m.Files.Keys.Any(k => k.Contains("Line Total") && (k.Contains("H$") || k.EndsWith(".dictionary", StringComparison.Ordinal))),
+                    "no hierarchy table and no dictionary");
+                Check.Equal(1, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "partition information of the table with the column only");
+            }
+        }
+
+        // What differs between the types in the samples H10 (currency) and H11 to H15: the inferred type and format of the dimension
+        // attribute, and the type code and dictionary class of the unprocessed column in the table XML.
+        public static void CalculatedColumnTypes()
+        {
+            var expected = new (ColumnDataType Type, string Inferred, string Format, string? FormatString, int DbType, int XmType, string Dictionary)[]
+            {
+                (ColumnDataType.Currency, "Currency", "Currency", null, 6, 0, "XM_Long"),
+                (ColumnDataType.Int64, "BigInt", "General", null, 20, 0, "XM_Long"),
+                (ColumnDataType.Double, "Double", "General", null, 5, 1, "XM_Real"),
+                (ColumnDataType.DateTime, "Date", "DateTimeGeneral", "General Date", 7, 1, "XM_Real"),
+                (ColumnDataType.Boolean, "Boolean", "Boolean", "\"TRUE\";\"TRUE\";\"FALSE\"", 11, 0, "XM_Long"),
+                (ColumnDataType.String, "WChar", "Text", null, 130, 2, "XM_String"),
+            };
+            foreach (var e in expected)
+            {
+                var (model, _, sales) = CalcModel();
+                using (model)
+                {
+                    sales.AddCalculatedColumn("Calc", "1", e.Type);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var m = ModelReader.Read(ms.ToArray());
+                    string dim = Encoding.UTF8.GetString(m.Find(@"Sales_G\.7\.dim\.xml$"));
+                    string what = e.Type.ToString();
+                    Check.True(dim.Contains("<ddl200:InferredDatatype>" + e.Inferred + "</ddl200:InferredDatatype>"), what + ": inferred type");
+                    int at = dim.IndexOf("<Attribute><Name>Calc</Name>", StringComparison.Ordinal);
+                    string attribute = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+                    Check.True(attribute.Contains("<Format Format=\"" + e.Format + "\""), what + ": format annotation");
+                    string? formatString = System.Text.RegularExpressions.Regex.Match(attribute, "<ddl300_300:FormatString>([^<]*)</ddl300_300:FormatString>") is { Success: true } f
+                        ? System.Net.WebUtility.HtmlDecode(f.Groups[1].Value) : null;
+                    if (e.Type == ColumnDataType.Currency) Check.True(formatString is not null && formatString.Contains("#,0.00"), what + ": format string follows the culture");
+                    else Check.Equal(e.FormatString, formatString, what + ": format string");
+                    string tbl = Encoding.UTF8.GetString(m.Find(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$"));
+                    int col = tbl.IndexOf("name=\"Calc\"", StringComparison.Ordinal);
+                    string block = tbl[col..tbl.IndexOf("</DataObjects>", col, StringComparison.Ordinal)];
+                    Check.True(block.Contains("<DBType xsi:type=\"xsd:short\">" + e.DbType + "</DBType>"), what + ": DBType");
+                    Check.True(block.Contains("<XMType xsi:type=\"xsd:int\">" + e.XmType + "</XMType>"), what + ": XMType");
+                    Check.True(block.Contains("XMHashDataDictionary&lt;" + e.Dictionary + ">"), what + ": dictionary class");
+                    Check.Equal(e.Type == ColumnDataType.String, block.Contains("DictionaryFlags"), what + ": dictionary flags");
+                }
+            }
+        }
+
+        // The counters of Excel's H18 (two columns on Sales), H19 (one on Products) and H20 (one on each); xd.py and the file lists of
+        // generated files (tools/datagen calc2, calcp, calcsp) agree with them.
+        public static void CalculatedColumnShapes()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, products, sales) = CalcModel();
+                using (model)
+                {
+                    add(products, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            // H18: two columns on the many-side table.
+            var two = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+            });
+            Find(two, @"Model\.27\.cub\.xml$");
+            Check.Equal("2,3,3,3,", Counters(two, @"Sales_G\.9\.dim\.xml$"), "Sales dimension counters");
+            Find(two, @"Products_G\.6\.dim\.xml$");
+            Find(two, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+            Check.Equal(152, two.Find(@"\.0\.dim\\2\.Sales_G\.Line Total\.0\.idf$").Length, "first column file");
+            Check.Equal(152, two.Find(@"\.0\.dim\\3\.Sales_G\.Double Qty\.0\.idf$").Length, "second column file");
+            Check.Equal(0, two.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "no partition information");
+            Check.True(Find(two, @"Model\.27\.cub\.xml$").Contains("<StructureVersion>21</StructureVersion>"), "cube structure");
+
+            // H25 and H26: three and four columns on the many-side table; H27: two on it and one on the primary side.
+            var three = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Triple Qty", "[Qty]*3", ColumnDataType.Int64);
+            });
+            Find(three, @"Model\.31\.cub\.xml$");
+            Check.Equal("3,4,4,4,", Counters(three, @"Sales_G\.12\.dim\.xml$"), "three columns: Sales dimension counters");
+            Find(three, @"\.0\.dim\\Sales_G\.4\.tbl\.xml$");
+            Check.Equal(152, three.Find(@"\.0\.dim\\4\.Sales_G\.Triple Qty\.0\.idf$").Length, "third column file");
+            var four = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Triple Qty", "[Qty]*3", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Quad Qty", "[Qty]*4", ColumnDataType.Int64);
+            });
+            Find(four, @"Model\.35\.cub\.xml$");
+            Check.Equal("4,5,5,5,", Counters(four, @"Sales_G\.15\.dim\.xml$"), "four columns: Sales dimension counters");
+            Find(four, @"\.0\.dim\\Sales_G\.5\.tbl\.xml$");
+            var mixed = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            });
+            Find(mixed, @"Model\.31\.cub\.xml$");
+            Check.Equal("2,3,3,3,", Counters(mixed, @"Sales_G\.9\.dim\.xml$"), "mixed: Sales dimension counters");
+            Check.Equal("3,2,2,3,", Counters(mixed, @"Products_G\.9\.dim\.xml$"), "mixed: Products dimension counters");
+
+            // Beyond the samples (four columns): the same straight lines.
+            var ten = Save((p, s) =>
+            {
+                for (int i = 0; i < 10; i++) s.AddCalculatedColumn("Calc " + i, "[Qty]*" + i, ColumnDataType.Int64);
+            });
+            Find(ten, @"Model\.59\.cub\.xml$");
+            Check.Equal("10,11,11,11,", Counters(ten, @"Sales_G\.33\.dim\.xml$"), "ten columns: Sales dimension counters");
+            Find(ten, @"\.0\.dim\\Sales_G\.11\.tbl\.xml$");
+            Check.Equal(152, ten.Find(@"\.0\.dim\\11\.Sales_G\.Calc 9\.0\.idf$").Length, "tenth column file");
+
+            // H19: one column on the hierarchy table that is the primary side; Sales is not touched.
+            var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
+            Find(primary, @"Model\.23\.cub\.xml$");
+            Check.Equal("3,2,2,3,", Counters(primary, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+            Find(primary, @"Sales_G\.3\.dim\.xml$");
+            Find(primary, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+            Find(primary, @"\.0\.dim\\Sales_G\.0\.tbl\.xml$");
+            Check.Equal(152, primary.Find(@"\.0\.dim\\3\.Products_G\.Name Length\.0\.idf$").Length, "column file");
+            Find(primary, @"Products_G\.0\.dim\\info\.9\.xml$");
+
+            // Several columns on the primary side are extrapolated from the first (no sample): dimension +3, counters and table version +1.
+            var primaryTwo = Save((p, s) =>
+            {
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                p.AddCalculatedColumn("Name Length x2", "LEN([Product])*2", ColumnDataType.Int64);
+            });
+            Find(primaryTwo, @"Model\.27\.cub\.xml$");
+            Check.Equal("4,3,3,4,", Counters(primaryTwo, @"Products_G\.12\.dim\.xml$"), "two columns on Products: dimension counters");
+            Find(primaryTwo, @"\.0\.dim\\Products_G\.4\.tbl\.xml$");
+            Find(primaryTwo, @"\.0\.dim\\3\.Products_G\.Name Length\.0\.idf$");
+            Find(primaryTwo, @"\.0\.dim\\4\.Products_G\.Name Length x2\.0\.idf$");
+
+            // Columns on both primary-side tables (Products and Dates) are extrapolated too: each table gets its own first-column values.
+            {
+                var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                for (int i = 0; i < 40; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(day, day.Year, day.ToString("MMMM", CultureInfo.InvariantCulture)); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(sales["Date"], dates["Date"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                products.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                dates.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64);
+                using (model)
+                {
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var bothPrimary = ModelReader.Read(ms.ToArray());
+                    Find(bothPrimary, @"Model\.27\.cub\.xml$");
+                    Check.Equal("3,2,2,3,", Counters(bothPrimary, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+                    Check.Equal("3,2,2,3,", Counters(bothPrimary, @"Dates_G\.9\.dim\.xml$"), "Dates dimension counters");
+                    Find(bothPrimary, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+                    Find(bothPrimary, @"\.0\.dim\\Dates_G\.3\.tbl\.xml$");
+                }
+            }
+
+            // A column on Products in a model with a date table has no sample: it takes Products' values without a date table.
+            {
+                var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                for (int i = 0; i < 40; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(day, day.Year, day.ToString("MMMM", CultureInfo.InvariantCulture)); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(sales["Date"], dates["Date"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                dates.MarkAsDateTable("Date");
+                products.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                using (model)
+                {
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var withDate = ModelReader.Read(ms.ToArray());
+                    Find(withDate, @"Model\.26\.cub\.xml$");
+                    Check.Equal("3,2,2,3,", Counters(withDate, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+                    Find(withDate, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+                    Find(withDate, @"Dates_G\.6\.dim\.xml$");
+                }
+            }
+
+            // Two many-side tables with columns (no sample): each takes the many-side steps for its own count, the totals drive the rest.
+            {
+                var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, 1 + i % 5);
+                var stock = model.CreateTable("Stock", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("OnHand", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) stock.AddRow(1 + i % 6, 100 + i);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(stock["ProductKey"], products["ProductKey"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                sales.AddCalculatedColumn("Twice", "[Qty]*2", ColumnDataType.Int64);
+                stock.AddCalculatedColumn("Doubled", "[OnHand]*2", ColumnDataType.Int64);
+                using (model)
+                {
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var multi = ModelReader.Read(ms.ToArray());
+                    Find(multi, @"Model\.27\.cub\.xml$");
+                    Check.Equal("1,2,2,2,", Counters(multi, @"Sales_G\.6\.dim\.xml$"), "Sales dimension counters");
+                    Check.Equal("1,2,2,2,", Counters(multi, @"Stock_G\.6\.dim\.xml$"), "Stock dimension counters");
+                    Find(multi, @"Products_G\.6\.dim\.xml$");
+                    Find(multi, @"\.0\.dim\\Stock_G\.2\.tbl\.xml$");
+                }
+            }
+
+            // H20: one column on each.
+            var both = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            });
+            Find(both, @"Model\.27\.cub\.xml$");
+            Check.Equal("1,2,2,2,", Counters(both, @"Sales_G\.6\.dim\.xml$"), "Sales dimension counters");
+            Check.Equal("3,2,2,3,", Counters(both, @"Products_G\.9\.dim\.xml$"), "Products dimension counters");
+            Find(both, @"\.0\.dim\\Sales_G\.2\.tbl\.xml$");
+            Find(both, @"\.0\.dim\\Products_G\.3\.tbl\.xml$");
+        }
+
+        // Excel's H21 (one column on Sales), H22 (two), H23 (one on Products) and H24 (one on each) in a model without a hierarchy.
+        public static void CalculatedColumnShapesWithoutHierarchy()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, products, sales) = CalcModel(hierarchy: false);
+                using (model)
+                {
+                    add(products, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            var one = Save((p, s) => s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency));
+            Find(one, @"Model\.7\.cub\.xml$");
+            Check.Equal("1,2,2,2,", Counters(one, @"Sales_G\.6\.dim\.xml$"), "Sales dimension counters");
+            Find(one, @"Products_G\.2\.dim\.xml$");
+            Find(one, @"\.0\.dim\\Sales_G\.2\.tbl\.xml$");
+            Find(one, @"\.cub\\info\.7\.xml$");
+            Check.Equal(0, one.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.prt\\info\.\d+\.xml$")), "no partition information");
+            Check.True(Find(one, @"Sales_G\.7\.det\.xml$").Contains("<Expression>[Qty]*[Amount]</Expression>"), "formula in the measure group");
+
+            var two = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+            });
+            Find(two, @"Model\.10\.cub\.xml$");
+            Check.Equal("2,3,3,3,", Counters(two, @"Sales_G\.8\.dim\.xml$"), "Sales dimension counters");
+            Find(two, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+
+            // H28: three columns on Sales.
+            var three = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                s.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Triple Qty", "[Qty]*3", ColumnDataType.Int64);
+            });
+            Find(three, @"Model\.14\.cub\.xml$");
+            Check.Equal("3,4,4,4,", Counters(three, @"Sales_G\.11\.dim\.xml$"), "three columns: Sales dimension counters");
+            Find(three, @"\.0\.dim\\Sales_G\.4\.tbl\.xml$");
+
+            var primary = Save((p, s) => p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64));
+            Find(primary, @"Model\.6\.cub\.xml$");
+            Check.Equal("1,2,2,1,", Counters(primary, @"Products_G\.5\.dim\.xml$"), "Products dimension counters");
+            Find(primary, @"\.0\.dim\\Products_G\.1\.tbl\.xml$");
+            Check.True(Find(primary, @"Sales_G\.6\.det\.xml$").Contains("<Expression>LEN([Product])</Expression>"), "the many-side group holds the primary side's formula");
+
+            var both = Save((p, s) =>
+            {
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            });
+            Find(both, @"Model\.10\.cub\.xml$");
+            Check.Equal("1,2,2,2,", Counters(both, @"Sales_G\.5\.dim\.xml$"), "Sales dimension counters");
+            Find(both, @"Products_G\.5\.dim\.xml$");
+        }
+
+        // A table of several segments gets one block of BLANKs per segment (a model written with 16,384-row segments, 40,000 rows).
+        public static void CalculatedColumnSeveralSegments()
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, SegmentRowCount = 16384 });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 40000; i++) sales.AddRow(1 + i % 6, 1 + i % 5);
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            sales.AddCalculatedColumn("Twice", "[Qty]*2", ColumnDataType.Int64);
+            using (model)
+            {
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var m = ModelReader.Read(ms.ToArray());
+                var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Twice\.0\.idf$");
+                Check.Equal(3 * 152, idf.Length, "three blocks of 152 bytes");
+                Check.Equal(16384, (int)BitConverter.ToUInt32(idf, 12), "first segment rows");
+                Check.Equal(16384, (int)BitConverter.ToUInt32(idf, 152 + 12), "second segment rows");
+                Check.Equal(40000 - 32768, (int)BitConverter.ToUInt32(idf, 304 + 12), "last segment rows");
+                string tbl = Encoding.UTF8.GetString(m.Find(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$"));
+                int col = tbl.IndexOf("name=\"Twice\"", StringComparison.Ordinal);
+                string block = tbl[col..tbl.IndexOf("</DataObjects>", col, StringComparison.Ordinal)];
+                Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(block, "<Name>SubSegment</Name>").Count, "three segments in the table XML");
+                Check.True(block.Contains("<SegmentCount xsi:type=\"xsd:int\">3</SegmentCount>"), "segment count of the data file");
+            }
+        }
+
+        // A run of 64 or more BLANKs is a run-length entry (1,000 rows in H10 to H21), fewer are bit-packed (12 rows in H23, H24).
+        public static void CalculatedColumnBlankEncoding()
+        {
+            foreach (var (rows, rle) in new[] { (12, false), (63, false), (64, true), (1000, true) })
+            {
+                var (model, _, sales) = CalcModel(salesRows: rows);
+                using (model)
+                {
+                    sales.AddCalculatedColumn("Calc", "1", ColumnDataType.Currency);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    var m = ModelReader.Read(ms.ToArray());
+                    var idf = m.Find(@"\.0\.dim\\2\.Sales_G\.Calc\.0\.idf$");
+                    Check.Equal(152, idf.Length, rows + " rows: file size");
+                    Check.Equal(rle ? 2u : 0xFFFFFFFFu, BitConverter.ToUInt32(idf, 8), rows + " rows: entry");
+                    Check.Equal(rows, (int)BitConverter.ToUInt32(idf, 12), rows + " rows: count");
+                    string tbl = Encoding.UTF8.GetString(m.Find(@"\.0\.dim\\Sales_G\.3\.tbl\.xml$"));
+                    int col = tbl.IndexOf("name=\"Calc\"", StringComparison.Ordinal);
+                    string block = tbl[col..tbl.IndexOf("</DataObjects>", col, StringComparison.Ordinal)];
+                    string runs = rle ? "<RLERuns xsi:type=\"xsd:long\">1</RLERuns><OthersRLERuns xsi:type=\"xsd:long\">0</OthersRLERuns>" : "<RLERuns xsi:type=\"xsd:long\">0</RLERuns><OthersRLERuns xsi:type=\"xsd:long\">1</OthersRLERuns>";
+                    Check.True(block.Replace("\r", "").Replace("\n", "").Replace(" ", "").Contains(runs.Replace(" ", "")), rows + " rows: run counts");
+                }
+            }
+        }
+
+        // A date table keeps its own offsets: a column on Sales (H29, H30) or on the date table (H31, H32).
+        public static void CalculatedColumnsWithDateTable()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, dates, sales) = DateModel(d =>
+                {
+                    for (int i = 0; i < 70; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(day, day.Year, day.ToString("MMMM", CultureInfo.InvariantCulture)); }
+                });
+                using (model)
+                {
+                    dates.MarkAsDateTable("Date");
+                    add(dates, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            var onSales = Save((d, s) => s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64));
+            Find(onSales, @"Model\.26\.cub\.xml$");
+            Check.Equal("1,2,2,3,", Counters(onSales, @"Sales_G\.7\.dim\.xml$"), "Sales dimension counters");
+            Find(onSales, @"\.0\.dim\\Sales_G\.3\.tbl\.xml$");
+            Check.Equal(152, onSales.Find(@"\.0\.dim\\3\.Sales_G\.Twice\.0\.idf$").Length, "column file");
+
+            var twoOnSales = Save((d, s) =>
+            {
+                s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64);
+                s.AddCalculatedColumn("Thrice", "[N]*3", ColumnDataType.Int64);
+            });
+            Find(twoOnSales, @"Model\.30\.cub\.xml$");
+            Check.Equal("2,3,3,4,", Counters(twoOnSales, @"Sales_G\.10\.dim\.xml$"), "Sales dimension counters, two columns");
+            Find(twoOnSales, @"\.0\.dim\\Sales_G\.4\.tbl\.xml$");
+
+            var onDates = Save((d, s) => d.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64));
+            Find(onDates, @"Model\.26\.cub\.xml$");
+            Check.Equal("4,3,3,4,", Counters(onDates, @"Dates_G\.9\.dim\.xml$"), "Dates dimension counters");
+            Find(onDates, @"\.0\.dim\\Dates_G\.4\.tbl\.xml$");
+            Check.Equal(152, onDates.Find(@"\.0\.dim\\4\.Dates_G\.Year Month\.0\.idf$").Length, "column file");
+            Find(onDates, @"Dates_G\.0\.dim\\info\.9\.xml$");
+
+            // H31B: a hierarchy over the calculated column stays unprocessed (no U$ table, StructureType Unknown, level starts -1).
+            ModelHierarchy? over = null;
+            var hierarchyOver = Save((d, s) =>
+            {
+                var yearMonth = d.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64);
+                over = d.AddHierarchy("Hierarchy1", "Year", "year month");
+                Check.True(over.IsUnprocessed, "unprocessed");
+                Check.Equal("Hierarchy1 (Year > Year Month)", over.ToString(), "level names");
+                Check.Equal(1, over.Levels.Count, "only the data column is a ModelColumn level");
+                Check.Equal("Year Month", yearMonth.Name, "column name");
+            });
+            Find(hierarchyOver, @"Model\.33\.cub\.xml$");
+            Check.Equal("6,3,3,6,", Counters(hierarchyOver, @"Dates_G\.12\.dim\.xml$"), "Dates dimension counters");
+            Find(hierarchyOver, @"\.0\.dim\\Dates_G\.6\.tbl\.xml$");
+            Check.Equal(0, hierarchyOver.Files.Keys.Count(k => k.Contains("Hierarchy1")), "no hierarchy table or files");
+            Check.Equal(0, hierarchyOver.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"\.cub\\info\.\d+\.xml$")), "no cube information file");
+            string overDim = Find(hierarchyOver, @"Dates_G\.12\.dim\.xml$");
+            Check.True(overDim.Contains("<ddl300:ProcessingState>Unprocessed</ddl300:ProcessingState><ddl300:StructureType>Unknown</ddl300:StructureType>"), "hierarchy states");
+            string overTbl = Find(hierarchyOver, @"\.0\.dim\\Dates_G\.6\.tbl\.xml$");
+            Check.True(overTbl.Contains("<TableStore>$Year$-1$Year Month$-1$</TableStore>"), "level starts");
+            Check.True(overTbl.Contains("<IsProcessed xsi:type=\"xsd:boolean\">false</IsProcessed><TableStore>$Year"), "hierarchy not processed");
+
+            var both = Save((d, s) =>
+            {
+                s.AddCalculatedColumn("Twice", "[N]*2", ColumnDataType.Int64);
+                d.AddCalculatedColumn("Year Month", "[Year]*100", ColumnDataType.Int64);
+            });
+            Find(both, @"Model\.30\.cub\.xml$");
+            Find(both, @"Sales_G\.7\.dim\.xml$");
+            Find(both, @"Dates_G\.9\.dim\.xml$");
+        }
+
+        // Only malformed text is rejected; DAX with comments, quotes inside text and brackets in names must pass.
+        public static void DaxTextCheck()
+        {
+            string[] good =
+            {
+                "SUM(Sales[Qty])", "[Qty]*[Amount]", "RELATED(Products[Category])", "\"Qty \"&[Qty]", "\"a \"\"quoted\"\" (word\"",
+                "CALCULATE(SUM('Sales Table'[Qty]), FILTER(ALL('Dates'), 'Dates'[Year] = 2025))", "'O''Rate'[Amount[x]]]",
+                "IF([Qty] > 2, \"big\", \"small\") // a comment with ( [ and \"", "1 + /* ( [ \" */ 2", "-- note )\n1", "{1, 2, 3}", "[Total N] * 2 & \"<x>\"",
+            };
+            foreach (var text in good)
+                Check.True(PivotWright.Internal.DaxText.Problem(text) is null, "well-formed: " + text);
+            string[] bad = { "SUM(Sales[Qty]", "SUM Sales[Qty])", "[Qty", "Qty]", "\"open", "'open", "(1 + 2", "1 + /* open", "{1, 2", "(1}" };
+            foreach (var text in bad)
+                Check.True(PivotWright.Internal.DaxText.Problem(text) is not null, "malformed: " + text);
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                Tests.Throws<ArgumentException>(() => sales.AddCalculatedColumn("Bad", "SUM(Sales[Qty]", ColumnDataType.Int64), "unclosed parenthesis in a column", "malformed");
+                Tests.Throws<ArgumentException>(() => sales.AddMeasure("Bad measure", "SUM(Sales[Qty]"), "unclosed parenthesis in a measure", "malformed");
+                Check.Equal(0, sales.CalculatedColumns.Count, "failed calls change nothing");
+            }
+        }
+
+        // Excel's H37 sample: how a calculated column's format is written for each kind of format; and the data columns take formats too.
+        public static void ColumnFormats()
+        {
+            var us = new CultureInfo("en-US");
+            var za = new CultureInfo("en-ZA");
+            var gb = new CultureInfo("en-GB");
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                sales.AddCalculatedColumn("Whole", "[Qty]*2", ColumnDataType.Int64, MeasureFormat.WholeNumber);
+                sales.AddCalculatedColumn("Dec3", "[Qty]/3", ColumnDataType.Double, MeasureFormat.Decimal(3));
+                sales.AddCalculatedColumn("DecNoSep", "[Qty]/7", ColumnDataType.Double, MeasureFormat.Decimal(2, thousandSeparator: false));
+                sales.AddCalculatedColumn("Pct", "[Qty]/10", ColumnDataType.Double, MeasureFormat.Percentage(1));
+                sales.AddCalculatedColumn("CurR", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, za));
+                sales.AddCalculatedColumn("CurUsd", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.Currency(2, us));
+                sales.AddCalculatedColumn("CurNone", "[Qty]*[Amount]", ColumnDataType.Currency, MeasureFormat.CurrencyWithoutSymbol());
+                var ms = new MemoryStream();
+                model.SaveModelPart(ms);
+                var read = ModelReader.Read(ms.ToArray());
+                string dim = Encoding.UTF8.GetString(read.Find(@"Sales_G\.\d+\.dim\.xml$"));
+                (string annotation, string formatString) Of(string column)
+                {
+                    int at = dim.IndexOf("<Attribute><Name>" + column + "</Name>", StringComparison.Ordinal);
+                    string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+                    var ann = System.Text.RegularExpressions.Regex.Match(a, "<Name>Format</Name>\\s*<Value>\\s*(.*?)\\s*</Value>", System.Text.RegularExpressions.RegexOptions.Singleline).Groups[1].Value;
+                    var fs = System.Text.RegularExpressions.Regex.Match(a, "<ddl300_300:FormatString>(.*?)</ddl300_300:FormatString>").Groups[1].Value;
+                    return (System.Text.RegularExpressions.Regex.Replace(ann, "\\s+", " "), System.Net.WebUtility.HtmlDecode(fs));
+                }
+                Check.Equal("#,0", Of("Whole").formatString, "whole number format string");
+                Check.True(Of("Whole").annotation.Contains("Format=\"NumberWhole\" ThousandSeparator=\"True\""), "whole number annotation");
+                Check.Equal("#,0.000", Of("Dec3").formatString, "decimal with separator");
+                Check.True(Of("Dec3").annotation.Contains("Accuracy=\"3\" ThousandSeparator=\"True\""), "decimal annotation");
+                Check.Equal("0.00", Of("DecNoSep").formatString, "decimal without separator");
+                Check.True(!Of("DecNoSep").annotation.Contains("ThousandSeparator"), "no separator in the annotation");
+                Check.Equal("0.0%;-0.0%;0.0%", Of("Pct").formatString, "percentage");
+                Check.Equal("\"R\"#,0.00;-\"R\"#,0.00;\"R\"#,0.00", Of("CurR").formatString, "rand");
+                Check.True(Of("CurR").annotation.Contains("LCID=\"7177\"") && Of("CurR").annotation.Contains("DisplayName=\"R English (South Africa)\""), "rand annotation");
+                Check.Equal("\\$#,0.00;(\\$#,0.00);\\$#,0.00", Of("CurUsd").formatString, "dollar is escaped, negatives in parentheses");
+                Check.Equal("\"\"#,0.00;(\"\"#,0.00);\"\"#,0.00", Of("CurNone").formatString, "no symbol");
+                Check.True(Of("CurNone").annotation.Contains("LCID=\"1033\" DisplayName=\"\" Symbol=\"\" PositivePattern=\"0\" NegativePattern=\"0\""), "no symbol annotation");
+            }
+
+            // Dates follow the culture's own pattern: en-ZA gives year first, en-US month first, en-GB day first; never the library's choice.
+            var dateCases = new (CultureInfo culture, string shortPattern)[] { (us, "M/d/yyyy"), (gb, "dd/MM/yyyy"), (za, "yyyy/MM/dd") };
+            foreach (var (culture, expected) in dateCases)
+            {
+                var m = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = culture });
+                var d = m.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) { Format = MeasureFormat.ShortDate() }, new ColumnDefinition("Year", ColumnDataType.Int64) });
+                d.AddRow(new DateTime(2025, 3, 14), 2025);
+                using (m)
+                {
+                    var ms2 = new MemoryStream();
+                    m.SaveModelPart(ms2);
+                    string dimension = Encoding.UTF8.GetString(ModelReader.Read(ms2.ToArray()).Find(@"Dates_G\.\d+\.dim\.xml$"));
+                    Check.True(dimension.Contains("Group=\"ShortDate\" FormatString=\"" + expected + "\""), culture.Name + ": short date " + expected);
+                    Check.True(dimension.Contains("LCID=\"" + culture.LCID + "\""), culture.Name + ": locale");
+                }
+            }
+            // A specific culture can be chosen for a column of another model.
+            var other = new DataModelWriter(new DataModelOptions { XpressCompression = false, Culture = za });
+            var table = other.CreateTable("T", new[] { new ColumnDefinition("D", ColumnDataType.DateTime) { Format = MeasureFormat.LongDate(us) }, new ColumnDefinition("A", ColumnDataType.Currency) { Format = MeasureFormat.Currency(0, us) } });
+            table.AddRow(new DateTime(2025, 3, 14), 5m);
+            using (other)
+            {
+                var ms3 = new MemoryStream();
+                other.SaveModelPart(ms3);
+                string dimension = Encoding.UTF8.GetString(ModelReader.Read(ms3.ToArray()).Find(@"T_G\.\d+\.dim\.xml$"));
+                Check.True(dimension.Contains("Group=\"LongDate\" FormatString=\"dddd, MMMM d, yyyy\""), "long date of en-US in an en-ZA model");
+                Check.True(dimension.Contains("<ddl300_300:FormatString>\\$#,0;(\\$#,0);\\$#,0</ddl300_300:FormatString>"), "dollars with no decimals on a data column");
+            }
+
+            // A format must fit the type.
+            void Rejects(Action a, string what)
+            {
+                try { a(); } catch (ArgumentException) { return; }
+                throw new Exception("Expected ArgumentException: " + what);
+            }
+            var (checkModel, _, checkSales) = CalcModel();
+            using (checkModel)
+            {
+                Rejects(() => checkSales.AddCalculatedColumn("A", "1", ColumnDataType.String, MeasureFormat.WholeNumber), "number format on text");
+                Rejects(() => checkSales.AddCalculatedColumn("B", "1", ColumnDataType.Int64, MeasureFormat.ShortDate()), "date format on a number");
+                Rejects(() => checkSales.AddCalculatedColumn("C", "1", ColumnDataType.DateTime, MeasureFormat.Percentage()), "number format on a date");
+                Rejects(() => checkSales.AddMeasure("M", "1", MeasureFormat.LongDate()), "long date on a measure");
+                Rejects(() => new DataModelWriter().CreateTable("X", new[] { new ColumnDefinition("S", ColumnDataType.Boolean) { Format = MeasureFormat.WholeNumber } }), "number format on a TRUE/FALSE data column");
+                Check.Equal(0, checkSales.CalculatedColumns.Count, "failed calls change nothing");
+            }
+        }
+
+        public static void DateFormatStrings()
+        {
+            var us = new CultureInfo("en-US");
+            var gb = new CultureInfo("en-GB");
+            var za = new CultureInfo("en-ZA");
+            // (format, culture, the pattern Excel gets, the Group written)
+            var cases = new (string Format, CultureInfo Culture, string Pattern, string Group)[]
+            {
+                ("d", us, "M/d/yyyy", "ShortDate"), ("d", gb, "dd/MM/yyyy", "ShortDate"), ("d", za, "yyyy/MM/dd", "ShortDate"),
+                ("D", us, "dddd, MMMM d, yyyy", "LongDate"), ("t", us, "h:mm tt", "ShortTime"), ("T", us, "h:mm:ss tt", "LongTime"),
+                ("s", us, "yyyy'-'MM'-'dd'T'HH':'mm':'ss", "SortableDateTime"), ("dd MMM yyyy", us, "dd MMM yyyy", "ShortDate"),
+                ("yyyy-MM-dd HH:mm", gb, "yyyy-MM-dd HH:mm", "GeneralShortDateTime"), ("g", us, "M/d/yyyy h:mm tt", "GeneralShortDateTime"),
+                ("G", gb, "dd/MM/yyyy HH:mm:ss", "GeneralLongDateTime"), ("%d", us, "%d", "ShortDate"),
+            };
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var columns = cases.Select((c, i) => new ColumnDefinition("D" + i, ColumnDataType.DateTime) { Format = MeasureFormat.Date(c.Format, c.Culture) }).ToArray();
+            var table = model.CreateTable("T", columns);
+            table.AddRow(columns.Select(_ => (object?)new DateTime(2025, 3, 14, 13, 30, 55)).ToArray());
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"T_G\.\d+\.dim\.xml$"));
+            for (int i = 0; i < cases.Length; i++)
+            {
+                int at = dim.IndexOf("<Attribute><Name>D" + i + "</Name>", StringComparison.Ordinal);
+                string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+                var c = cases[i];
+                Check.True(a.Contains("Group=\"" + c.Group + "\""), c.Format + " " + c.Culture.Name + ": group " + c.Group);
+                Check.True(a.Contains("FormatString=\"" + System.Net.WebUtility.HtmlEncode(c.Pattern).Replace("&#39;", "&apos;") + "\"") || a.Contains("FormatString=\"" + c.Pattern + "\""), c.Format + " " + c.Culture.Name + ": pattern " + c.Pattern);
+                Check.True(a.Contains("LCID=\"" + c.Culture.LCID + "\""), c.Format + " " + c.Culture.Name + ": locale");
+            }
+            // Engine strings as Excel wrote them in H38
+            Check.Equal("M/d/yyyy h:mm:ss AM/PM", MeasureFormat.ToEngineDatePattern("M/d/yyyy h:mm:ss tt"), "tt is AM/PM");
+            Check.Equal("yyyy\"-\"MM\"-\"dd\"T\"HH\":\"mm\":\"ss", MeasureFormat.ToEngineDatePattern("yyyy'-'MM'-'dd'T'HH':'mm':'ss"), "literals in double quotes");
+            Check.Equal("dd-MMM-yy h:mm AM/PM", MeasureFormat.ToEngineDatePattern("dd-MMM-yy h:mm tt"), "short date and time");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("o"), "round-trip format has a time zone");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("yyyy-MM-dd zzz"), "time zone offset");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date(""), "empty format");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("x"), "a letter that is no standard specifier");
+            Tests.Throws<ArgumentException>(() => MeasureFormat.Date("dd 'open"), "an unclosed literal");
+            Tests.Throws<ArgumentNullException>(() => MeasureFormat.Date(null!), "null format");
+            using var other = new DataModelWriter();
+            var t2 = other.CreateTable("U", new[] { new ColumnDefinition("N", ColumnDataType.Int64) });
+            Tests.Throws<ArgumentException>(() => t2.AddCalculatedColumn("C", "1", ColumnDataType.Int64, MeasureFormat.Date("d")), "a date format on a number column");
+            Tests.Throws<ArgumentException>(() => t2.AddMeasure("M", "1", MeasureFormat.Date("d")), "a custom date format on a measure");
+        }
+
+        public static void CalculatedColumnValidation()
+        {
+            void Rejects<T>(Action a, string what) where T : Exception
+            {
+                try { a(); } catch (T) { return; }
+                throw new Exception("Expected " + typeof(T).Name + ": " + what);
+            }
+            void Saves(DataModelWriter model) { using var ms = new MemoryStream(); model.SaveModelPart(ms); }
+
+            var (model, products, sales) = CalcModel();
+            using (model)
+            {
+                sales.AddMeasure("Total Qty", "SUM(Sales[Qty])");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("", "1", ColumnDataType.Currency), "empty name");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("A[B]", "1", ColumnDataType.Currency), "brackets");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("Qty", "1", ColumnDataType.Currency), "name of a column");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("total qty", "1", ColumnDataType.Currency), "name of a measure");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "  ", ColumnDataType.Currency), "empty expression");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "=", ColumnDataType.Currency), "only =");
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("X", "1", (ColumnDataType)99), "not a data type");
+                Check.Equal(0, sales.CalculatedColumns.Count, "failed calls change nothing");
+                sales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                Rejects<ArgumentException>(() => sales.AddCalculatedColumn("line total", "1", ColumnDataType.Currency), "duplicate calculated column");
+                Rejects<ArgumentException>(() => sales.AddMeasure("Line Total", "1"), "measure named like a calculated column");
+                Rejects<ArgumentException>(() => products.AddHierarchy("Product Hierarchy", "Category", "Product"), "duplicate hierarchy");
+                Saves(model);
+                // A column on the primary side as well is a shape Excel was seen to write (H20, H27); so are many on the many side (H26).
+                products.AddCalculatedColumn("Other", "1", ColumnDataType.Int64);
+                Saves(model);
+                for (int i = 0; i < 12; i++) sales.AddCalculatedColumn("More " + i, "2", ColumnDataType.Int64);
+                Saves(model);
+            }
+            // A model without a hierarchy is supported (H21 to H24), but not a table without any relationship.
+            using (var noHierarchy = new DataModelWriter(new DataModelOptions { XpressCompression = false }))
+            {
+                var a = noHierarchy.CreateTable("A", new[] { new ColumnDefinition("K", ColumnDataType.Int64), new ColumnDefinition("V", ColumnDataType.Currency) });
+                a.AddRow(1, 2m);
+                var b = noHierarchy.CreateTable("B", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                b.AddRow(1);
+                noHierarchy.AddRelationship(b["K"], a["K"]);
+                b.AddCalculatedColumn("C", "1", ColumnDataType.Currency);
+                Saves(noHierarchy);
+                var c = noHierarchy.CreateTable("C", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                c.AddRow(1);
+                c.AddCalculatedColumn("D", "1", ColumnDataType.Currency);
+                Rejects<InvalidOperationException>(() => Saves(noHierarchy), "table without a relationship in a model without hierarchy");
+            }
+            var (lonely, _, _) = CalcModel();
+            using (lonely)
+            {
+                var other = lonely.CreateTable("Lonely", new[] { new ColumnDefinition("K", ColumnDataType.Int64) });
+                other.AddRow(1);
+                other.AddCalculatedColumn("C", "1", ColumnDataType.Int64);
+                Rejects<InvalidOperationException>(() => Saves(lonely), "table without hierarchy that is not on the many side");
+            }
+        }
+
+        // H33 (hide Sales[Qty], then add a calculated column), H36 (hide a hierarchy level) and H35 (hide the calculated column itself).
+        public static void CalculatedColumnsWithHiddenColumns()
+        {
+            ModelReader Save(Action<ModelTable, ModelTable> add)
+            {
+                var (model, products, sales) = CalcModel();
+                using (model)
+                {
+                    add(products, sales);
+                    var ms = new MemoryStream();
+                    model.SaveModelPart(ms);
+                    return ModelReader.Read(ms.ToArray());
+                }
+            }
+            string Find(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            string Counters(ModelReader m, string pattern) => System.Text.RegularExpressions.Regex.Matches(Find(m, pattern),
+                    "<(StructureVersion|DataIDVersion|CacheVersion|DataVersion)>(-?\\d+)").Select(x => x.Groups[2].Value).Aggregate("", (a, b) => a + b + ",");
+
+            var salesHidden = Save((p, s) =>
+            {
+                s["Qty"].IsHidden = true;
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+            });
+            Find(salesHidden, @"Model\.25\.cub\.xml$");
+            Find(salesHidden, @"Sales_G\.24\.det\.xml$");
+            Check.Equal("1,2,2,2,", Counters(salesHidden, @"Sales_G\.7\.dim\.xml$"), "Sales dimension counters");
+            Find(salesHidden, @"Products_G\.6\.dim\.xml$");
+            Find(salesHidden, @"\.0\.dim\\Sales_G\.2\.tbl\.xml$");
+
+            var levelHidden = Save((p, s) =>
+            {
+                p["Product"].IsHidden = true;
+                s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+            });
+            Find(levelHidden, @"Model\.25\.cub\.xml$");
+            Find(levelHidden, @"Products_G\.7\.dim\.xml$");
+            Find(levelHidden, @"Sales_G\.6\.dim\.xml$");
+
+            // No sample without hierarchies: the same steps on that model's fit (cube 6 + 2, measure groups 7, Sales dimension 5 + 1).
+            {
+                var (plainModel, _, plainSales) = CalcModel(hierarchy: false);
+                using (plainModel)
+                {
+                    plainSales["Qty"].IsHidden = true;
+                    plainSales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    var ms = new MemoryStream();
+                    plainModel.SaveModelPart(ms);
+                    var plainRead = ModelReader.Read(ms.ToArray());
+                    Find(plainRead, @"Model\.8\.cub\.xml$");
+                    Find(plainRead, @"Sales_G\.7\.det\.xml$");
+                    Find(plainRead, @"Sales_G\.6\.dim\.xml$");
+                }
+            }
+
+            var calcHidden = Save((p, s) =>
+            {
+                var total = s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                total.IsHidden = true;
+                Check.True(total.IsHidden, "IsHidden reads back");
+            });
+            string dim = Find(calcHidden, @"Sales_G\.7\.dim\.xml$");
+            int at = dim.IndexOf("<Attribute><Name>Line Total</Name>", StringComparison.Ordinal);
+            string attribute = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+            Check.True(attribute.Contains("<AttributeHierarchyVisible>false</AttributeHierarchyVisible>"), "hidden attribute in the dimension");
+            string cube = Find(calcHidden, @"Model\.25\.cub\.xml$");
+            int cubeAt = cube.IndexOf("<AttributeID>Line Total</AttributeID>", StringComparison.Ordinal);
+            Check.True(cube[cubeAt..].Contains("<AttributeHierarchyVisible>false</AttributeHierarchyVisible>") &&
+                       cube[cubeAt..cube.IndexOf("</Attribute>", cubeAt, StringComparison.Ordinal)].Contains("false"), "hidden attribute in the cube");
+        }
+
         public static void DistinctOrdinals()
         {
             ModelReader Save(bool hierarchy)
@@ -1055,6 +1856,166 @@ namespace PivotWright.Tests
             model.SaveModelPart(ms);
             string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"\.0\.db\\Dates_G\.[0-9]+\.dim\.xml$"));
             Check.Equal(1 + 6, System.Text.RegularExpressions.Regex.Matches(dim, "<AttributeHierarchyVisible>false</AttributeHierarchyVisible>").Count, "row number plus six hidden attributes");
+        }
+
+        public static void ExcludeFromRefreshAll()
+        {
+            string Connections(bool exclude)
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, ExcludeSourceFromRefreshAll = exclude });
+                model.CreateTable("T", new[] { new ColumnDefinition("N", ColumnDataType.Int64) }).AddRow(1L);
+                var ms = new MemoryStream();
+                model.Save(ms);
+                using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(ms.ToArray()));
+                using var r = new StreamReader(zip.GetEntry("xl/connections.xml")!.Open());
+                return r.ReadToEnd();
+            }
+            Check.True(!Connections(false).Contains("excludeFromRefreshAll"), "off by default");
+            Check.True(Connections(true).Contains("<x15:connection id=\"fe61cfce-2c03-495c-87ad-e281a1607748\" excludeFromRefreshAll=\"1\"/>") || Connections(true).Contains("excludeFromRefreshAll=\"1\"/>"), "attribute as in H41");
+        }
+
+        public static void CalculationTrigger()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
+            products.AddRow(1L, "A");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 70; i++) sales.AddRow(1L, (long)i);
+            model.AddRelationship(sales["Key"], products["Key"]);
+            products.AddHierarchy("H", "Name", "Key");
+            sales.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+            Check.Equal(2, model.Tables.Count, "the trigger table is not in Tables");
+
+            var ms = new MemoryStream();
+            model.Save(ms);
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(ms.ToArray()));
+            string Part(string name)
+            {
+                var e = zip.GetEntry(name) ?? throw new Exception("Missing part " + name);
+                using var r = new StreamReader(e.Open());
+                return r.ReadToEnd();
+            }
+            foreach (var e in zip.Entries.Where(e => e.FullName.EndsWith(".xml") || e.FullName.EndsWith(".rels")))
+            {
+                using var r = new StreamReader(e.Open());
+                try { System.Xml.Linq.XDocument.Parse(r.ReadToEnd()); } catch (Exception x) { throw new Exception("Not well-formed: " + e.FullName + ": " + x.Message); }
+            }
+            string workbook = Part("xl/workbook.xml"), connections = Part("xl/connections.xml");
+            Check.True(workbook.Contains("<sheet name=\"Sheet2\" sheetId=\"2\" state=\"veryHidden\" r:id=\"rId5\"/>"), "second sheet");
+            Check.True(workbook.Contains("<definedName name=\"_xlcn.WorksheetConnection_PivotWright.xlsxPivotWrightTrigger\" hidden=\"1\">PivotWrightTrigger[]</definedName>"), "hidden defined name");
+            Check.True(workbook.Contains("<x15:modelTable id=\"PivotWrightTrigger\" name=\"PivotWrightTrigger\" connection=\"WorksheetConnection_PivotWright.xlsx!PivotWrightTrigger\"/>"), "model table of the linked connection");
+            Check.True(connections.Contains("type=\"102\" refreshOnLoad=\"1\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxPivotWrightTrigger\"/>"), "worksheet connection");
+            Check.True(Part("xl/worksheets/sheet1.xml").Contains("tabSelected=\"1\"") && !Part("xl/worksheets/sheet2.xml").Contains("tabSelected"), "only the first sheet is selected");
+            Check.True(Part("xl/worksheets/sheet2.xml").Contains("<c r=\"A2\"><v>1</v></c>"), "the sheet holds the same value as the model");
+            Check.True(Part("xl/tables/table1.xml").Contains("name=\"PivotWrightTrigger\"") && Part("xl/sharedStrings.xml").Contains("<t>Key</t>"), "worksheet table");
+            Check.True(Part("[Content_Types].xml").Contains("/xl/tables/table1.xml") && Part("docProps/app.xml").Contains("<vt:lpstr>Sheet2</vt:lpstr>"), "content types and sheet list");
+            string manual = Part("customXml/item1.xml");
+            Check.True(manual.Contains("ManualCalcMode") && manual.Contains("[CDATA[False]]"), "automatic calculation");
+            Check.True(Enumerable.Range(1, 6).Any(n => Part("customXml/item" + n + ".xml").Contains("LinkedTableUpdateMode")), "linked tables update");
+
+            byte[] itemData;
+            using (var es = zip.GetEntry("xl/model/item.data")!.Open()) { var buf = new MemoryStream(); es.CopyTo(buf); itemData = buf.ToArray(); }
+            var m = ModelReader.Read(itemData);
+            string dim = Encoding.UTF8.GetString(m.Find(@"PivotWrightTrigger\.2\.dim\.xml$"));
+            Check.True(!dim.Contains("DataSourceViewBinding") && dim.Contains("<ID>RowNumber</ID>") && dim.Contains("<Value>A</Value>"), "linked dimension");
+            string prt = Encoding.UTF8.GetString(m.Find(@"PivotWrightTrigger\.1\.prt\.xml$"));
+            Check.True(!prt.Contains("QueryBinding") && !prt.Contains("ErrorConfiguration") && prt.Contains("<CacheVersion>1</CacheVersion>"), "linked partition has no query");
+            m.Find(@"PivotWrightTrigger\.1\.det\.xml$"); m.Find(@"PivotWrightTrigger\.0\.dim\\0\.PivotWrightTrigger\.RowNumber\.0\.idf$"); m.Find(@"PivotWrightTrigger\.0\.dim\\PivotWrightTrigger\.0\.tbl\.xml$");
+            Check.True(!Encoding.UTF8.GetString(m.Find(@"Sandbox\.0\.dsv\.xml$")).Contains("Trigger"), "the view lists only the source tables");
+            // The trigger table is hidden from client tools as a whole (H46): a private measure group and an invisible cube dimension; no other table is.
+            Check.True(Encoding.UTF8.GetString(m.Find(@"PivotWrightTrigger\.1\.det\.xml$")).Contains("<Name>IsTablePrivate</Name>"), "private measure group");
+            Check.Equal(1, m.Files.Where(kv => kv.Key.EndsWith(".det.xml")).Count(kv => Encoding.UTF8.GetString(kv.Value).Contains("IsTablePrivate")), "only the trigger table is private");
+            string cube = Encoding.UTF8.GetString(m.Find(@"Model\.\d+\.cub\.xml$"));
+            Check.True(cube.Contains("<Dimension><ID>PivotWrightTrigger</ID><Name>PivotWrightTrigger</Name><DimensionID>PivotWrightTrigger</DimensionID><Visible>false</Visible>"), "invisible cube dimension");
+            Check.Equal(1, System.Text.RegularExpressions.Regex.Matches(cube, "<DimensionID>[^<]*</DimensionID><Visible>false</Visible>").Count, "only one invisible dimension");
+            // Every group of the log has a file named for its version (SPEC section 5).
+            foreach (var g in m.Log.Element("FileGroups")!.Elements("FileGroup"))
+            {
+                string id = (string)g.Element("ID")!;
+                int cls = int.Parse((string)g.Element("Class")!), version = int.Parse((string)g.Element("ObjectVersion")!);
+                string ext = cls switch { 100006 => "dim", 100016 => "det", 100021 => "prt", 100010 => "cub", _ => "" };
+                if (ext == "") continue;
+                var paths = g.Descendants("Path").Select(p => (string)p).ToList();
+                Check.True(paths.Any(p => p.EndsWith("\\" + id + "." + version + "." + ext + ".xml", StringComparison.Ordinal)),
+                    $"group {id} has a file for version {version}");
+            }
+
+
+            // Only with calculated columns, and not when switched off.
+            var ms2 = new MemoryStream();
+            using (var off = new DataModelWriter(new DataModelOptions { XpressCompression = false, CalculateOnOpen = false }))
+            {
+                var t = off.CreateTable("T", new[] { new ColumnDefinition("N", ColumnDataType.Int64) }); t.AddRow(1L);
+                off.Save(ms2);
+            }
+            using (var plain = new System.IO.Compression.ZipArchive(new MemoryStream(ms2.ToArray())))
+                Check.True(plain.GetEntry("xl/worksheets/sheet2.xml") is null, "no calculated column, no trigger");
+            using var noTrigger = new DataModelWriter(new DataModelOptions { XpressCompression = false, CalculateOnOpen = false });
+            var nt = noTrigger.CreateTable("Products", new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }); nt.AddRow(1L);
+            var ns = noTrigger.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) }); ns.AddRow(1L, 2L);
+            noTrigger.AddRelationship(ns["Key"], nt["Key"]);
+            ns.AddCalculatedColumn("Q2", "[Qty]*2", ColumnDataType.Int64);
+            var ms3 = new MemoryStream(); noTrigger.Save(ms3);
+            using (var z3 = new System.IO.Compression.ZipArchive(new MemoryStream(ms3.ToArray())))
+                Check.True(z3.GetEntry("xl/worksheets/sheet2.xml") is null, "switched off");
+            // SaveModelPart writes the tables only.
+            var part = new MemoryStream(); model.SaveModelPart(part);
+            Check.True(!ModelReader.Read(part.ToArray()).Files.Keys.Any(k2 => k2.Contains("PivotWrightTrigger")), "SaveModelPart has no trigger");
+            // A table of the same name is reported.
+            using var clash = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var ct = clash.CreateTable("PivotWrightTrigger", new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }); ct.AddRow(1L);
+            var cs = clash.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) }); cs.AddRow(1L, 2L);
+            clash.AddRelationship(cs["Key"], ct["Key"]);
+            cs.AddCalculatedColumn("Q2", "[Qty]*2", ColumnDataType.Int64);
+            Tests.Throws<InvalidOperationException>(() => clash.Save(new MemoryStream()), "a table with the trigger's name");
+        }
+
+        public static void CalculatedColumnSortBy()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var dim0 = model.CreateTable("Products", new[] { new ColumnDefinition("Key", ColumnDataType.Int64) });
+            dim0.AddRow(1L);
+            var t = model.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
+            for (int i = 0; i < 100; i++) t.AddRow(1L, (decimal)i);
+            model.AddRelationship(t["Key"], dim0["Key"]);
+            var band = t.AddCalculatedColumn("Band", "IF([Amount]>30,\"High\",\"Low\")", ColumnDataType.String);
+            var order = t.AddCalculatedColumn("Band Order", "IF([Amount]>30,2,1)", ColumnDataType.Int64);
+            band.SortByColumn = order;
+            Check.True(band.SortByColumn == order, "getter returns the sort column");
+            Tests.Throws<ArgumentException>(() => band.SortByColumn = band, "itself");
+            Tests.Throws<ArgumentException>(() => order.SortByColumn = band, "sort column that is itself sorted");
+            var third = t.AddCalculatedColumn("Third", "1", ColumnDataType.Int64);
+            Tests.Throws<ArgumentException>(() => third.SortByColumn = band, "a sorted column as sort column");
+            Tests.Throws<ArgumentException>(() => order.SortByColumn = third, "a sort column cannot be sorted");
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            var files = ModelReader.Read(ms.ToArray());
+            string dim = Encoding.UTF8.GetString(files.Find(@"Sales_G\.\d+\.dim\.xml$"));
+            int at = dim.IndexOf("<Attribute><Name>Band</Name>", StringComparison.Ordinal);
+            string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+            Check.True(a.Contains("<OrderBy>AttributeKey</OrderBy>") && a.Contains("<OrderByAttributeID>" + order.Definition.Id + "</OrderByAttributeID>"), "attribute sorted by the other column: " + a[..300]);
+            Check.True(a.Contains("<ddl200:ProcessingState>Unprocessed</ddl200:ProcessingState>"), "still unprocessed");
+            Check.True(Encoding.UTF8.GetString(files.Find(@"Sales_G\.\d+\.tbl\.xml$")).Contains("<OrderByColumn>" + order.Definition.Id + "</OrderByColumn>"), "tbl.xml names the sort column");
+            band.SortByColumn = null;
+            Check.True(band.SortByColumn is null, "cleared");
+        }
+
+        public static void DateTableDateFormat()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            model.AddDateTable("Dates", new DateOnly(2025, 1, 1), new DateOnly(2025, 1, 2), new DateTableOptions { DateFormat = MeasureFormat.Date("dd MMM yyyy") });
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime) });
+            sales.AddRow(new DateOnly(2025, 1, 1));
+            model.AddRelationship(model.Tables["Sales"]["Date"], model.Tables["Dates"]["Date"]);
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            string dim = Encoding.UTF8.GetString(ModelReader.Read(ms.ToArray()).Find(@"Dates_G\.\d+\.dim\.xml$"));
+            int at = dim.IndexOf("<Attribute><Name>Date</Name>", StringComparison.Ordinal);
+            string a = dim[at..dim.IndexOf("</Attribute>", at, StringComparison.Ordinal)];
+            Check.True(a.Contains("FormatString=\"dd MMM yyyy\""), "the Date column carries the format");
+            Check.True(!dim[(at + a.Length)..].Contains("dd MMM yyyy"), "no other column does");
+            Tests.Throws<ArgumentException>(() => new DateTableOptions { DateFormat = MeasureFormat.WholeNumber }, "a number format");
+            Check.True(new DateTableOptions().DateFormat is null, "default is Excel's general date");
         }
 
         public static void DateTableYearLabel()

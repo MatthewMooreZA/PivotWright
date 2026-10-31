@@ -227,7 +227,7 @@ public sealed class DataModelWriter : IDisposable
         var spec = new List<(ColumnDefinition column, Func<DateOnly, object> value)>();
         void Add(string column, ColumnDataType type, Func<DateOnly, object> value, string? sortBy = null, bool sortKey = false)
             => spec.Add((new ColumnDefinition(column, type) { SortByColumn = sortBy, IsHidden = sortKey && hideSortColumns }, value));
-        Add("Date", ColumnDataType.DateTime, d => d);
+        spec.Add((new ColumnDefinition("Date", ColumnDataType.DateTime) { Format = options.DateFormat }, d => d));
         Add("Year", ColumnDataType.Int64, d => (long)d.Year);
         Add("QuarterNumber", ColumnDataType.Int64, d => (long)((d.Month - 1) / 3 + 1), sortKey: true);
         Add("Quarter", ColumnDataType.String, d => "Q" + ((d.Month - 1) / 3 + 1), "QuarterNumber");
@@ -350,7 +350,7 @@ public sealed class DataModelWriter : IDisposable
         string tempPath = Path.Combine(dir, "ppw-model-" + Guid.NewGuid().ToString("N") + ".tmp");
         using var model = new FileStream(tempPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
             1 << 20, FileOptions.DeleteOnClose);
-        var serializer = CreateSerializer();
+        var serializer = CreateSerializer(forWorkbook: true);
         serializer.Write(model);
         XlsxWriter.Write(output, model, serializer.Info, serializer.EncodedTables, _options);
     }
@@ -368,8 +368,24 @@ public sealed class DataModelWriter : IDisposable
         CreateSerializer().Write(output);
     }
 
-    private ModelSerializer CreateSerializer()
-        => new(_options, _tables.Select(t => t.Builder).ToList(), _relationshipDefinitions, _ctx.StringComparer, MeasureDefinitions, HierarchyDefinitions);
+    /// <summary>Name of the linked table that makes Excel calculate on open (see <see cref="DataModelOptions.CalculateOnOpen"/>).</summary>
+    private const string CalculationTriggerName = "PivotWrightTrigger";
+
+    private ModelSerializer CreateSerializer(bool forWorkbook = false)
+    {
+        var builders = _tables.Select(t => t.Builder).ToList();
+        // A model with calculated columns gets a one-row linked worksheet table, refreshed when the workbook opens, which makes Excel
+        // calculate the columns (research: docs/research-refresh.md). It is not part of Tables and not written by SaveModelPart.
+        if (forWorkbook && _options.CalculateOnOpen && builders.Any(b => b.CalculatedColumns.Count > 0))
+        {
+            if (builders.Any(b => string.Equals(b.Name, CalculationTriggerName, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException($"A table named '{CalculationTriggerName}' exists; PivotWright uses that name for the table that makes Excel calculate on open. Rename your table or set DataModelOptions.CalculateOnOpen to false.");
+            var trigger = new TableBuilder(CalculationTriggerName, CalculationTriggerName, new[] { new ColumnDefinition("Key", ColumnDataType.Int64) }, _ctx) { IsLinked = true };
+            trigger.AddRow(new object?[] { 1L });
+            builders.Add(trigger);
+        }
+        return new(_options, builders, _relationshipDefinitions, _ctx.StringComparer, MeasureDefinitions, HierarchyDefinitions);
+    }
 
     private void ThrowIfEmpty()
     {

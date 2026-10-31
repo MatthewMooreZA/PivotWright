@@ -12,7 +12,7 @@ internal static class TableXmlWriter
     {
         var x = new XmBuilder();
         x.Open("XMSimpleTable", t.Id, root: true);
-        x.Properties(p => p.Int("Version", t.Version).Long("Settings", 4353).Long("RIViolationCount", 0));
+        x.Properties(p => p.Int("Version", t.Version).Long("Settings", t.CalculatedColumns.Count > 0 ? 4097 : 4353).Long("RIViolationCount", 0));
         x.Members(m =>
         {
             m.Member("SegmentMap", s =>
@@ -48,6 +48,7 @@ internal static class TableXmlWriter
             c.Collection("Columns", cc =>
             {
                 foreach (var col in t.AllColumns) RawColumn(cc, t, col, lcid);
+                foreach (var col in t.CalculatedColumns) CalculatedColumn(cc, t, col, lcid);
             });
             c.Collection("Relationships", rc =>
             {
@@ -61,8 +62,8 @@ internal static class TableXmlWriter
                     var store = new System.Text.StringBuilder("$");
                     for (int i = 0; i < h.Levels.Count; i++) store.Append(h.Levels[i].Id).Append('$').Append(h.LevelStarts[i]).Append('$');
                     hc.Open("XMUserHierarchy", h.Name);
-                    hc.Raw("<Properties><IsProcessed xsi:type=\"xsd:boolean\">true</IsProcessed><TableStore>").Raw(Xml.Esc(store.ToString()))
-                      .Raw("</TableStore><TableName>").Raw(Xml.Esc(h.TableName)).Raw("</TableName></Properties>");
+                    hc.Raw("<Properties><IsProcessed xsi:type=\"xsd:boolean\">").Raw(h.Unprocessed ? "false" : "true").Raw("</IsProcessed><TableStore>").Raw(Xml.Esc(store.ToString()))
+                      .Raw(h.Unprocessed ? "</TableStore><TableName/></Properties>" : "</TableStore><TableName>" + Xml.Esc(h.TableName) + "</TableName></Properties>");
                     hc.Close();
                 }
             });
@@ -291,7 +292,7 @@ internal static class TableXmlWriter
                     .Int("XMType", (int)col.XmType)
                     .Int("CompressionType", 0)
                     .Long("CompressionParam", 0)
-                    .Int("EncodingHint", t.Hierarchies.Count == 0 && (col.IsRowNumber || col.IsPrimaryKey) ? 1 : 0)
+                    .Int("EncodingHint", t.Hierarchies.Count == 0 && t.CalculatedColumns.Count == 0 && (col.IsRowNumber || col.IsPrimaryKey) ? 1 : 0)
                     .Long("AggCounter", 0)
                     .Long("WhereCounter", 0)
                     .Long("OrderByCounter", 0));
@@ -300,7 +301,7 @@ internal static class TableXmlWriter
         });
         x.Collections(c => c.Collection("Segments", sc =>
         {
-            foreach (var seg in col.Segments) Segment(sc, col, seg);
+            foreach (var seg in col.Segments) Segment(sc, col, seg, t.IsLinked);
         }));
         x.DataObjects(d =>
         {
@@ -314,6 +315,127 @@ internal static class TableXmlWriter
         });
         x.Close();
     }
+
+    /// <summary>
+    /// A calculated column Excel has not calculated yet (H10): one run of BLANK over all rows, an intrinsic hierarchy that is not
+    /// processed, no hierarchy (H$) table and no dictionary file. Excel fills it in when a PivotTable uses the column.
+    /// </summary>
+    private static void CalculatedColumn(XmBuilder x, EncodedTable t, EncodedCalculatedColumn col, int lcid)
+    {
+        long rows = col.Rows;
+        x.Open("XMRawColumn", col.Id, providerVersion: 1);
+        x.Properties(p => p.Long("Settings", 3073).Long("ColumnFlags", 8).Raw(col.OrderByColumnId is null ? "<Collation/><OrderByColumn/>" : "<Collation/><OrderByColumn>" + System.Security.SecurityElement.Escape(col.OrderByColumnId) + "</OrderByColumn>").Long("Locale", lcid).UInt("BinaryCharacters", 0));
+        x.Members(m =>
+        {
+            m.Member("IntrinsicHierarchy", h =>
+            {
+                h.Open("XMHierarchy");
+                h.Properties(p => p.Int("SortOrder", 0).Bool("IsProcessed", false).Int("TypeMaterialization", -1).Long("ColumnPosition2DataID", -1)
+                    .Long("ColumnDataID2Position", -1).Long("DistinctDataIDs", -1).Raw("<TableStore/>"));
+                h.Close();
+            });
+            m.Member("ColumnStats", s =>
+            {
+                s.Open("XMColumnStats");
+                s.Properties(p => p.Int("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
+                    .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", rows).Bool("HasNulls", true)
+                    .Long("RLERuns", 0).Long("OthersRLERuns", 0).Int("Usage", 3).Short("DBType", DbType(col.DataType)).Int("XMType", (int)StoredType(col.DataType)).Int("CompressionType", 0)
+                    .Long("CompressionParam", 0).Int("EncodingHint", 0).Long("AggCounter", 0).Long("WhereCounter", 0).Long("OrderByCounter", 0));
+                s.Close();
+            });
+        });
+        x.Collections(c => c.Collection("Segments", scAll =>
+        {
+          foreach (var seg in col.Segments)
+          {
+            var sc = scAll;
+            long segmentRows = seg.Records;
+            // Excel's bookmark bits for these columns are the position of the highest bit of the row count (9 for 1,000 rows, 3 for 12).
+            long bookmarkBits = 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)Math.Max(1, segmentRows));
+            sc.Open("XMColumnSegment");
+            sc.Properties(p => p.Long("Records", segmentRows).Long("Mask", 0));
+            sc.Members(m =>
+            {
+                m.Member("SubSegment", s =>
+                {
+                    s.Open("XMColumnSegment");
+                    s.Properties(p => p.Long("Records", seg.SubRecords).Long("Mask", 0));
+                    s.Members(sm =>
+                    {
+                        sm.Member("CompressionInfo", ci => { ci.Open($"XMRENoSplitCompressionInfo{LT}1>"); ci.Properties(p => p.Int("Min", DataIds.Null)); ci.Close(); });
+                        sm.Member("ColumnSegmentStats", EmptySegmentStats);
+                    });
+                    s.Close();
+                });
+                m.Member("CompressionInfo", ci =>
+                {
+                    ci.Open($"XMHybridRLECompressionInfo{LT}class XMRENoSplitCompressionInfo{LT}1>>");
+                    ci.Members(cm =>
+                    {
+                        cm.Member("RLECompression", r =>
+                        {
+                            r.Open("XMRLECompressionInfo");
+                            r.Properties(p => p.Long("BookmarkBits", bookmarkBits).Long("StorageAllocSize", seg.StorageAllocSize)
+                                .Long("StorageUsedSize", seg.StorageUsedSize).Bool("SegmentNeedsResizing", false));
+                            r.Close();
+                        });
+                        cm.Member("SubCompression", sc2 => { sc2.Open($"XMRENoSplitCompressionInfo{LT}1>"); sc2.Properties(p => p.Int("Min", DataIds.Null)); sc2.Close(); });
+                    });
+                    ci.Close();
+                });
+                m.Member("ColumnSegmentStats", s =>
+                {
+                    s.Open("XMColumnSegmentStats");
+                    s.Properties(p => p.Long("DistinctStates", 0).Int("MinDataID", DataIds.Null).Int("MaxDataID", DataIds.Null)
+                        .Int("OriginalMinSegmentDataID", DataIds.Null).Long("RLESortOrder", -1).Long("RowCount", segmentRows).Bool("HasNulls", true)
+                        .Long("RLERuns", seg.RleRuns).Long("OthersRLERuns", seg.BitPackedRuns));
+                    s.Close();
+                });
+            });
+            sc.Close();
+          }
+        }));
+        x.DataObjects(d =>
+        {
+            d.DataObject(o =>
+            {
+                // The dictionary class follows the stored type; its properties are those of a dictionary with only BLANK in it.
+                o.Open($"XMHashDataDictionary{LT}XM_{StoredType(col.DataType)}>");
+                o.Properties(p =>
+                {
+                    p.Int("DataVersion", col.Versions.Dictionary).Int("LastId", DataIds.Null).Bool("Nullable", true).Bool("Unique", false);
+                    if (col.DataType == ColumnDataType.String) p.Long("DictionaryFlags", 3);
+                    else if (StoredType(col.DataType) == XmType.Long) p.Bool("OperatingOn32", true);
+                });
+                o.Close();
+            });
+            d.DataObject(o =>
+            {
+                o.Open("XMRawColumnPartitionDataObject", FileNames.CalculatedIdf(t.Id, col.Id, col.Versions.Prefix));
+                o.Properties(p => p.Int("DataVersion", col.Versions.File).Int("Partition", 0).Int("SegmentCount", col.Segments.Count));
+                o.Close();
+            });
+        });
+        x.Close();
+    }
+
+    /// <summary>Type code of an unprocessed calculated column (DBType), from H10 to H15.</summary>
+    private static int DbType(ColumnDataType t) => t switch
+    {
+        ColumnDataType.Currency => 6,
+        ColumnDataType.Int64 => 20,
+        ColumnDataType.Double => 5,
+        ColumnDataType.DateTime => 7,
+        ColumnDataType.Boolean => 11,
+        _ => 130,
+    };
+
+    private static XmType StoredType(ColumnDataType t) => t switch
+    {
+        ColumnDataType.Double or ColumnDataType.DateTime => XmType.Real,
+        ColumnDataType.String => XmType.String,
+        _ => XmType.Long,
+    };
 
     private static void Dictionary(XmBuilder o, EncodedTable t, EncodedColumn col)
     {
@@ -351,7 +473,7 @@ internal static class TableXmlWriter
         s.Close();
     }
 
-    private static void Segment(XmBuilder x, EncodedColumn col, EncodedSegment seg)
+    private static void Segment(XmBuilder x, EncodedColumn col, EncodedSegment seg, bool linked = false)
     {
         string sub = seg.IsRowNumber ? "XM123CompressionInfo" : $"XMRENoSplitCompressionInfo{LT}{seg.Width}>";
         string hybrid = seg.IsRowNumber
@@ -359,7 +481,7 @@ internal static class TableXmlWriter
             : $"XMHybridRLECompressionInfo{LT}class XMRENoSplitCompressionInfo{LT}{seg.Width}>>";
 
         x.Open("XMColumnSegment");
-        x.Properties(p => p.Long("Records", seg.Records).Long("Mask", seg.IsRowNumber ? 0 : 1));
+        x.Properties(p => p.Long("Records", seg.Records).Long("Mask", seg.IsRowNumber || linked ? 0 : 1));   // a linked table's segments have mask 0 (H42)
         x.Members(m =>
         {
             m.Member("SubSegment", s =>
