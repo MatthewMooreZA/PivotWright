@@ -123,7 +123,7 @@ internal static class XlsxWriter
         sb.Append("<dbPr connection=\"Data Model Connection\" command=\"Model\" commandType=\"1\"/><olapPr sendLocale=\"1\" rowDrillCount=\"1000\"/>");
         sb.Append("<extLst><ext uri=\"{DE250136-89BD-433C-8126-D09CA5730AF9}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:connection id=\"\" model=\"1\"/></ext></extLst></connection>");
         if (linked is not null)
-            sb.Append("<connection id=\"3\" name=\"").Append(Xml.Esc(LinkedConnectionName(linked))).Append("\" type=\"102\" refreshedVersion=\"8\" minRefreshableVersion=\"5\"><extLst><ext uri=\"{DE250136-89BD-433C-8126-D09CA5730AF9}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:connection id=\"")
+            sb.Append("<connection id=\"3\" name=\"").Append(Xml.Esc(LinkedConnectionName(linked))).Append("\" type=\"102\" refreshOnLoad=\"1\" refreshedVersion=\"8\" minRefreshableVersion=\"5\"><extLst><ext uri=\"{DE250136-89BD-433C-8126-D09CA5730AF9}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:connection id=\"")
               .Append(Xml.Esc(linked.Name)).Append("\"><x15:rangePr sourceName=\"").Append(LinkedSourceName(linked)).Append("\"/></x15:connection></ext></extLst></connection>");
         sb.Append("</connections>");
         return sb.ToString();
@@ -174,7 +174,7 @@ internal static class XlsxWriter
         Text(zip, "xl/worksheets/sheet2.xml", Decl +
             "<worksheet " + main + " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
             "<dimension ref=\"A1:A2\"/><sheetViews><sheetView workbookViewId=\"0\"/></sheetViews><sheetFormatPr defaultRowHeight=\"15\"/>" +
-            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row><row r=\"2\"><c r=\"A2\"><v>1</v></c></row></sheetData>" +
+            "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row><row r=\"2\"><c r=\"A2\"><v>2</v></c></row></sheetData>" +
             "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/><tableParts count=\"1\"><tablePart r:id=\"rId1\"/></tableParts></worksheet>");
         Text(zip, "xl/worksheets/_rels/sheet2.xml.rels", Decl +
             "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table1.xml\"/></Relationships>");

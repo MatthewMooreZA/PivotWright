@@ -1906,8 +1906,9 @@ namespace PivotWright.Tests
             Check.True(workbook.Contains("<sheet name=\"Sheet2\" sheetId=\"2\" r:id=\"rId5\"/>"), "second sheet");
             Check.True(workbook.Contains("<definedName name=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\" hidden=\"1\">Trigger[]</definedName>"), "hidden defined name");
             Check.True(workbook.Contains("<x15:modelTable id=\"Trigger\" name=\"Trigger\" connection=\"WorksheetConnection_PivotWright.xlsx!Trigger\"/>"), "model table of the linked connection");
-            Check.True(connections.Contains("type=\"102\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\"/>"), "worksheet connection");
+            Check.True(connections.Contains("type=\"102\" refreshOnLoad=\"1\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\"/>"), "worksheet connection");
             Check.True(Part("xl/worksheets/sheet1.xml").Contains("tabSelected=\"1\"") && !Part("xl/worksheets/sheet2.xml").Contains("tabSelected"), "only the first sheet is selected");
+            Check.True(Part("xl/worksheets/sheet2.xml").Contains("<c r=\"A2\"><v>2</v></c>"), "the sheet differs from the model value 1, so Excel has data to process on open");
             Check.True(Part("xl/tables/table1.xml").Contains("name=\"Trigger\"") && Part("xl/sharedStrings.xml").Contains("<t>Key</t>"), "worksheet table");
             Check.True(Part("[Content_Types].xml").Contains("/xl/tables/table1.xml") && Part("docProps/app.xml").Contains("<vt:lpstr>Sheet2</vt:lpstr>"), "content types and sheet list");
             string manual = Part("customXml/item1.xml");

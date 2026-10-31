@@ -11,7 +11,7 @@ var hiddenSet = (args.Length > 2 ? args[2] : "") switch
     _ => new HashSet<string>(),
 };
 ColumnDefinition Col(string table, string name, ColumnDataType type, string? sortBy = null) => new(name, type) { SortByColumn = sortBy, IsHidden = hiddenSet.Contains(table + "." + name) };
-using var m = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(7177) });
+using var m = new DataModelWriter(new DataModelOptions { Culture = CultureInfo.GetCultureInfo(7177), ExcludeSourceFromRefreshAll = args.Skip(2).Contains("exclude") }   /* "exclude" token */);
 if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship, no measure, no hierarchy
 {
     var pr = m.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Product", ColumnDataType.String) });
