@@ -282,7 +282,8 @@ internal static class Program
             // Replace chosen ASSL files of the Excel model by PivotWright's own (args[3] = our workbook), with our ids mapped to Excel's.
             var ours = ModelReader.Read(ModelReader.ItemData(args[3]));
             var guid = new System.Text.RegularExpressions.Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
-            string Key(string p) => System.Text.RegularExpressions.Regex.Replace(System.Text.RegularExpressions.Regex.Replace(guid.Replace(p, "G"), "[0-9A-F]{20}", "DBID"), "DBID\\.\\d+\\.db", "DBID.N.db");
+            string Key(string p) => System.Text.RegularExpressions.Regex.Replace(System.Text.RegularExpressions.Regex.Replace(guid.Replace(p, "G"), "[0-9A-F]{19,20}", "DBID"), "DBID\\.\\d+\\.db", "DBID.N.db");
+            string Key2(string p) => System.Text.RegularExpressions.Regex.Replace(Key(p), "\\.\\d+\\.(cub|det)\\b", ".N.$1");
             string Text(byte[] b) => System.Text.Encoding.UTF8.GetString(b);
             var map = new Dictionary<string, string>();
             string First(Dictionary<string, byte[]> files, string pattern) => files.Keys.First(k => System.Text.RegularExpressions.Regex.IsMatch(k, pattern));
@@ -291,7 +292,7 @@ internal static class Program
                 string idOf(Dictionary<string, byte[]> f) => System.Text.RegularExpressions.Regex.Match(First(f, "\\\\?" + t + "_[0-9a-f-]{36}\\.\\d+\\.dim\\.xml$"), t + "_[0-9a-f-]{36}").Value;
                 map[idOf(ours.Files)] = idOf(m.Files);
             }
-            string Db(Dictionary<string, byte[]> f) => System.Text.RegularExpressions.Regex.Match(First(f, "[0-9A-F]{20}\\.\\d+\\.db\\.xml$"), "[0-9A-F]{20}").Value;
+            string Db(Dictionary<string, byte[]> f) => System.Text.RegularExpressions.Regex.Match(First(f, "[0-9A-F]{19,20}\\.\\d+\\.db\\.xml$"), "[0-9A-F]{19,20}").Value;
             map[Db(ours.Files)] = Db(m.Files);
             string DsId(Dictionary<string, byte[]> f) => guid.Match(First(f, "\\.0\\.ds\\.xml$")).Value;
             map[DsId(ours.Files)] = DsId(m.Files);
@@ -306,7 +307,7 @@ internal static class Program
             }
             var ro = Rels(ours.Files); var rx = Rels(m.Files);
             foreach (var kv in ro) map[kv.Value] = rx[kv.Key];
-            var oursByKey = ours.Files.GroupBy(kv => Key(kv.Key)).ToDictionary(g => g.Key, g => g.First().Value);
+            var oursByKey = ours.Files.GroupBy(kv => Key2(kv.Key)).ToDictionary(g => g.Key, g => g.First().Value);
             string[] pats = { "d:\\.dim\\.xml$", "p:\\.prt\\.xml$", "c:\\.cub\\.xml$", "s:\\.scr\\.xml$", "v:\\.dsv\\.xml$", "t:\\.det\\.xml$", "x:\\.tbl\\.xml$" };
             var log0 = XElement.Parse(m.RawLogXml);
             int swapped = 0;
@@ -315,9 +316,10 @@ internal static class Program
                 string path = bf.Element("Path")!.Value;
                 string storage = bf.Element("StoragePath")!.Value;
                 bool take = pats.Any(p => swapGroups.Contains(p[0]) && System.Text.RegularExpressions.Regex.IsMatch(path, p[2..])) && (swapGroups.Contains('x') || !path.EndsWith(".tbl.xml"));
+                if (args.Length > 5 && !path.Contains(args[5])) take = false;   // only files whose path contains args[5]
                 if (!take) continue;
                 string rel = path.Contains("VertiPaq_") ? path[(path.IndexOf('\\', path.IndexOf("VertiPaq_")) + 1)..] : path;
-                if (!oursByKey.TryGetValue(Key(rel), out var mine)) { Console.WriteLine("no counterpart for " + Key(rel) + "   [ours e.g. " + oursByKey.Keys.FirstOrDefault(k => k.Contains("Products") && k.EndsWith(".dim.xml")) + "]"); continue; }
+                if (!oursByKey.TryGetValue(Key2(rel), out var mine)) { Console.WriteLine("no counterpart for " + Key2(rel) + "   [ours e.g. " + oursByKey.Keys.FirstOrDefault(k => k.Contains("Products") && k.EndsWith(".dim.xml")) + "]"); continue; }
                 string txt = Text(mine);
                 foreach (var kv in map) txt = txt.Replace(kv.Key, kv.Value);
                 var excelFile = Text(contentByStorage[storage]);

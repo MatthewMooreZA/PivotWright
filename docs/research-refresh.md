@@ -204,3 +204,7 @@ H42 (a one-cell linked table `Trigger` in the model, made in manual mode) patche
 ## 16. Result of X8 (Matthew, 2026-10-29, `refresh_dangling_x8`)
 
 Our plain file plus the workbook parts of a linked table (Sheet2 with a one-cell table, worksheet connection, modelTable entry) but no Trigger table in the model: opens without a repair prompt, Line Total does not work in Rows, and the data model contains no Trigger table (Excel ignored the entry). So the table has to be in the model itself. Side note: both sheets showed as selected because both had tabSelected; only one sheet may carry it.
+
+## 17. Results of the library file and x9 (Matthew, 2026-10-31)
+
+`refresh_trig_lib_v1` (library-written model with AddCalculationTrigger): opens without repair, Trigger is in the field list, but Line Total does not work in Rows. `refresh_trig_x9` (H42's Excel-written model, ManualCalcMode False, only the six small customXml parts the library writes): Line Total is available in Rows immediately. So the workbook parts and settings parts are fine; the difference is in the model data. Bisecting with hybrids (`tools/repack swap`, now with a path filter): x10 = x9 with our Trigger dimension, measure group and partition.
