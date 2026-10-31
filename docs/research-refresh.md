@@ -216,3 +216,7 @@ Diffing H42's Sales dimension against the library file showed that in H42 `Line 
 ## 19. Result of x11 and conclusion (Matthew, 2026-10-31)
 
 `refresh_trig_x11` (library file with a linked Trigger table, worksheet cell changed to 2, model holds 1): opens, `Trigger[Key]` is still 1 and `Line Total` does not work in Rows. Excel does not sync a linked table on open, so the linked-table route cannot be a trigger, and `AddCalculationTrigger` was reverted. Conclusion: no file-only trigger found. Stands as documented limitation, with two user-side workarounds (a field in Values; the Workbook_Open macro) and the credentials-prompt option.
+
+## 20. PivotTable on a calculated column as a trigger (Matthew, 2026-10-31)
+
+Idea: write a PivotTable with the calculated columns as Values on its own sheet (H43 markup; our plain `calc` file patched with H43's pivot cache, pivot table and sheet; sheet visible). `refresh_pivot_x12` (pivot cache `refreshOnLoad="1"`): opens with a username and password prompt (the refresh reaches the placeholder source), Sheet2 shows the cached 90500, and Line Total does not work in Rows on a new PivotTable. `refresh_pivot_x13` (the same with the source excluded from Refresh All): still prompts for a password. The refresh-on-open route is therefore not usable (prompt, and no sign that it calculates); the hidden and very hidden variants were not tried. Not tried: the same PivotTable without `refreshOnLoad` (it cannot query on open, so it should only show its cache).
