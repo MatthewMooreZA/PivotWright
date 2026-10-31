@@ -66,7 +66,7 @@ internal sealed class ModelSerializer
     public void Write(Stream output)
     {
         ValidateDateTables();
-        var calc = CalculatedPlan.Create(_tables, _relationships, _hierarchies);
+        var calc = CalculatedPlan.Create(_tables.Where(t => !t.IsLinked).ToList(), _relationships, _hierarchies);
         if (calc is not null)
             foreach (var table in _tables)
                 foreach (var column in table.CalculatedColumns)
@@ -112,6 +112,7 @@ internal sealed class ModelSerializer
             HierarchyTables = _hierarchies.Select(h => h.Table.Id).ToHashSet(),
             DateTables = _tables.Where(t => t.DateColumn is not null).Select(t => t.Id).ToHashSet(),
             HiddenTables = hiddenTables,
+            LinkedTables = _tables.Where(t => t.IsLinked).Select(t => t.Id).ToHashSet(),
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
             Calc = calc,
         };
@@ -120,7 +121,7 @@ internal sealed class ModelSerializer
         _log = new BackupLog { ServerRoot = serverRoot, DatabaseId = dbId, DatabaseName = Info.DatabaseName, Lcid = _options.Lcid };
 
         // Partition definitions do not depend on the data, so the PARTITIONS list can lead the stream.
-        var partitionXml = _tables.ToDictionary(t => t.Id, t => AsslWriter.Partition(Info, t.Name, t.Id));
+        var partitionXml = _tables.ToDictionary(t => t.Id, t => t.IsLinked ? AsslWriter.LinkedPartition(Info, t.Name, t.Id) : AsslWriter.Partition(Info, t.Name, t.Id));
         long partInfoSize = Utf8.GetByteCount(AsslWriter.PartitionInfo);
         var partitions = AsslWriter.Partitions(Info, "LOCALHOST",
             _tables.Select(t => (t.Name, t.Id, (long)Utf8.GetByteCount(partitionXml[t.Id]) + (HasPartitionInfo(t.Id) ? partInfoSize : 0))).ToList());
@@ -179,12 +180,13 @@ internal sealed class ModelSerializer
         {
             var ids = tableIds[t.Id];
             string detFolder = cubeFolder + "\\" + t.Id + ".0.det";
-            var mg = Group(BackupLog.ClassMeasureGroup, t.Id, t.Name, Info.MeasureGroupVersion, detFolder, ids.MeasureGroupObjectId);
-            AddText(mg, cubeFolder + "\\" + t.Id + "." + Info.MeasureGroupVersion + ".det.xml", AsslWriter.MeasureGroup(Info, t, encodedById));
+            int mgVersion = Info.MeasureGroupVersionOf(t.Id), prtVersion = Info.PartitionVersionOf(t.Id);
+            var mg = Group(BackupLog.ClassMeasureGroup, t.Id, t.Name, mgVersion, detFolder, ids.MeasureGroupObjectId);
+            AddText(mg, cubeFolder + "\\" + t.Id + "." + mgVersion + ".det.xml", t.IsLinked ? AsslWriter.LinkedMeasureGroup(Info, t) : AsslWriter.MeasureGroup(Info, t, encodedById));
             string prtFolder = detFolder + "\\" + t.Id + ".0.prt";
-            var prt = Group(BackupLog.ClassPartition, t.Id, t.Name, Info.PartitionVersion, prtFolder, ids.PartitionObjectId);
-            AddText(prt, detFolder + "\\" + t.Id + "." + Info.PartitionVersion + ".prt.xml", partitionXml[t.Id]);
-            if (HasPartitionInfo(t.Id)) AddText(prt, prtFolder + "\\info." + Info.PartitionVersion + ".xml", AsslWriter.PartitionInfo);
+            var prt = Group(BackupLog.ClassPartition, t.Id, t.Name, prtVersion, prtFolder, ids.PartitionObjectId);
+            AddText(prt, detFolder + "\\" + t.Id + "." + prtVersion + ".prt.xml", partitionXml[t.Id]);
+            if (HasPartitionInfo(t.Id)) AddText(prt, prtFolder + "\\info." + prtVersion + ".xml", AsslWriter.PartitionInfo);
         }
         var script = Group(BackupLog.ClassMdxScript, "MdxScript", "MdxScript", Info.ScriptVersion, cubeFolder, Info.MdxScriptObjectId);
         AddText(script, cubeFolder + "\\MdxScript." + Info.ScriptVersion + ".scr.xml", AsslWriter.MdxScript(Info, _measures));
@@ -195,11 +197,11 @@ internal sealed class ModelSerializer
             string dimFolder = dbFolder + "\\" + t.Id + ".0.dim";
             var (files, size) = dimensionFiles[t.Id];
             // Excel writes the table that holds relationships at version 2 (see README, Open questions).
-            int dv = Info.DimensionVersion(t.Id, t.Relationships.Count > 0);
+            int dv = t.IsLinked ? ModelInfo.LinkedDimensionVersion : Info.DimensionVersion(t.Id, t.Relationships.Count > 0);
             var dim = Group(BackupLog.ClassDimension, t.Id, t.Name, dv, dimFolder, tableIds[t.Id].DimensionObjectId);
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
-            AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", AsslWriter.Dimension(Info, t, names, size, dv));
-            if (!Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
+            AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", t.IsLinked ? AsslWriter.LinkedDimension(Info, t, names, size) : AsslWriter.Dimension(Info, t, names, size, dv));
+            if (t.IsLinked || !Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
             dim.Files.AddRange(files);
         }
 
@@ -207,13 +209,13 @@ internal sealed class ModelSerializer
         var ds = Group(BackupLog.ClassDataSource, Info.DataSourceId, Info.DataSourceName, 0, dbFolder + "\\" + Info.DataSourceId + ".0.ds", Info.DataSourceObjectId);
         AddText(ds, dbFolder + "\\" + Info.DataSourceId + ".0.ds.xml", AsslWriter.DataSource(Info));
         var dsv = Group(BackupLog.ClassDataSourceView, "Sandbox", "Sandbox", 0, dbFolder, Info.DsvObjectId);
-        AddText(dsv, dbFolder + "\\Sandbox.0.dsv.xml", AsslWriter.DataSourceView(Info, encoded));
+        AddText(dsv, dbFolder + "\\Sandbox.0.dsv.xml", AsslWriter.DataSourceView(Info, encoded.Where(e => !e.IsLinked).ToList()));
 
         _abf.Finish(_log.ToXml(), Guid.NewGuid());
     }
 
     // After a calculated column was added Excel keeps the partition information of the table that holds it only (H10).
-    private bool HasPartitionInfo(string tableId) => Info.Calc is null || (Info.Calc.PartitionInfo && Info.Calc.HoldsColumns(tableId));
+    private bool HasPartitionInfo(string tableId) => Info.LinkedTables.Contains(tableId) || Info.Calc is null || (Info.Calc.PartitionInfo && Info.Calc.HoldsColumns(tableId));
 
     private FileGroup Group(int cls, string id, string name, int version, string path, string objectId)
     {

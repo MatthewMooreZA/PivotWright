@@ -18,6 +18,8 @@ internal sealed class EncodedTable
     public List<EncodedCalculatedColumn> CalculatedColumns { get; } = new();
     /// <summary>The table is marked as date table (dimension type Time, its date column is the key).</summary>
     public bool IsDateTable { get; init; }
+    /// <summary>The table is the linked trigger table (<see cref="DataModelWriter.AddCalculationTrigger"/>), written as Excel writes a linked worksheet table (H42).</summary>
+    public bool IsLinked { get; init; }
     /// <summary>Version of the table's .tbl.xml: 2 with hierarchies, plus 1 for a date table and the tables that relate to one.</summary>
     public int Version { get; set; }
 
@@ -25,6 +27,8 @@ internal sealed class EncodedTable
     {
         get
         {
+            // Excel lists the columns of a linked table before its row number attribute (H42).
+            if (IsLinked) { foreach (var c in Columns) yield return c; yield return RowNumber; yield break; }
             yield return RowNumber;
             foreach (var c in Columns) yield return c;
         }
@@ -181,6 +185,10 @@ internal sealed class TableBuilder : IDisposable
 
     public string Name { get; }
     public string Id { get; }
+    /// <summary>True for the linked worksheet table of <see cref="DataModelWriter.AddCalculationTrigger"/>: plain id, own row number name, no data source query.</summary>
+    public bool IsLinked { get; init; }
+    /// <summary>Id of the row number column: Excel calls it RowNumber in a linked table (H42), __XL_RowNumber otherwise.</summary>
+    public string RowNumberId => IsLinked ? "RowNumber" : FileNames.RowNumberId;
     /// <summary>The date column when the table is marked as date table, else null.</summary>
     public ColumnBuilder? DateColumn { get; set; }
     public long Rows { get; private set; }
@@ -263,8 +271,8 @@ internal sealed class TableBuilder : IDisposable
 
         var rowNumber = new EncodedColumn
         {
-            Name = FileNames.RowNumberId,
-            Id = FileNames.RowNumberId,
+            Name = RowNumberId,
+            Id = RowNumberId,
             DataType = ColumnDataType.Int64,
             IsHidden = true,
             IsRowNumber = true,
@@ -277,7 +285,7 @@ internal sealed class TableBuilder : IDisposable
             MinDataId = DataIds.First,
             MaxDataId = (uint)(DataIds.First + Rows - 1),
         };
-        using (var idf = sink.Create(FileNames.Idf(Id, FileNames.RowNumberId)))
+        using (var idf = sink.Create(FileNames.Idf(Id, RowNumberId)))
         {
             long done = 0;
             do
@@ -320,7 +328,7 @@ internal sealed class TableBuilder : IDisposable
             }
             calculated.Add(new EncodedCalculatedColumn { Name = c.Name, Id = c.Id, Expression = c.Expression, DataType = c.DataType, Rows = Rows, Versions = c.Versions, Segments = segments, IsHidden = c.IsHidden, Format = c.Format, OrderByColumnId = c.SortBy?.Id });
         }
-        var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null };
+        var result = new EncodedTable { Name = Name, Id = Id, Rows = Rows, SegmentSize = segmentSize, RowNumber = rowNumber, Columns = cols, IsDateTable = DateColumn is not null, IsLinked = IsLinked };
         result.CalculatedColumns.AddRange(calculated);
         return result;
     }

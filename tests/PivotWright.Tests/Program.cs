@@ -47,6 +47,7 @@ var tests = new (string Name, Action Body)[]
     ("Hierarchy StructureType: Natural only when every member has one parent", Tests.HierarchyStructureType),
     ("AddDateTable: yearLabel replaces Fiscal in the names", Tests.DateTableYearLabel),
     ("Options: ExcludeSourceFromRefreshAll writes the H41 attribute", Tests.ExcludeFromRefreshAll),
+    ("AddCalculationTrigger: a linked worksheet table that makes Excel calculate on open (H42)", Tests.CalculationTrigger),
     ("Calculated column: Sort by Column with another calculated column (H39)", Tests.CalculatedColumnSortBy),
     ("AddDateTable: DateFormat formats the Date column", Tests.DateTableDateFormat),
     ("AddDateTable: feature flags (complete years, YearMonth, hidden sort columns)", Tests.DateTableFlags),
@@ -1871,6 +1872,79 @@ namespace PivotWright.Tests
             }
             Check.True(!Connections(false).Contains("excludeFromRefreshAll"), "off by default");
             Check.True(Connections(true).Contains("<x15:connection id=\"fe61cfce-2c03-495c-87ad-e281a1607748\" excludeFromRefreshAll=\"1\"/>") || Connections(true).Contains("excludeFromRefreshAll=\"1\"/>"), "attribute as in H41");
+        }
+
+        public static void CalculationTrigger()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Name", ColumnDataType.String) });
+            products.AddRow(1L, "A");
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("Key", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 70; i++) sales.AddRow(1L, (long)i);
+            model.AddRelationship(sales["Key"], products["Key"]);
+            products.AddHierarchy("H", "Name", "Key");
+            sales.AddCalculatedColumn("Double Qty", "[Qty]*2", ColumnDataType.Int64);
+            var trigger = model.AddCalculationTrigger();
+            Check.True(trigger.IsCalculationTrigger && trigger.Name == "Trigger" && trigger.RowCount == 1, "one row table");
+            Check.Equal(1, model.Tables.Count(t => t.IsCalculationTrigger), "only one");
+
+            var ms = new MemoryStream();
+            model.Save(ms);
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(ms.ToArray()));
+            string Part(string name)
+            {
+                var e = zip.GetEntry(name) ?? throw new Exception("Missing part " + name);
+                using var r = new StreamReader(e.Open());
+                return r.ReadToEnd();
+            }
+            foreach (var e in zip.Entries.Where(e => e.FullName.EndsWith(".xml") || e.FullName.EndsWith(".rels")))
+            {
+                using var r = new StreamReader(e.Open());
+                try { System.Xml.Linq.XDocument.Parse(r.ReadToEnd()); } catch (Exception x) { throw new Exception("Not well-formed: " + e.FullName + ": " + x.Message); }
+            }
+            string workbook = Part("xl/workbook.xml"), connections = Part("xl/connections.xml");
+            Check.True(workbook.Contains("<sheet name=\"Sheet2\" sheetId=\"2\" r:id=\"rId5\"/>"), "second sheet");
+            Check.True(workbook.Contains("<definedName name=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\" hidden=\"1\">Trigger[]</definedName>"), "hidden defined name");
+            Check.True(workbook.Contains("<x15:modelTable id=\"Trigger\" name=\"Trigger\" connection=\"WorksheetConnection_PivotWright.xlsx!Trigger\"/>"), "model table of the linked connection");
+            Check.True(connections.Contains("type=\"102\"") && connections.Contains("<x15:rangePr sourceName=\"_xlcn.WorksheetConnection_PivotWright.xlsxTrigger\"/>"), "worksheet connection");
+            Check.True(Part("xl/worksheets/sheet1.xml").Contains("tabSelected=\"1\"") && !Part("xl/worksheets/sheet2.xml").Contains("tabSelected"), "only the first sheet is selected");
+            Check.True(Part("xl/tables/table1.xml").Contains("name=\"Trigger\"") && Part("xl/sharedStrings.xml").Contains("<t>Key</t>"), "worksheet table");
+            Check.True(Part("[Content_Types].xml").Contains("/xl/tables/table1.xml") && Part("docProps/app.xml").Contains("<vt:lpstr>Sheet2</vt:lpstr>"), "content types and sheet list");
+            string manual = Part("customXml/item1.xml");
+            Check.True(manual.Contains("ManualCalcMode") && manual.Contains("[CDATA[False]]"), "automatic calculation");
+            Check.True(Enumerable.Range(1, 6).Any(n => Part("customXml/item" + n + ".xml").Contains("LinkedTableUpdateMode")), "linked tables update");
+
+            byte[] itemData;
+            using (var es = zip.GetEntry("xl/model/item.data")!.Open()) { var buf = new MemoryStream(); es.CopyTo(buf); itemData = buf.ToArray(); }
+            var m = ModelReader.Read(itemData);
+            string dim = Encoding.UTF8.GetString(m.Find(@"Trigger\.2\.dim\.xml$"));
+            Check.True(!dim.Contains("DataSourceViewBinding") && dim.Contains("<ID>RowNumber</ID>") && dim.Contains("<Value>A</Value>"), "linked dimension");
+            string prt = Encoding.UTF8.GetString(m.Find(@"Trigger\.1\.prt\.xml$"));
+            Check.True(!prt.Contains("QueryBinding") && !prt.Contains("ErrorConfiguration") && prt.Contains("<CacheVersion>1</CacheVersion>"), "linked partition has no query");
+            m.Find(@"Trigger\.1\.det\.xml$"); m.Find(@"Trigger\.0\.dim\\0\.Trigger\.RowNumber\.0\.idf$"); m.Find(@"Trigger\.0\.dim\\Trigger\.0\.tbl\.xml$");
+            Check.True(!Encoding.UTF8.GetString(m.Find(@"Sandbox\.0\.dsv\.xml$")).Contains("Trigger"), "the view lists only the source tables");
+            // Every group of the log has a file named for its version (SPEC section 5).
+            foreach (var g in m.Log.Element("FileGroups")!.Elements("FileGroup"))
+            {
+                string id = (string)g.Element("ID")!;
+                int cls = int.Parse((string)g.Element("Class")!), version = int.Parse((string)g.Element("ObjectVersion")!);
+                string ext = cls switch { 100006 => "dim", 100016 => "det", 100021 => "prt", 100010 => "cub", _ => "" };
+                if (ext == "") continue;
+                var paths = g.Descendants("Path").Select(p => (string)p).ToList();
+                Check.True(paths.Any(p => p.EndsWith("\\" + id + "." + version + "." + ext + ".xml", StringComparison.Ordinal)),
+                    $"group {id} has a file for version {version}");
+            }
+
+            Tests.Throws<InvalidOperationException>(() => model.AddCalculationTrigger("Other"), "a second trigger");
+            Tests.Throws<InvalidOperationException>(() => trigger.AddRow(2L), "rows");
+            Tests.Throws<InvalidOperationException>(() => trigger.AddMeasure("M", "1"), "measure");
+            Tests.Throws<InvalidOperationException>(() => trigger.AddCalculatedColumn("C", "1", ColumnDataType.Int64), "calculated column");
+            Tests.Throws<InvalidOperationException>(() => model.AddRelationship(sales["Key"], trigger["Key"]), "relationship");
+            using var other = new DataModelWriter();
+            other.CreateTable("Trigger", new[] { new ColumnDefinition("N", ColumnDataType.Int64) });
+            Tests.Throws<ArgumentException>(() => other.AddCalculationTrigger(), "table name taken");
+            foreach (var bad in new[] { "", "1a", "a b", "a-b", "_x" })
+                Tests.Throws<ArgumentException>(() => other.AddCalculationTrigger(bad), "invalid name '" + bad + "'");
         }
 
         public static void CalculatedColumnSortBy()
