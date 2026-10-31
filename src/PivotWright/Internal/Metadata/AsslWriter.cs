@@ -533,7 +533,7 @@ internal static class AsslWriter
         foreach (var t in tables)
         {
             sb.Append("<Dimension><ID>").Append(E(t.Id)).Append("</ID><Name>").Append(E(t.Name)).Append("</Name><DimensionID>").Append(E(t.Id))
-              .Append("</DimensionID><Visible>true</Visible><HierarchyUniqueNameStyle>IncludeDimensionName</HierarchyUniqueNameStyle><MemberUniqueNameStyle>Native</MemberUniqueNameStyle><AllMemberAggregationUsage>Default</AllMemberAggregationUsage><Translations/><Attributes>");
+              .Append("</DimensionID><Visible>").Append(t.IsLinked ? "false" : "true").Append("</Visible><HierarchyUniqueNameStyle>IncludeDimensionName</HierarchyUniqueNameStyle><MemberUniqueNameStyle>Native</MemberUniqueNameStyle><AllMemberAggregationUsage>Default</AllMemberAggregationUsage><Translations/><Attributes>");
             foreach (var c in t.AllColumns)
             {
                 sb.Append("<Attribute><AttributeID>").Append(E(c.Id)).Append("</AttributeID><AggregationUsage>Default</AggregationUsage><AttributeHierarchyEnabled>true</AttributeHierarchyEnabled><AttributeHierarchyVisible>")
@@ -747,7 +747,8 @@ internal static class AsslWriter
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MeasureGroup>");
         CommonHeader(sb, t.Name, t.Id, m.Created, ModelInfo.LinkedVersion, ids.MeasureGroupObjectId, ids.Ordinal + (m.CalculatedProfile ? 2 : 0));
-        sb.Append("<DataFileList/><Description/><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
+        // Hidden from client tools as a whole (H46): the table's measure group is private.
+        sb.Append("<DataFileList/><Description/><Annotations").Append(NsB).Append("><Annotation><Name>IsTablePrivate</Name></Annotation></Annotations><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Regular</Type><DataAggregation>DataAndCacheAggregatable</DataAggregation><AggregationPrefix/>");
         sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><ProcessingPriority>0</ProcessingPriority><StorageLocation/>");
         sb.Append("<IgnoreUnrelatedDimensions>true</IgnoreUnrelatedDimensions><EstimatedRows>0</EstimatedRows>");

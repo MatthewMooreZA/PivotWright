@@ -1922,6 +1922,12 @@ namespace PivotWright.Tests
             Check.True(!prt.Contains("QueryBinding") && !prt.Contains("ErrorConfiguration") && prt.Contains("<CacheVersion>1</CacheVersion>"), "linked partition has no query");
             m.Find(@"PivotWrightTrigger\.1\.det\.xml$"); m.Find(@"PivotWrightTrigger\.0\.dim\\0\.PivotWrightTrigger\.RowNumber\.0\.idf$"); m.Find(@"PivotWrightTrigger\.0\.dim\\PivotWrightTrigger\.0\.tbl\.xml$");
             Check.True(!Encoding.UTF8.GetString(m.Find(@"Sandbox\.0\.dsv\.xml$")).Contains("Trigger"), "the view lists only the source tables");
+            // The trigger table is hidden from client tools as a whole (H46): a private measure group and an invisible cube dimension; no other table is.
+            Check.True(Encoding.UTF8.GetString(m.Find(@"PivotWrightTrigger\.1\.det\.xml$")).Contains("<Name>IsTablePrivate</Name>"), "private measure group");
+            Check.Equal(1, m.Files.Where(kv => kv.Key.EndsWith(".det.xml")).Count(kv => Encoding.UTF8.GetString(kv.Value).Contains("IsTablePrivate")), "only the trigger table is private");
+            string cube = Encoding.UTF8.GetString(m.Find(@"Model\.\d+\.cub\.xml$"));
+            Check.True(cube.Contains("<Dimension><ID>PivotWrightTrigger</ID><Name>PivotWrightTrigger</Name><DimensionID>PivotWrightTrigger</DimensionID><Visible>false</Visible>"), "invisible cube dimension");
+            Check.Equal(1, System.Text.RegularExpressions.Regex.Matches(cube, "<DimensionID>[^<]*</DimensionID><Visible>false</Visible>").Count, "only one invisible dimension");
             // Every group of the log has a file named for its version (SPEC section 5).
             foreach (var g in m.Log.Element("FileGroups")!.Elements("FileGroup"))
             {
