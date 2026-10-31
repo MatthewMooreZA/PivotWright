@@ -69,15 +69,6 @@ internal sealed class ModelInfo
     public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? 20 : CubeVersion);
     public int ScriptVersion => Calc?.Script ?? (AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (AnyDate ? 10 : AnyHierarchy ? 9 : 1);
-    /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
-    public int MeasureGroupVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : MeasureGroupVersion;
-    /// <summary>Object version of a partition: 1 for the linked trigger table (H42).</summary>
-    public int PartitionVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : PartitionVersion;
-    /// <summary>Ids of the linked worksheet tables (the trigger table of <see cref="DataModelWriter.AddCalculationTrigger"/>).</summary>
-    public IReadOnlySet<string> LinkedTables { get; init; } = new HashSet<string>();
-    public const int LinkedVersion = 1;
-    /// <summary>Dimension version of a linked table: 2, as Excel writes it (H42).</summary>
-    public const int LinkedDimensionVersion = 2;
     /// <summary>True when Excel saved the table's dimension again after an edit (H10), which drops the empty annotation values.</summary>
     public bool Resaved(string tableId) => Calc is not null && Calc.Resaved(tableId);
     public int DimensionVersion(string tableId, bool manySide) =>
@@ -556,7 +547,7 @@ internal static class AsslWriter
         }
         sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.Calc?.CubeStructure ?? (m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0)) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.HiddenProfile ? m.EditedAt.AddMilliseconds(200) : m.Created)).Append("</LastUpdate>");
-        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersionOf(t.Id) + ".det.xml")))).Append("</MeasureGroupFileList>");
+        sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersion + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append("<PerspectiveFileList/><AssemblyFileList>MdxScript." + m.ScriptVersion + ".scr.xml</AssemblyFileList><PermissionFileList/></Cube></ObjectDefinition></Load>");
         return sb.ToString();
     }
@@ -695,95 +686,6 @@ internal static class AsslWriter
         sb.Append("</Attributes><IntermediateCubeDimensionID>").Append(E(fk.Id)).Append("</IntermediateCubeDimensionID><IntermediateGranularityAttributeID>")
           .Append(E(r.ForeignColumnId)).Append("</IntermediateGranularityAttributeID><Materialization>Regular</Materialization><ddl200:ProcessingState>Processed</ddl200:ProcessingState><ddl300:RelationshipID>")
           .Append(r.Name).Append("</ddl300:RelationshipID><CubeDimensionID>").Append(E(pk.Id)).Append("</CubeDimensionID></Dimension>");
-    }
-
-    /// <summary>
-    /// The dimension of a linked worksheet table as Excel writes it (H42): no data source binding, attributes Key and RowNumber, a short
-    /// column id annotation and a relationship from the row number to the column.
-    /// </summary>
-    public static string LinkedDimension(ModelInfo m, EncodedTable t, IReadOnlyList<string> dataFiles, long estimatedSize)
-    {
-        var ids = m.TableIds[t.Id];
-        var sb = new StringBuilder(LoadOpen);
-        sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID></ParentObject>");
-        sb.Append("<ObjectDefinition><Dimension>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, ModelInfo.LinkedDimensionVersion, ids.DimensionObjectId, 1, m.Created.AddMilliseconds(320));
-        sb.Append("<DataFileList>").Append(E(string.Join(";", dataFiles))).Append("</DataFileList><Description/>");
-        sb.Append("<LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
-        sb.Append("<EstimatedSize>").Append(estimatedSize).Append("</EstimatedSize><MiningModelID/><Type>Regular</Type>");
-        sb.Append("<UnknownMember valuens=\"ddl200_200\">AutomaticNull</UnknownMember><MdxMissingMemberMode>Default</MdxMissingMemberMode>");
-        sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
-        sb.Append("<ddl300:ProcessingState>Processed</ddl300:ProcessingState>").Append(ErrorConfiguration);
-        sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><CurrentStorageMode valuens=\"ddl200_200\">InMemory</CurrentStorageMode>");
-        sb.Append("<ProcessingPriority>0</ProcessingPriority><WriteEnabled>false</WriteEnabled><DependsOnDimensionID/>");
-        sb.Append("<Language>").Append(m.Lcid).Append("</Language><Collation/><UnknownMemberName>Unknown</UnknownMemberName>");
-        sb.Append("<ProcessingMode>Regular</ProcessingMode><OrderByKey>false</OrderByKey><AttributeAllMemberName/>");
-        sb.Append(ProactiveCaching);
-        sb.Append("<UnknownMemberTranslations/><AttributeAllMemberTranslations/><Translations/><Attributes>");
-        var key = t.Columns[0];
-        sb.Append("<Attribute><Name>").Append(E(key.Name)).Append("</Name><ID>").Append(E(key.Id)).Append("</ID><Description/>");
-        sb.Append("<Annotations").Append(NsB).Append(">\n              <Annotation>\n                <Name>ShortColumnId</Name>\n                <Value>A</Value>\n              </Annotation>\n            </Annotations>");
-        sb.Append("<Type>Regular</Type><Usage>Regular</Usage>");
-        AttributeCommon(sb, visible: true);
-        sb.Append("<KeyColumns><KeyColumn><DataType>BigInt</DataType><DataSize>0</DataSize><NullProcessing>Preserve</NullProcessing><Collation/><Format/></KeyColumn></KeyColumns>");
-        sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>0</DataSize><NullProcessing>ZeroOrBlank</NullProcessing><Collation/><Format/></NameColumn>");
-        sb.Append("<Translations/><NamingTemplateTranslations/><AttributeRelationships/></Attribute>");
-        sb.Append("<Attribute><Name>RowNumber</Name><ID>RowNumber</ID><Description/><Type valuens=\"ddl200_200\">RowNumber</Type><Usage>Key</Usage>");
-        AttributeCommon(sb, visible: false);
-        sb.Append("<KeyColumns><KeyColumn><DataType>Integer</DataType><DataSize>4</DataSize><NullProcessing>Error</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:RowNumberBinding\"/></KeyColumn></KeyColumns>");
-        sb.Append("<NameColumn><DataType>WChar</DataType><DataSize>4</DataSize><NullProcessing>ZeroOrBlank</NullProcessing><Collation/><Format/><Source xsi:type=\"ddl200_200:RowNumberBinding\"/></NameColumn>");
-        sb.Append("<Translations/><NamingTemplateTranslations/><AttributeRelationships><AttributeRelationship><AttributeID>").Append(E(key.Id)).Append("</AttributeID><Name>")
-          .Append(E(key.Id)).Append("_</Name><RelationshipType>Flexible</RelationshipType><Cardinality>Many</Cardinality><Optionality>Mandatory</Optionality><OverrideBehavior>None</OverrideBehavior><Translations/></AttributeRelationship></AttributeRelationships></Attribute>");
-        sb.Append("</Attributes><Hierarchies/><StructureVersion>0</StructureVersion><DataIDVersion>1</DataIDVersion><IncDataIDVersion>1</IncDataIDVersion><CacheVersion>1</CacheVersion><DataVersion>0</DataVersion>");
-        sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><PermissionFileList/></Dimension></ObjectDefinition></Load>");
-        return sb.ToString();
-    }
-
-    /// <summary>The measure group of a linked worksheet table as Excel writes it (H42): attributes Key and RowNumber without column bindings, and a row binding on the table id "TableID".</summary>
-    public static string LinkedMeasureGroup(ModelInfo m, EncodedTable t)
-    {
-        var ids = m.TableIds[t.Id];
-        var sb = new StringBuilder(LoadOpen);
-        sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
-        sb.Append("<ObjectDefinition><MeasureGroup>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, ModelInfo.LinkedVersion, ids.MeasureGroupObjectId, ids.Ordinal + (m.CalculatedProfile ? 2 : 0));
-        sb.Append("<DataFileList/><Description/><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
-        sb.Append("<Type>Regular</Type><DataAggregation>DataAndCacheAggregatable</DataAggregation><AggregationPrefix/>");
-        sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><ProcessingPriority>0</ProcessingPriority><StorageLocation/>");
-        sb.Append("<IgnoreUnrelatedDimensions>true</IgnoreUnrelatedDimensions><EstimatedRows>0</EstimatedRows>");
-        sb.Append(ErrorConfiguration);
-        sb.Append("<ProcessingMode>Regular</ProcessingMode>").Append(ProactiveCaching);
-        sb.Append("<Measures><Measure><Name>__XL_Count ").Append(E(t.Name)).Append("</Name><ID>").Append(E(t.Id)).Append("</ID><Description/>");
-        sb.Append("<AggregateFunction>Count</AggregateFunction><DataType>BigInt</DataType><Visible>false</Visible><MeasureExpression/><DisplayFolder/><FormatString/>");
-        sb.Append("<BackColor/><ForeColor/><FontName/><FontSize/><FontFlags/><Source><DataType>BigInt</DataType><DataSize>8</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>");
-        sb.Append("<Source xsi:type=\"RowBinding\"><TableID>TableID</TableID></Source></Source><Translations/></Measure></Measures>");
-        sb.Append("<Dimensions><Dimension xsi:type=\"DegenerateMeasureGroupDimension\"><Attributes>");
-        var key = t.Columns[0];
-        sb.Append("<Attribute><AttributeID>").Append(E(key.Id)).Append("</AttributeID><Type>Regular</Type><Enabled>true</Enabled><KeyColumns><KeyColumn><DataType>BigInt</DataType><DataSize>0</DataSize><NullProcessing>Preserve</NullProcessing><Collation/><Format/></KeyColumn></KeyColumns></Attribute>");
-        sb.Append("<Attribute><AttributeID>RowNumber</AttributeID><Type>Granularity</Type><Enabled>true</Enabled><KeyColumns><KeyColumn><DataType>Integer</DataType><DataSize>0</DataSize><NullProcessing>Automatic</NullProcessing><Collation/><Format/>");
-        sb.Append("<Source xsi:type=\"ColumnBinding\"><TableID>").Append(E(t.Id)).Append("</TableID><ColumnID>RowNumber</ColumnID></Source></KeyColumn></KeyColumns></Attribute>");
-        sb.Append("</Attributes><ddl200_200:ShareDimensionStorage>Shared</ddl200_200:ShareDimensionStorage><CubeDimensionID>").Append(E(t.Id)).Append("</CubeDimensionID></Dimension></Dimensions>");
-        sb.Append("<Translations/><StructureVersion>0</StructureVersion><CacheVersion>1</CacheVersion><DataVersion>0</DataVersion>");
-        sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><AggregationDesignFileList/><PartitionFileList>")
-          .Append(E(t.Id)).Append('.').Append(ModelInfo.LinkedVersion).Append(".prt.xml</PartitionFileList></MeasureGroup></ObjectDefinition></Load>");
-        return sb.ToString();
-    }
-
-    /// <summary>The partition of a linked worksheet table as Excel writes it (H42): no annotations, error configuration or query binding.</summary>
-    public static string LinkedPartition(ModelInfo m, string tableName, string tableId)
-    {
-        var ids = m.TableIds[tableId];
-        var sb = new StringBuilder(LoadOpen);
-        sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID><MeasureGroupID>").Append(E(tableId)).Append("</MeasureGroupID></ParentObject>");
-        sb.Append("<ObjectDefinition><Partition>");
-        CommonHeader(sb, tableName, tableId, m.Created, ModelInfo.LinkedVersion, ids.PartitionObjectId, 0);
-        sb.Append("<DataFileList/><Description/><DataVersion>0</DataVersion><LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
-        sb.Append("<Type>Data</Type><AggregationPrefix/><StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><CurrentStorageMode valuens=\"ddl200_200\">InMemory</CurrentStorageMode>");
-        sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
-        sb.Append("<ProcessingMode>Regular</ProcessingMode><ProcessingPriority>0</ProcessingPriority>");
-        sb.Append("<StorageLocation/><RemoteDataSourceID/><Slice/><EstimatedRows>0</EstimatedRows><AggregationDesignID/>");
-        sb.Append(ProactiveCaching).Append("<EstimatedSize>0</EstimatedSize><CacheVersion>1</CacheVersion></Partition></ObjectDefinition></Load>");
-        return sb.ToString();
     }
 
     public static string Partition(ModelInfo m, string tableName, string tableId)

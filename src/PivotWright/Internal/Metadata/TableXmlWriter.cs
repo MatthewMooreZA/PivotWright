@@ -301,7 +301,7 @@ internal static class TableXmlWriter
         });
         x.Collections(c => c.Collection("Segments", sc =>
         {
-            foreach (var seg in col.Segments) Segment(sc, col, seg, t.IsLinked);
+            foreach (var seg in col.Segments) Segment(sc, col, seg);
         }));
         x.DataObjects(d =>
         {
@@ -473,7 +473,7 @@ internal static class TableXmlWriter
         s.Close();
     }
 
-    private static void Segment(XmBuilder x, EncodedColumn col, EncodedSegment seg, bool linked = false)
+    private static void Segment(XmBuilder x, EncodedColumn col, EncodedSegment seg)
     {
         string sub = seg.IsRowNumber ? "XM123CompressionInfo" : $"XMRENoSplitCompressionInfo{LT}{seg.Width}>";
         string hybrid = seg.IsRowNumber
@@ -481,7 +481,7 @@ internal static class TableXmlWriter
             : $"XMHybridRLECompressionInfo{LT}class XMRENoSplitCompressionInfo{LT}{seg.Width}>>";
 
         x.Open("XMColumnSegment");
-        x.Properties(p => p.Long("Records", seg.Records).Long("Mask", seg.IsRowNumber || linked ? 0 : 1));   // a linked table's segments have mask 0 (H42)
+        x.Properties(p => p.Long("Records", seg.Records).Long("Mask", seg.IsRowNumber ? 0 : 1));
         x.Members(m =>
         {
             m.Member("SubSegment", s =>

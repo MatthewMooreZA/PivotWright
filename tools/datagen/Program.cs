@@ -152,5 +152,4 @@ if (productsMatch.Success)
     for (int n = 1; n <= int.Parse(productsMatch.Groups[1].Value); n++)
         p.AddCalculatedColumn(n == 1 ? "Name Length" : $"Name Length x{n}", n == 1 ? "LEN([Product])" : $"LEN([Product])*{n}", ColumnDataType.Int64);
 if (calcMode is "calcp" or "calcsp" or "calcpd" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
-if (args.Skip(2).Contains("trigger")) m.AddCalculationTrigger();   // "trigger" token: the linked trigger table (H42)
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

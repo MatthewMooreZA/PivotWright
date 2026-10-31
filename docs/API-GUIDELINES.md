@@ -8,7 +8,6 @@ The user we design for: a .NET developer who knows Excel and Power Pivot but not
 
 ```
 DataModelWriter                 options, Save, owns tables and relationships
-├─ AddCalculationTrigger → ModelTable (IsCalculationTrigger)
 ├─ Tables: ModelCollection<ModelTable>
 │   └─ ModelTable                rows, owns columns, measures, hierarchies
 │       ├─ Columns: ModelCollection<ModelColumn>   (table["Qty"])
