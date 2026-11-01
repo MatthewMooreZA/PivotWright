@@ -28,6 +28,7 @@ internal sealed class BackupLog
     public const int ClassMeasureGroup = 100016;
     public const int ClassPartition = 100021;
     public const int ClassDataSourceView = 100053;
+    public const int ClassPerspective = 100054;
     public const int ClassMdxScript = 100060;
 
     public required string ServerRoot { get; init; }

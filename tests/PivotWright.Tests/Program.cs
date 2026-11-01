@@ -89,6 +89,11 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
+    ("Perspective: one perspective, files and counters as Excel saves them (H64)", Tests.PerspectiveOne),
+    ("Perspective: three perspectives, with and without a measure (H65)", Tests.PerspectiveThree),
+    ("Perspective: hierarchies live in the cube annotation, a table shows all its items (H66)", Tests.PerspectiveHierarchiesAndTables),
+    ("Perspective: models without perspectives keep their counters", Tests.PerspectiveAbsent),
+    ("Perspective: invalid definitions and unsupported models are rejected", Tests.PerspectiveValidation),
 };
 
 int failed = 0;
@@ -2283,6 +2288,246 @@ namespace PivotWright.Tests
                 return;
             }
             throw new Exception("Expected " + typeof(T).Name + ": " + what);
+        }
+
+        // ---- Perspectives (SPEC section 13; Excel's H64, H65, H66) ----
+
+        private static (DataModelWriter model, ModelTable products, ModelTable sales, ModelMeasure total) PerspectiveModel()
+        {
+            var (model, products, sales) = CalcModel();
+            return (model, products, sales, sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber));
+        }
+
+        private static string PerspectiveText(ModelReader m, string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+
+        // The attribute ids a perspective file lists, per table id prefix.
+        private static List<string> PerspectiveAttributes(string xml, string tablePrefix)
+        {
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(xml.TrimStart('\uFEFF'));
+            var dim = doc.GetElementsByTagName("Dimension").Cast<System.Xml.XmlNode>().FirstOrDefault(d => d["CubeDimensionID"]!.InnerText.StartsWith(tablePrefix + "_", StringComparison.Ordinal));
+            return dim is null ? new List<string>() : dim["Attributes"]!.ChildNodes.Cast<System.Xml.XmlNode>().Select(a => a["AttributeID"]!.InnerText).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        }
+
+        // The XML text of the PerspectiveEmptyHierarchyNames annotation of the cube, or null.
+        private static string? PerspectiveAnnotation(ModelReader m)
+        {
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(Encoding.UTF8.GetString(m.Find(@"Model\.\d+\.cub\.xml$")).TrimStart('\uFEFF'));
+            foreach (System.Xml.XmlNode a in doc.GetElementsByTagName("Annotation"))
+                if (a["Name"]!.InnerText == "PerspectiveEmptyHierarchyNames") return a["Value"]!.InnerText;
+            return null;
+        }
+
+        public static void PerspectiveOne()
+        {
+            var (model, products, sales, total) = PerspectiveModel();
+            using (model)
+            {
+                var view = model.AddPerspective("Sales view");
+                Check.True(ReferenceEquals(view, model.Perspectives["sales VIEW"]), "found by name, ignoring case");
+                Check.True(ReferenceEquals(view, view.Include(products.Hierarchies[0]).Include(sales["Qty"]).Include(sales["Amount"]).Include(total)), "Include returns the perspective");
+                view.Include(sales["Qty"]);
+                Check.Equal(2, view.Columns.Count, "including a column twice does nothing");
+                Check.Equal("Sales view (2 columns, 1 measure, 1 hierarchy)", view.ToString(), "ToString");
+                var m = SaveKpiModel(model);
+                // H64: the cube and the measure groups at 20, the partitions and the script at 10, Products saved again at 6, Sales' partition information only.
+                string cube = PerspectiveText(m, @"Model\.20\.cub\.xml$");
+                Check.True(cube.Contains("<ObjectVersion>20</ObjectVersion>"), "cube version");
+                Check.True(cube.Contains("<PerspectiveFileList>Sales view.0.persp.xml</PerspectiveFileList>"), "perspective file list");
+                Check.True(cube.Contains("<AssemblyFileList>MdxScript.10.scr.xml</AssemblyFileList>"), "script file");
+                Check.True(cube.Contains("<StructureVersion>11</StructureVersion>"), "cube structure as before");
+                foreach (var table in new[] { "Products", "Sales" })
+                {
+                    PerspectiveText(m, table + @"_G\.20\.det\.xml$");
+                    PerspectiveText(m, table + @"_G\.10\.prt\.xml$");
+                }
+                PerspectiveText(m, @"Products_G\.6\.dim\.xml$");
+                PerspectiveText(m, @"Sales_G\.3\.dim\.xml$");
+                PerspectiveText(m, @"Sales_G\.0\.prt\\info\.10\.xml$");
+                Check.Equal(0, m.Files.Keys.Count(k => ModelReader.Normalize(k).Contains(@"Products_G.0.prt\info")), "no partition information for Products");
+                Check.True(PerspectiveText(m, @"Products_G\.10\.prt\.xml$").Contains("<DataVersion>-1</DataVersion>"), "Products partition data version");
+                Check.True(PerspectiveText(m, @"Sales_G\.10\.prt\.xml$").Contains("<DataVersion>1</DataVersion>"), "Sales partition data version");
+                Check.True(PerspectiveText(m, @"Sales_G\.20\.det\.xml$").Contains("<CacheVersion>3</CacheVersion>"), "Sales measure group cache version");
+                Check.True(PerspectiveText(m, @"Products_G\.20\.det\.xml$").Contains("<CacheVersion>2</CacheVersion>"), "Products measure group cache version");
+                Check.True(PerspectiveText(m, @"Products_G\.20\.det\.xml$").Contains("<Ordinal>4</Ordinal>"), "measure group ordinals follow the three edits");
+                Check.True(PerspectiveText(m, @"MdxScript\.10\.scr\.xml$").Contains("<Ordinal>2</Ordinal>"), "script ordinal");
+                Check.True(!PerspectiveText(m, @"Products_G\.6\.dim\.xml$").Contains("<Value/>"), "Products is saved again: empty annotation values dropped");
+                // The perspective file.
+                string file = PerspectiveText(m, @"Model\.0\.cub\\Sales view\.0\.persp\.xml$");
+                Check.True(file.Contains("<Name>Sales view</Name><ID>Sales view</ID>"), "name and id");
+                Check.True(file.Contains("<ObjectVersion>0</ObjectVersion>") && file.Contains("<Ordinal>0</Ordinal>"), "version and ordinal");
+                Check.True(file.Contains("<Hierarchies/>"), "hierarchies are not listed in the file");
+                Check.Equal("Amount;Qty", string.Join(";", PerspectiveAttributes(file, "Sales")), "attributes of Sales");
+                Check.Equal("", string.Join(";", PerspectiveAttributes(file, "Products")), "Products has no attributes, only its hierarchy");
+                Check.True(file.Contains("<Calculation><Name>[Measures].[Total Qty]</Name><Type>Member</Type></Calculation>"), "the measure is a calculation");
+                Check.True(System.Text.RegularExpressions.Regex.IsMatch(file, "<MeasureGroups><MeasureGroup><MeasureGroupID>Sales_[0-9a-f-]+</MeasureGroupID><Measures/></MeasureGroup></MeasureGroups>"), "the measure group of Sales");
+                Check.Equal("<?xml version=\"1.0\" encoding=\"UTF-16\"?><Perspectives><Perspective Name=\"Sales view\"><Tables><Table Name=\"Products\" EmptyHierarchyNames=\"Product Hierarchy\"/></Tables></Perspective></Perspectives>",
+                    PerspectiveAnnotation(m), "the hierarchy is in the cube annotation");
+                // The backup log lists the perspective between the partitions and the script, as class 100054.
+                var classes = m.Log.Descendants("FileGroup").Select(g => (string)g.Element("Class")!).ToList();
+                int at = classes.IndexOf("100054");
+                Check.True(at > 0 && classes[at - 1] == "100021" && classes[at + 1] == "100060", "log order: partition, perspective, script");
+            }
+        }
+
+        public static void PerspectiveThree()
+        {
+            var (model, products, sales, total) = PerspectiveModel();
+            using (model)
+            {
+                // H65: a perspective without a measure lists the hidden count measure; one without a column has no dimension.
+                model.AddPerspective("1 - subset of columns").Include(sales["Amount"]).Include(products["Product"]).Include(products["ProductKey"]);
+                model.AddPerspective("2 - measure and hierarchy").Include(products.Hierarchies[0]).Include(total);
+                model.AddPerspective("3 - both").Include(products["Product"]).Include(products["ProductKey"]).Include(products.Hierarchies[0]).Include(total);
+                var m = SaveKpiModel(model);
+                // The counters do not depend on the number of perspectives.
+                PerspectiveText(m, @"Model\.20\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.10\.scr\.xml$");
+                string one = PerspectiveText(m, @"\\1 - subset of columns\.0\.persp\.xml$");
+                string two = PerspectiveText(m, @"\\2 - measure and hierarchy\.0\.persp\.xml$");
+                string three = PerspectiveText(m, @"\\3 - both\.0\.persp\.xml$");
+                Check.True(one.Contains("<Ordinal>0</Ordinal>") && two.Contains("<Ordinal>1</Ordinal>") && three.Contains("<Ordinal>2</Ordinal>"), "ordinals follow the order added");
+                Check.True(one.Contains("<Name>[Measures].[__XL_Count of Models]</Name>") && one.Contains("<MeasureGroups/>"), "no measure: the count measure, no measure group");
+                Check.True(two.Contains("<Dimensions/>"), "only a hierarchy and a measure: no dimension");
+                Check.Equal("Product;ProductKey", string.Join(";", PerspectiveAttributes(three, "Products")), "attributes of perspective 3");
+                Check.Equal("Amount", string.Join(";", PerspectiveAttributes(one, "Sales")), "attributes of Sales in perspective 1");
+                // Only the perspectives that show a hierarchy are in the annotation (the first one is not).
+                var annotation = PerspectiveAnnotation(m)!;
+                Check.True(!annotation.Contains("1 - subset of columns"), "perspective 1 has no hierarchy");
+                Check.True(annotation.Contains("<Perspective Name=\"2 - measure and hierarchy\">") && annotation.Contains("<Perspective Name=\"3 - both\">"), "perspectives 2 and 3");
+                var list = System.Text.RegularExpressions.Regex.Match(PerspectiveText(m, @"Model\.20\.cub\.xml$"), "<PerspectiveFileList>(.*?)</PerspectiveFileList>").Groups[1].Value.Split(';');
+                Check.Equal(3, list.Length, "three files listed");
+                foreach (var name in new[] { "1 - subset of columns", "2 - measure and hierarchy", "3 - both" })
+                    Check.True(list.Contains(name + ".0.persp.xml"), "listed: " + name);
+            }
+        }
+
+        public static void PerspectiveHierarchiesAndTables()
+        {
+            var (model, products, sales, total) = PerspectiveModel();
+            using (model)
+            {
+                var hidden = sales.AddMeasure("Hidden Total", "SUM(Sales[Amount])");
+                hidden.IsHidden = true;
+                // H66 A: a hierarchy with every level ticked is still only in the annotation.
+                model.AddPerspective("A - all levels").Include(products["Category"]).Include(products["Product"]).Include(products.Hierarchies[0]);
+                // H66 B: a table ticks all its columns, its visible measures and its hierarchies.
+                model.AddPerspective("B - whole table").Include(products);
+                model.AddPerspective("C - sales").Include(sales);
+                var m = SaveKpiModel(model);
+                string a = PerspectiveText(m, @"\\A - all levels\.0\.persp\.xml$");
+                Check.True(a.Contains("<Hierarchies/>"), "no hierarchy in the file, all levels ticked");
+                Check.Equal("Category;Product", string.Join(";", PerspectiveAttributes(a, "Products")), "levels as attributes");
+                string b = PerspectiveText(m, @"\\B - whole table\.0\.persp\.xml$");
+                Check.Equal("Category;Product;ProductKey", string.Join(";", PerspectiveAttributes(b, "Products")), "whole table: every column");
+                string c = PerspectiveText(m, @"\\C - sales\.0\.persp\.xml$");
+                Check.Equal("Amount;ProductKey;Qty", string.Join(";", PerspectiveAttributes(c, "Sales")), "the Sales columns");
+                Check.True(c.Contains("[Measures].[Total Qty]") && !c.Contains("Hidden Total"), "the table's visible measures, not the hidden one");
+                var annotation = PerspectiveAnnotation(m)!;
+                Check.True(annotation.Contains("<Perspective Name=\"A - all levels\"><Tables><Table Name=\"Products\" EmptyHierarchyNames=\"Product Hierarchy\"/></Tables></Perspective>"), "A");
+                Check.True(annotation.Contains("<Perspective Name=\"B - whole table\"><Tables><Table Name=\"Products\" EmptyHierarchyNames=\"Product Hierarchy\"/></Tables></Perspective>"), "B");
+                Check.True(!annotation.Contains("C - sales"), "Sales has no hierarchy");
+            }
+        }
+
+        public static void PerspectiveAbsent()
+        {
+            // Without a perspective the model keeps the hierarchy profile and an empty perspective list.
+            var (model, _, _, _) = PerspectiveModel();
+            using (model)
+            {
+                var m = SaveKpiModel(model);
+                string cube = PerspectiveText(m, @"Model\.18\.cub\.xml$");
+                Check.True(cube.Contains("<PerspectiveFileList/>"), "empty perspective list");
+                Check.True(!cube.Contains("PerspectiveEmptyHierarchyNames"), "no annotation");
+                PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
+                Check.Equal(0, m.Files.Keys.Count(k => k.Contains(".persp.xml")), "no perspective files");
+                Check.True(m.Log.Descendants("FileGroup").All(g => (string)g.Element("Class")! != "100054"), "no perspective in the log");
+            }
+        }
+
+        public static void PerspectiveValidation()
+        {
+            var (model, products, sales, total) = PerspectiveModel();
+            using (model)
+            {
+                Throws<ArgumentException>(() => model.AddPerspective(" "), "blank name", "required");
+                Throws<ArgumentException>(() => model.AddPerspective(null!), "null name", "required");
+                Throws<ArgumentException>(() => model.AddPerspective("a/b"), "slash in the name", "must not contain");
+                Throws<ArgumentException>(() => model.AddPerspective("a|b"), "bar in the name", "'a|b'");
+                Throws<ArgumentException>(() => model.AddPerspective(" padded"), "leading space", "start or end with a space");
+                Throws<ArgumentException>(() => model.AddPerspective("model"), "the model's own name", "'Model'");
+                var view = model.AddPerspective("Sales view");
+                Throws<ArgumentException>(() => model.AddPerspective("SALES VIEW"), "duplicate name", "already exists");
+                Throws<KeyNotFoundException>(() => _ = model.Perspectives["Nope"], "unknown perspective", "Sales view");
+                Throws<ArgumentNullException>(() => view.Include((ModelColumn)null!), "null column");
+                Throws<ArgumentNullException>(() => view.Include((ModelMeasure)null!), "null measure");
+                Throws<ArgumentNullException>(() => view.Include((ModelHierarchy)null!), "null hierarchy");
+                Throws<ArgumentNullException>(() => view.Include((ModelTable)null!), "null table");
+                using (var foreign = new DataModelWriter())
+                {
+                    var t = foreign.AddTable("Sales", new[] { new { Qty = 1L } });
+                    var fm = t.AddMeasure("X", "1");
+                    Throws<ArgumentException>(() => view.Include(t["Qty"]), "column of another model", "another DataModelWriter");
+                    Throws<ArgumentException>(() => view.Include(fm), "measure of another model", "another DataModelWriter");
+                    Throws<ArgumentException>(() => view.Include(t), "table of another model", "another DataModelWriter");
+                }
+                // Save: a perspective must show something.
+                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "empty perspective", "shows nothing");
+                view.Include(total);
+                model.SaveModelPart(new MemoryStream());
+                // Two hierarchies of one table: Excel's samples show one per table.
+                products.AddHierarchy("Other", "Product", "Category");
+                view.Include(products.Hierarchies[0]).Include(products.Hierarchies[1]);
+                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "two hierarchies of one table", "one hierarchy per table");
+            }
+            // Shapes no Excel sample shows are refused with a message that says what the model lacks.
+            var (plain, _, plainSales) = CalcModel(hierarchy: false);
+            using (plain)
+            {
+                plainSales.AddMeasure("Total Qty", "SUM(Sales[Qty])");
+                plain.AddPerspective("P").Include(plainSales["Qty"]);
+                Throws<InvalidOperationException>(() => plain.SaveModelPart(new MemoryStream()), "no hierarchy", "needs the model to have a hierarchy");
+            }
+            var (noMeasure, _, noMeasureSales) = CalcModel();
+            using (noMeasure)
+            {
+                noMeasure.AddPerspective("P").Include(noMeasureSales["Qty"]);
+                Throws<InvalidOperationException>(() => noMeasure.SaveModelPart(new MemoryStream()), "no measure", "needs the model to have a measure");
+            }
+            using (var single = new DataModelWriter())
+            {
+                var only = single.AddTable("Sales", new[] { new { Category = "A", Product = "P1", Qty = 1L } });
+                only.AddHierarchy("H", "Category", "Product");
+                single.AddPerspective("P").Include(only.AddMeasure("Total Qty", "SUM(Sales[Qty])"));
+                Throws<InvalidOperationException>(() => single.SaveModelPart(new MemoryStream()), "no relationship", "needs the model to have a relationship");
+            }
+            var (hiddenModel, _, hiddenSales, hiddenTotal) = PerspectiveModel();
+            using (hiddenModel)
+            {
+                hiddenModel.AddPerspective("P").Include(hiddenTotal);
+                hiddenSales["Amount"].IsHidden = true;
+                Throws<InvalidOperationException>(() => hiddenModel.SaveModelPart(new MemoryStream()), "hidden column", "hidden columns");
+            }
+            var (calcModel, _, calcSales, calcTotal) = PerspectiveModel();
+            using (calcModel)
+            {
+                calcModel.AddPerspective("P").Include(calcTotal);
+                calcSales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                Throws<InvalidOperationException>(() => calcModel.SaveModelPart(new MemoryStream()), "calculated column", "calculated columns");
+            }
+            var (kpiModel, _, _, kpiTotal) = PerspectiveModel();
+            using (kpiModel)
+            {
+                kpiModel.AddPerspective("P").Include(kpiTotal);
+                kpiTotal.AddKpi(1000);
+                Throws<InvalidOperationException>(() => kpiModel.SaveModelPart(new MemoryStream()), "KPI", "KPIs");
+            }
+            // A disposed model refuses new perspectives.
+            var (gone, _, _, _) = PerspectiveModel();
+            gone.Dispose();
+            Throws<ObjectDisposedException>(() => gone.AddPerspective("P"), "disposed model");
         }
 
         // ---- KPIs (SPEC section 12; Excel's H47, H48, H49) ----

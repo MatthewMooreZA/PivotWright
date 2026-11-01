@@ -15,13 +15,16 @@ internal sealed class ModelSerializer
     private readonly StringComparer _strings;
     private readonly IReadOnlyList<MeasureDefinition> _measures;
     private readonly IReadOnlyList<HierarchyDefinition> _hierarchies;
+    private readonly IReadOnlyList<PerspectiveDefinition> _perspectives;
     private AbfWriter _abf = null!;
     private BackupLog _log = null!;
 
     public ModelSerializer(DataModelOptions options, IReadOnlyList<TableBuilder> tables,
         IReadOnlyList<RelationshipDefinition> relationships, StringComparer strings,
-        IReadOnlyList<MeasureDefinition>? measures = null, IReadOnlyList<HierarchyDefinition>? hierarchies = null)
+        IReadOnlyList<MeasureDefinition>? measures = null, IReadOnlyList<HierarchyDefinition>? hierarchies = null,
+        IReadOnlyList<PerspectiveDefinition>? perspectives = null)
     {
+        _perspectives = perspectives ?? Array.Empty<PerspectiveDefinition>();
         _hierarchies = hierarchies ?? Array.Empty<HierarchyDefinition>();
         _measures = measures ?? Array.Empty<MeasureDefinition>();
         if (_measures.Count == 0 && options.AddHelperMeasure && relationships.Count > 0)
@@ -89,9 +92,44 @@ internal sealed class ModelSerializer
         return _relationships.Count > 0 ? _relationships[0].To.Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
     }
 
+    // Perspectives are written the way Excel saves them right after the Perspectives dialog on a model with hierarchies and relationships
+    // (SPEC section 13, H64 to H66). Anything else was never seen in an Excel-written file, so it is refused. Returns the ids of the table
+    // whose dimension Excel saves again (the primary side of the first relationship) and of the table that keeps its partition information
+    // (the many side of that relationship), or null without perspectives.
+    private (string resaved, string info)? ValidatePerspectives()
+    {
+        if (_perspectives.Count == 0) return null;
+        string first = $"Perspective '{_perspectives[0].Name}'";
+        const string seen = " Excel-written samples exist only for perspectives in a model with hierarchies and relationships, a measure, and without a date table, hidden columns, calculated columns or KPIs.";
+        if (_hierarchies.Count == 0)
+            throw new InvalidOperationException($"{first} needs the model to have a hierarchy (AddHierarchy).{seen}");
+        if (_relationships.Count == 0)
+            throw new InvalidOperationException($"{first} needs the model to have a relationship (AddRelationship).{seen}");
+        if (!_measures.Any(m => !m.Helper))
+            throw new InvalidOperationException($"{first} needs the model to have a measure (AddMeasure).{seen}");
+        if (_tables.FirstOrDefault(t => t.DateColumn is not null) is { } date)
+            throw new InvalidOperationException($"Perspectives are not supported together with the date table '{date.Name}'.{seen}");
+        if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden)
+            throw new InvalidOperationException($"Perspectives are not supported together with hidden columns (table '{hidden.Name}').{seen}");
+        if (_tables.FirstOrDefault(t => t.CalculatedColumns.Count > 0) is { } calculated)
+            throw new InvalidOperationException($"Perspectives are not supported together with calculated columns (table '{calculated.Name}').{seen}");
+        if (_measures.FirstOrDefault(m => m.Kpi is not null) is { } kpi)
+            throw new InvalidOperationException($"Perspectives are not supported together with KPIs ('{kpi.Table}'[{kpi.Name}]).{seen}");
+        foreach (var p in _perspectives)
+        {
+            if (p.IsEmpty)
+                throw new InvalidOperationException($"Perspective '{p.Name}' shows nothing; include at least one column, measure or hierarchy (ModelPerspective.Include).");
+            foreach (var group in p.Hierarchies.GroupBy(h => h.Table))
+                if (group.Count() > 1)
+                    throw new InvalidOperationException($"Perspective '{p.Name}' shows {group.Count()} hierarchies of table '{group.Key.Name}'; Excel's samples show one hierarchy per table. Include only one of them.");
+        }
+        return (_relationships[0].To.Id, _relationships[0].From.Id);
+    }
+
     public void Write(Stream output)
     {
         ValidateDateTables();
+        var perspectiveTables = ValidatePerspectives();
         string? kpiTable = ValidateKpis();
         var calc = CalculatedPlan.Create(_tables.Where(t => !t.IsLinked).ToList(), _relationships, _hierarchies);
         if (calc is not null)
@@ -163,6 +201,9 @@ internal sealed class ModelSerializer
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
             Calc = calc,
             KpiResavedTable = kpiTable,
+            Perspectives = _perspectives,
+            PerspectiveResavedTable = perspectiveTables?.resaved,
+            PerspectiveInfoTable = perspectiveTables?.info,
             KpiScriptVersion = (_tables.Any(t => t.DateColumn is not null) ? 10 : _hierarchies.Count > 0 ? 9 : 1) + ScriptEdits(),
         };
 
@@ -238,6 +279,13 @@ internal sealed class ModelSerializer
             AddText(prt, detFolder + "\\" + t.Id + "." + prtVersion + ".prt.xml", partitionXml[t.Id]);
             if (HasPartitionInfo(t.Id)) AddText(prt, prtFolder + "\\info." + prtVersion + ".xml", AsslWriter.PartitionInfo);
         }
+        // Perspectives sit between the partitions and the script in Excel's backup log (H65).
+        for (int i = 0; i < _perspectives.Count; i++)
+        {
+            var persp = Group(BackupLog.ClassPerspective, _perspectives[i].Name, _perspectives[i].Name, 0, cubeFolder, Xml.Guid());
+            AddText(persp, cubeFolder + "\\" + AsslWriter.PerspectiveFileName(_perspectives[i].Name),
+                AsslWriter.Perspective(Info, _perspectives[i], i, persp.ObjectId, _tables));
+        }
         var script = Group(BackupLog.ClassMdxScript, "MdxScript", "MdxScript", Info.ScriptVersion, cubeFolder, Info.MdxScriptObjectId);
         AddText(script, cubeFolder + "\\MdxScript." + Info.ScriptVersion + ".scr.xml", AsslWriter.MdxScript(Info, _measures));
 
@@ -265,7 +313,9 @@ internal sealed class ModelSerializer
     }
 
     // After a calculated column was added Excel keeps the partition information of the table that holds it only (H10).
-    private bool HasPartitionInfo(string tableId) => Info.LinkedTables.Contains(tableId) || Info.Calc is null || (Info.Calc.PartitionInfo && Info.Calc.HoldsColumns(tableId));
+    // With perspectives only the many side of the first relationship keeps it (H64 to H66).
+    private bool HasPartitionInfo(string tableId) => Info.PerspectiveProfile ? tableId == Info.PerspectiveInfoTable
+        : Info.LinkedTables.Contains(tableId) || Info.Calc is null || (Info.Calc.PartitionInfo && Info.Calc.HoldsColumns(tableId));
 
     private FileGroup Group(int cls, string id, string name, int version, string path, string objectId)
     {

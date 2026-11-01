@@ -50,7 +50,7 @@ model.Save("Sales model.xlsx");
 ### How the API is organised
 
 - `DataModelWriter` owns the **tables** and the **relationships**. A `ModelTable` owns its **columns**, **measures** and **hierarchies**, and takes rows.
-- Every `Add…` method returns the object it added (`ModelTable`, `ModelRelationship`, `ModelMeasure`, `ModelHierarchy`).
+- Every `Add…` method returns the object it added (`ModelTable`, `ModelRelationship`, `ModelMeasure`, `ModelHierarchy`, `ModelPerspective`).
 - Find objects by name with `model.Tables["Sales"]` and `sales["Qty"]` (short for `sales.Columns["Qty"]`). A table can be found by the name you gave it or by its stored name, ignoring case. A wrong name throws `KeyNotFoundException`, which lists the names that do exist.
 - Settings that can change after an object is added are properties: `column.IsHidden`, `column.SortByColumn`, `measure.IsHidden`.
 - Other mistakes in a call throw `ArgumentException` at once. Problems that depend on the data (a duplicate key, a month with two sort numbers) are reported by `Save`, as `InvalidOperationException`. A failed `Save(path)` leaves an existing file at that path untouched. The conventions behind the API are written down in [`docs/API-GUIDELINES.md`](docs/API-GUIDELINES.md).
@@ -77,6 +77,17 @@ total.AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle
 ```
 
 Like Power Pivot's *Create KPI* on a measure: the PivotTable field list shows the KPI's Value, Goal, Status and Trend under the measure. Thresholds are fractions of the target (`0.4, 0.8` is 40 % and 80 %); `KpiScale.LinearReversed` is the "lower is better" layout. A measure has at most one KPI; a model can have several. Written the way Excel saves a KPI (SPEC section 12); only the shapes of Excel's samples are known, so `Save` refuses a model without relationships, or with calculated columns. Verified in Excel: a fixed target, a measure target, the Centered layout with other icons, two KPIs in one model, the lower-is-better layout, a model without hierarchies, a model with a date table, a model with hidden columns, a model without relationships, hidden target and KPI measures, and calculated columns on any table (with and without the trigger table).
+
+### Perspectives
+
+```csharp
+var view = model.AddPerspective("Sales view");
+view.Include(sales["Qty"]).Include(sales["Amount"]).Include(total);   // columns and measures
+view.Include(products.Hierarchies[0]);                                 // a hierarchy (its level columns are separate)
+model.AddPerspective("Products").Include(products);                    // a whole table: its columns, visible measures and hierarchies
+```
+
+Like Power Pivot's *Advanced > Perspectives*: a named subset of the model that Excel lists in that dialog. Written as Excel saves them (`docs/SPEC.md` section 13), so `Save` accepts them only for the shape of Excel's samples: a model with hierarchies, relationships and a measure, and without a date table, hidden columns, calculated columns or KPIs; anything else is refused with a message. Nothing selects a perspective for a PivotTable yet: no way to bind one was found in Excel (SPEC section 13).
 
 ### Calculated columns
 
@@ -316,7 +327,7 @@ See also `docs/SPEC.md` (full format specification) and `docs/HANDOFF.md` (worki
 These are not supported yet:
 
 - **Calculated columns cannot be a row or column field until Excel has calculated them.** `AddCalculatedColumn` writes only the formula, and Excel calculates the values on demand. A PivotTable user can put the column in *Values* straight away, but cannot drag it into *Rows*, *Columns* or a filter until it has been calculated once: use it as a value first, or click *Calculate Now* in the Power Pivot window. *Refresh All* does not calculate it. Excel's own files behave the same way. Plan reports accordingly: a calculated column is fine as a value, but a label column that people group by needs that extra step. There is no workaround in the file yet.
-- **Perspectives, and KPI variants.** You can add perspectives in Excel after opening the file. KPIs are written for the shapes listed under KPIs above (calculated columns only on the many-side table); other KPI shapes (other threshold layouts) can be added in Excel. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
+- **Perspectives, and KPI variants.** Perspectives are written for the shape of Excel's samples (see Perspectives above); a PivotTable cannot be bound to one yet. KPIs are written for the shapes listed under KPIs above (calculated columns only on the many-side table); other KPI shapes (other threshold layouts) can be added in Excel. Measures, relationships, hierarchies and sort by column are supported (see above, and verified in Excel), but only many-to-one with a single column on each side, no inactive relationships, and one relationship per pair of tables.
 - **Refresh.** The data is written directly. The model's data source is a placeholder OLE DB connection, stored encrypted the way Excel stores it, so *Refresh All* in Excel asks for a username and password (and reports a connection error if you cancel), and keeps the existing data. Refreshing a PivotTable (right-click > Refresh) works on the file as generated, because it reads the model in the file; after the model has been changed in Excel (a new hierarchy, for example) the same refresh asks for credentials too, because the changed model has to be reprocessed from its data source. Set `ConnectionString` if you want it to point somewhere real, or `ExcludeSourceFromRefreshAll = true` to leave the source out of Refresh All (no prompt; Refresh All then refreshes the PivotTables only, and still does not calculate calculated columns).
 - **Excel 2010 PowerPivot add-in.** The model uses compatibility level 1103, the format of Excel 2013 and later.
 

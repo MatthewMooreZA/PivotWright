@@ -219,5 +219,20 @@ if (productsMatch.Success)
     for (int n = 1; n <= int.Parse(productsMatch.Groups[1].Value); n++)
         p.AddCalculatedColumn(n == 1 ? "Name Length" : $"Name Length x{n}", n == 1 ? "LEN([Product])" : $"LEN([Product])*{n}", ColumnDataType.Int64);
 if (calcMode is "calcp" or "calcsp" or "calcpd" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+// persp1, persp3, perspH: the perspectives of Excel's H64, H65 and H66 samples on the standard model (SPEC section 13)
+if (calcMode == "persp1")
+    m.AddPerspective("Sales view").Include(dates.Hierarchies[0]).Include(p.Hierarchies[0]).Include(s["Date"]).Include(s["Amount"]).Include(totalQty);
+if (calcMode == "persp3")
+{
+    m.AddPerspective("1 - subset of columns").Include(s["Amount"]).Include(p["Product"]).Include(p["ProductKey"]);
+    m.AddPerspective("2 - measure and hierarchy").Include(p.Hierarchies[0]).Include(totalQty);
+    m.AddPerspective("3 - both").Include(p["Product"]).Include(p["ProductKey"]).Include(p.Hierarchies[0]).Include(totalQty);
+}
+if (calcMode == "perspH")
+{
+    m.AddPerspective("A - all levels").Include(p["Category"]).Include(p["Product"]).Include(p.Hierarchies[0]);
+    m.AddPerspective("B - whole table").Include(p);
+    m.AddPerspective("C - dates and measure").Include(dates["Year"]).Include(dates["Month"]).Include(dates.Hierarchies[0]).Include(totalQty);
+}
 // the linked trigger table is automatic when there are calculated columns; "notrigger" token: DataModelOptions.CalculateOnOpen = false
 m.Save(Path.Combine(dir, args[1] + ".xlsx"));

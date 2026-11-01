@@ -33,6 +33,7 @@ public sealed class DataModelWriter : IDisposable
     private readonly List<ModelTable> _tables = new();
     private readonly List<ModelRelationship> _relationships = new();
     private readonly List<RelationshipDefinition> _relationshipDefinitions = new();
+    private readonly List<ModelPerspective> _perspectives = new();
     private bool _disposed;
 
     public DataModelWriter(DataModelOptions? options = null)
@@ -51,6 +52,9 @@ public sealed class DataModelWriter : IDisposable
         };
         Tables = new ModelCollection<ModelTable>(_tables, FindTable,
             name => $"There is no table named '{name}'. The model's tables are: {Identifiers.List(_tables.Select(t => t.Name))}.");
+        Perspectives = new ModelCollection<ModelPerspective>(_perspectives,
+            name => _perspectives.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)),
+            name => $"There is no perspective named '{name}'. The model's perspectives are: {Identifiers.List(_perspectives.Select(p => p.Name))}.");
     }
 
     /// <summary>The tables, in the order added; <c>Tables["Sales"]</c> finds one by the name given or as stored, ignoring case.</summary>
@@ -58,6 +62,9 @@ public sealed class DataModelWriter : IDisposable
 
     /// <summary>The relationships, in the order added.</summary>
     public IReadOnlyList<ModelRelationship> Relationships => _relationships;
+
+    /// <summary>The perspectives, in the order added; <c>Perspectives["Sales view"]</c> finds one by name, ignoring case.</summary>
+    public ModelCollection<ModelPerspective> Perspectives { get; }
 
     /// <summary>The table marked with <see cref="ModelTable.MarkAsDateTable"/> or made by <see cref="AddDateTable"/>, or null.</summary>
     public ModelTable? DateTable => _tables.FirstOrDefault(t => t.IsDateTable);
@@ -183,6 +190,36 @@ public sealed class DataModelWriter : IDisposable
         _relationships.Add(relationship);
         return relationship;
     }
+
+    /// <summary>
+    /// Adds an empty perspective, like Power Pivot's Advanced > Perspectives > New Perspective. Choose what it shows with
+    /// <see cref="ModelPerspective.Include(ModelColumn)"/> and its overloads.
+    /// </summary>
+    /// <remarks>
+    /// Written as Excel saves perspectives (SPEC section 13). Only the shape of Excel's samples is known, so <c>Save</c> requires a model
+    /// with hierarchies and relationships, a measure, and no date table, hidden columns, calculated columns, KPIs or two hierarchies
+    /// of one table in a perspective; other shapes are refused with a message. A perspective must show at least one item.
+    /// </remarks>
+    /// <param name="name">Perspective name, unique in the model. It must not contain <c>\ / : * ? " &lt; &gt; |</c> (Excel stores it
+    /// as a file name) and must not be "Model" (the whole model's name).</param>
+    /// <returns>The perspective.</returns>
+    /// <exception cref="ArgumentException">The name is empty, taken, "Model" or contains a character that is not allowed.</exception>
+    public ModelPerspective AddPerspective(string name)
+    {
+        ThrowIfDisposed();
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Perspective name is required.", nameof(name));
+        if (name.IndexOfAny(InvalidPerspectiveCharacters) >= 0 || name.Any(char.IsControl) || name != name.Trim())
+            throw new ArgumentException($"The perspective name '{name}' must not contain any of \\ / : * ? \" < > | or control characters, or start or end with a space.", nameof(name));
+        if (string.Equals(name, "Model", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("A perspective cannot be named 'Model'; that is the name of the whole model.", nameof(name));
+        if (_perspectives.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"A perspective named '{name}' already exists.", nameof(name));
+        var perspective = new ModelPerspective(this, new PerspectiveDefinition { Name = name });
+        _perspectives.Add(perspective);
+        return perspective;
+    }
+
+    private static readonly char[] InvalidPerspectiveCharacters = { '\\', '/', ':', '*', '?', '"', '<', '>', '|' };
 
     /// <summary>
     /// Generates a standard calendar table with one row per day and marks it as the model's date table
@@ -384,7 +421,8 @@ public sealed class DataModelWriter : IDisposable
             trigger.AddRow(new object?[] { 1L });
             builders.Add(trigger);
         }
-        return new(_options, builders, _relationshipDefinitions, _ctx.StringComparer, MeasureDefinitions, HierarchyDefinitions);
+        return new(_options, builders, _relationshipDefinitions, _ctx.StringComparer, MeasureDefinitions, HierarchyDefinitions,
+            _perspectives.Select(p => p.Definition).ToList());
     }
 
     private void ThrowIfEmpty()
