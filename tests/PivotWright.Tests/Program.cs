@@ -73,6 +73,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
     ("KPI: script, annotations and status measures as in Excel's H47, H48 and H49", Tests.KpiScripts),
+    ("KPI: two KPIs in one model (H50)", Tests.KpiTwo),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
@@ -2392,6 +2393,29 @@ namespace PivotWright.Tests
             }
         }
 
+        // H50: a second KPI changes only the script (version 12 with the extra measure); measures keep the order added.
+        public static void KpiTwo()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000);
+                model.Tables["Sales"].AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000);
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal(3, commands.Count, "header and two measures");
+                Check.True(commands[1].StartsWith(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=", StringComparison.Ordinal), "first KPI first");
+                Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Amount]=Sum(Sales[Amount]);\nCREATE MEASURE 'Sales'[_Total Amount Goal] = 10000; \nCREATE MEASURE 'Sales'[_Total Amount Status] = if(ISBLANK('Sales'[Total Amount]),BLANK(),\n                    If('Sales'[Total Amount]<4000,-1,\n\t                If('Sales'[Total Amount]<8000,0,1)\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Amount] AS Measures.[Total Amount], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Amount Goal], STATUS = Measures.[_Total Amount Status], STATUS_GRAPHIC = 'Traffic Light - Single';\n",
+                    commands[2], "H50 second command");
+                Check.Equal("[Total Qty]|[_Total Qty Goal]|[_Total Qty Status]|KPIs.[Total Qty]|[Total Amount]|[_Total Amount Goal]|[_Total Amount Status]|KPIs.[Total Amount]|Measures.[__XL_Count of Models]", string.Join("|", refs), "properties, default member once");
+                Check.Equal("4000", ann["[Total Amount]"]["KpiThreshold_0"], "second thresholds");
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                Text(@"MdxScript\.12\.scr\.xml$");
+                Text(@"Model\.19\.cub\.xml$");
+                Text(@"Products_G\.6\.dim\.xml$");
+            }
+        }
+
         public static void KpiProfile()
         {
             var (model, total) = KpiModel();
@@ -2460,8 +2484,6 @@ namespace PivotWright.Tests
                 Throws<InvalidOperationException>(() => total.AddKpi(2000), "second KPI on a measure", "already has a KPI");
                 Check.Equal(1000.0, kpi.Target!.Value, "the first KPI stays");
                 // Save: one KPI per model
-                other.AddKpi(5);
-                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "two KPIs in one model", "only one KPI");
             }
             // Save: shapes no Excel sample shows
             {

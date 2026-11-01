@@ -71,10 +71,7 @@ internal sealed class ModelSerializer
         var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
         if (withKpi.Count == 0) return null;
         string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
-        string seen = " Excel-written samples exist only for one KPI in a model with hierarchies and relationships, without a date table, hidden columns or calculated columns.";
-        if (withKpi.Count > 1)
-            throw new InvalidOperationException($"The model has {withKpi.Count} KPIs, but only one KPI per model was ever seen in an Excel-written file.{seen}");
-        var kpiMeasure = withKpi[0];
+        string seen = " Excel-written samples exist only for KPIs in a model with hierarchies and relationships, without a date table, hidden columns or calculated columns.";
         if (_hierarchies.Count == 0)
             throw new InvalidOperationException($"The KPI of {name} is in a model without hierarchies, which was never seen in an Excel-written file. Add a hierarchy (AddHierarchy).{seen}");
         if (_relationships.Count == 0)
@@ -83,14 +80,18 @@ internal sealed class ModelSerializer
             throw new InvalidOperationException($"The KPI of {name} is in a model with a date table, which was never seen in an Excel-written file.{seen}");
         if (_tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Count > 0))
             throw new InvalidOperationException($"The KPI of {name} is in a model with hidden or calculated columns, which was never seen in an Excel-written file.{seen}");
-        if (kpiMeasure.Hidden)
-            throw new InvalidOperationException($"{name} is hidden and has a KPI, which was never seen in an Excel-written file.{seen}");
-        if (kpiMeasure.Kpi!.GoalMeasure is { Hidden: true } goal)
-            throw new InvalidOperationException($"The target of the KPI of {name}, '{goal.Table}'[{goal.Name}], is hidden, which was never seen in an Excel-written file.{seen}");
-        // Power Pivot creates two hidden measures for the KPI, named after the measure.
-        foreach (var hidden in new[] { "_" + kpiMeasure.Name + " Goal", "_" + kpiMeasure.Name + " Status" })
-            if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
-                throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
+        foreach (var kpiMeasure in withKpi)
+        {
+            name = $"'{kpiMeasure.Table}'[{kpiMeasure.Name}]";
+            if (kpiMeasure.Hidden)
+                throw new InvalidOperationException($"{name} is hidden and has a KPI, which was never seen in an Excel-written file.{seen}");
+            if (kpiMeasure.Kpi!.GoalMeasure is { Hidden: true } goal)
+                throw new InvalidOperationException($"The target of the KPI of {name}, '{goal.Table}'[{goal.Name}], is hidden, which was never seen in an Excel-written file.{seen}");
+            // Power Pivot creates two hidden measures for the KPI, named after the measure.
+            foreach (var hidden in new[] { "_" + kpiMeasure.Name + " Goal", "_" + kpiMeasure.Name + " Status" })
+                if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
+                    throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
+        }
         return _relationships[0].To.Id;
     }
 
@@ -148,6 +149,7 @@ internal sealed class ModelSerializer
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
             Calc = calc,
             KpiResavedTable = kpiTable,
+            KpiScriptVersion = 9 + _measures.Count(m => m.Kpi is not null) + _measures.Count - 1,
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);

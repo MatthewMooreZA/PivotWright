@@ -48,7 +48,7 @@ public sealed class ModelMeasure
     /// </summary>
     /// <remarks>
     /// Written as Excel saves a KPI (SPEC section 12). Only the shapes of Excel's samples are known, so <c>Save</c> requires a model
-    /// with hierarchies and relationships and no date table, hidden columns or calculated columns, and at most one KPI.
+    /// with hierarchies and relationships and no date table, hidden columns or calculated columns. A measure has at most one KPI.
     /// </remarks>
     /// <param name="target">The target value, a positive number, for example <c>1000</c>.</param>
     /// <param name="options">Scale, thresholds and icon style; Power Pivot's defaults when omitted.</param>

@@ -70,12 +70,17 @@ internal sealed class ModelInfo
     /// </summary>
     public string? KpiResavedTable { get; init; }
     public bool KpiProfile => KpiResavedTable is not null;
+    /// <summary>
+    /// Script version in the KPI profile: 9 plus one per KPI plus one per measure beyond the first, which fits H47 (10), H48 (11) and H50 (12):
+    /// Excel counts each edit of the script, and the cube, measure groups and dimensions stay at 19 and 6 whatever the number of KPIs.
+    /// </summary>
+    public int KpiScriptVersion { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
     public int CubeVersion => Calc?.Cube ?? (KpiProfile ? 19 : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
     public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? 20 : CubeVersion);
-    public int ScriptVersion => Calc?.Script ?? (KpiProfile ? 10 : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
+    public int ScriptVersion => Calc?.Script ?? (KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
     public int MeasureGroupVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : MeasureGroupVersion;
@@ -572,8 +577,8 @@ internal static class AsslWriter
 
     public static string MdxScript(ModelInfo m, IReadOnlyList<MeasureDefinition> measures)
     {
-        // With a KPI the commands and properties are listed by measure name, as in H48 (Target Qty before Total Qty, though it was added later).
-        if (m.KpiProfile) measures = measures.OrderBy(me => me.Name, StringComparer.Ordinal).ToList();
+        // With KPIs the measures without one come first, each group in the order added (H48: Target Qty before Total Qty; H50: Total Qty, then Total Amount).
+        if (m.KpiProfile) measures = measures.OrderBy(me => me.Kpi is null ? 0 : 1).ToList();
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MdxScript>");
