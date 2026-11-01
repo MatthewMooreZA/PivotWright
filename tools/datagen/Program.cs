@@ -22,6 +22,28 @@ if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship,
     m.Save(Path.Combine(dir, args[1] + ".xlsx"));
     return;
 }
+if (args.Length > 2 && args[2] == "kpigauge")   // one table of nine values, one gauge KPI per layout: every band of the linear (5) and centered (9) gauges shows in a PivotTable
+{
+    var steps = m.CreateTable("Steps", new[] { new ColumnDefinition("Step", ColumnDataType.Int64), new ColumnDefinition("Value", ColumnDataType.Int64) });
+    int[] values = { 100, 300, 500, 700, 1000, 1300, 1500, 1700, 1900 };   // target 1000: the middle of each band of the nine-band layouts
+    for (int i = 0; i < values.Length; i++) steps.AddRow(i + 1, values[i]);
+    var gauge = KpiIconStyle.GaugeAscending;
+    steps.AddMeasure("Linear", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.Linear, IconStyle = gauge });
+    steps.AddMeasure("Linear Reversed", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, IconStyle = gauge });
+    steps.AddMeasure("Centered", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = gauge });
+    steps.AddMeasure("Centered Reversed", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = gauge });
+    m.Save(Path.Combine(dir, args[1] + ".xlsx"));
+    return;
+}
+if (args.Length > 2 && args[2] == "onetable")   // one table, no relationship, no hierarchy, one measure (the base for a KPI in a model without relationships)
+{
+    var only = m.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
+    for (int i = 0; i < 500; i++) only.AddRow(1 + i % 12, 1 + i % 5, (decimal)(10 + i % 40));
+    var oneMeasure = only.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+    if (args.Skip(2).Contains("kpi")) oneMeasure.AddKpi(1000);
+    m.Save(Path.Combine(dir, args[1] + ".xlsx"));
+    return;
+}
 var p = m.CreateTable("Products", new[] { Col("Products", "ProductKey", ColumnDataType.Int64), Col("Products", "Category", ColumnDataType.String, "CategoryOrder"), Col("Products", "CategoryOrder", ColumnDataType.Int64), Col("Products", "Product", ColumnDataType.String) });
 string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
@@ -63,7 +85,52 @@ if (args.Length > 2 && args[2] == "calcmf")
 bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain", or a trailing "plain" after a calc mode)
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
-s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+// kpi: a KPI on Total Qty with a target of 1000 and the default thresholds (H47); kpimeasure: the target is the measure Target Qty (H48);
+// kpistyle: the Centered scale with the Road Signs icons (H49)
+if (args.Length > 2 && (args[2] == "kpi" || args.Skip(2).Contains("kpi"))) totalQty.AddKpi(1000);
+if (args.Length > 2 && args[2] == "kpireversed") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed });   // lower is better (H51)
+// kpimany: the combinations no Excel sample shows together (four KPIs, a hidden measure target with the Centered scale, the reversed scale with Road Signs
+// and own thresholds, a plain measure beside them); the model is the hierarchy model of H47
+if (args.Length > 2 && args[2] == "kpimany")
+{
+    totalQty.AddKpi(1000);
+    var amount = s.AddMeasure("Total Amount", "SUM(Sales[Amount])", MeasureFormat.Currency());
+    var amountTarget = s.AddMeasure("Target Amount", "30000", MeasureFormat.Currency());
+    amountTarget.IsHidden = true;
+    amount.AddKpi(amountTarget, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
+    s.AddMeasure("Sales Rows", "COUNTROWS(Sales)", MeasureFormat.WholeNumber).AddKpi(1200, new KpiOptions { Scale = KpiScale.LinearReversed, Thresholds = new[] { 0.5, 0.9 }, IconStyle = KpiIconStyle.RoadSigns });
+    s.AddMeasure("Average Qty", "AVERAGE(Sales[Qty])", MeasureFormat.Decimal(2)).AddKpi(3, new KpiOptions { Scale = KpiScale.Centered, Thresholds = new[] { 0.5, 0.8, 1.2, 1.5 } });
+    s.AddMeasure("Max Amount", "MAX(Sales[Amount])");
+}
+// kpistyles: one KPI per icon style on measures Style 01 to Style 05 with the values 1 to 5 (H61, Part A; the gauge takes the five-band layout)
+if (args.Length > 2 && args[2] == "kpistyles")
+    for (int n = 1; n <= 5; n++)
+        s.AddMeasure($"Style 0{n}", n.ToString()).AddKpi(1000, n == 5 ? new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending } : new KpiOptions { IconStyle = KpiIconStyle.All[n - 1] });
+// kpilayouts: the four layouts of H62 on measures of the Products table
+if (args.Length > 2 && args[2] == "kpilayouts")
+{
+    p.AddMeasure("Layout A", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed });
+    p.AddMeasure("Layout B", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, IconStyle = KpiIconStyle.GaugeAscending });
+    p.AddMeasure("Layout C", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.GaugeAscending });
+    p.AddMeasure("Layout D", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending });
+}
+// kpiicons: text measures that turn a KPI's hidden status measure into symbols (an experiment: custom "icons" through DAX). Total Qty is red by product
+// and green by category; Scaled Qty (2.8 times) is yellow by product and green by category.
+if (args.Length > 2 && args[2] == "kpiicons")
+{
+    totalQty.AddKpi(1000);
+    s.AddMeasure("Qty Symbol", "SWITCH(TRUE(), ISBLANK([_Total Qty Status]), BLANK(), [_Total Qty Status] < 0, \"\U0001F534\", [_Total Qty Status] = 0, \"\U0001F7E1\", \"\U0001F7E2\")");
+    s.AddMeasure("Qty Arrow", "SWITCH(TRUE(), ISBLANK([_Total Qty Status]), BLANK(), [_Total Qty Status] < 0, \"\u25BC\", [_Total Qty Status] = 0, \"\u25B6\", \"\u25B2\")");
+    s.AddMeasure("Qty Words", "SWITCH(TRUE(), ISBLANK([_Total Qty Status]), BLANK(), [_Total Qty Status] < 0, \"Behind\", [_Total Qty Status] = 0, \"On the way\", \"On target\")");
+    var scaled = s.AddMeasure("Scaled Qty", "SUM(Sales[Qty]) * 2.8", MeasureFormat.WholeNumber);
+    scaled.AddKpi(1000);
+    s.AddMeasure("Scaled Symbol", "SWITCH(TRUE(), ISBLANK([_Scaled Qty Status]), BLANK(), [_Scaled Qty Status] < 0, \"\U0001F534\", [_Scaled Qty Status] = 0, \"\U0001F7E1\", \"\U0001F7E2\")");
+}
+if (args.Skip(2).Contains("hidemeasure")) totalQty.IsHidden = true;   // the KPI measure itself is hidden (H60)
+if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000); }   // two KPIs (H50)
+if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)
+if (args.Length > 2 && args[2] == "kpistyle") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
 if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
 if (args.Length > 2 && args[2] == "calc")
 {

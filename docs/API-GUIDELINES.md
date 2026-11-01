@@ -13,7 +13,8 @@ DataModelWriter                 options, Save, owns tables and relationships
 │       ├─ Columns: ModelCollection<ModelColumn>   (table["Qty"])
 │       │   └─ ModelColumn       IsHidden, SortByColumn
 │       ├─ CalculatedColumns: ModelCalculatedColumn   formula only
-│       ├─ Measures: ModelMeasure       IsHidden
+│       ├─ Measures: ModelMeasure       IsHidden, Kpi
+│       │   └─ ModelKpi          target, thresholds, icon style
 │       └─ Hierarchies: ModelHierarchy  Levels
 └─ Relationships: ModelRelationship     ManyColumn, OneColumn
 ```

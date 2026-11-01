@@ -25,7 +25,7 @@ internal sealed class ModelSerializer
         _hierarchies = hierarchies ?? Array.Empty<HierarchyDefinition>();
         _measures = measures ?? Array.Empty<MeasureDefinition>();
         if (_measures.Count == 0 && options.AddHelperMeasure && relationships.Count > 0)
-            _measures = new[] { new MeasureDefinition { Name = "PivotWright helper", Table = relationships[0].From.Name, Expression = "1", Format = MeasureFormat.General, Hidden = true } };
+            _measures = new[] { new MeasureDefinition { Name = "PivotWright helper", Table = relationships[0].From.Name, Expression = "1", Format = MeasureFormat.General, Hidden = true, Helper = true } };
         _options = options;
         _tables = tables;
         _relationships = relationships;
@@ -63,14 +63,61 @@ internal sealed class ModelSerializer
         }
     }
 
+    // Excel counts every edit of the script in its version: one per KPI, one per measure beyond the first and one per hidden measure
+    // (fits H47 to H60: H48 and H50 add a measure, H59 and H60 hide one).
+    private int ScriptEdits() => _measures.Count(m => m.Kpi is not null) + _measures.Count - 1 + _measures.Count(m => m.Hidden);
+
+    // A KPI is written the way Excel saves it right after "Create KPI" on a model with relationships, with or without hierarchies with or without a date table and with or without hidden columns
+    // (SPEC section 12, H47 to H57). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
+    // saves again, or null without a KPI.
+    private string? ValidateKpis()
+    {
+        var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
+        if (withKpi.Count == 0) return null;
+        string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
+        string seen = " Excel-written samples exist only for KPIs in a model (with or without relationships, with or without hierarchies, with or without a date table, with or without hidden columns, with calculated columns on the many-side table).";
+        foreach (var kpiMeasure in withKpi)
+        {
+            name = $"'{kpiMeasure.Table}'[{kpiMeasure.Name}]";
+            // Power Pivot creates two hidden measures for the KPI, named after the measure.
+            foreach (var hidden in new[] { "_" + kpiMeasure.Name + " Goal", "_" + kpiMeasure.Name + " Status" })
+                if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
+                    throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
+        }
+        // The table Excel saves again: the primary side of the first relationship (H47), or the only table of a model without relationships (H57);
+        // with several tables and no relationship, the table of the KPI measure.
+        return _relationships.Count > 0 ? _relationships[0].To.Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
+    }
+
     public void Write(Stream output)
     {
         ValidateDateTables();
+        string? kpiTable = ValidateKpis();
         var calc = CalculatedPlan.Create(_tables.Where(t => !t.IsLinked).ToList(), _relationships, _hierarchies);
         if (calc is not null)
             foreach (var table in _tables)
                 foreach (var column in table.CalculatedColumns)
                     column.Versions = calc.Columns[(table.Id, column.Id)];
+        // A KPI on top of calculated columns (H55, H58): the KPI edit steps the cube, every measure group, the script and the table Excel saves
+        // again up by one from the numbers of the uncalculated model. Excel also calculated the columns when it created the KPI; the library writes
+        // them uncalculated, as it always does, so the processing steps of those files are not copied. The table saved again is the primary side
+        // of the first relationship, or, when that table holds calculated columns itself (H58: Products), the next primary side without any.
+        if (calc is not null && kpiTable is not null)
+        {
+            if (_relationships.Count > 0)
+            {
+                var again = _relationships.Select(r => r.To).Distinct().FirstOrDefault(t => t.CalculatedColumns.Count == 0)
+                    ?? throw new InvalidOperationException("A KPI together with calculated columns was only seen when some table on the primary side of a relationship has none (Excel's H55 and H58); here every such table holds calculated columns, so the table Excel saves again is not known.");
+                kpiTable = again.Id;
+            }
+            var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables);
+            if (facts.TryGetValue(kpiTable, out var saved)) facts[kpiTable] = saved with { DimensionVersion = saved.DimensionVersion + 1 };
+            calc = calc with
+            {
+                Cube = calc.Cube + 1, MeasureGroup = (calc.MeasureGroup ?? calc.Cube) + 1, Tables = facts,
+                Script = calc.Script + ScriptEdits(),
+            };
+        }
         var now = DateTime.UtcNow;
         // Excel names the database with 20 upper-case hex digits. A GUID here loads and pivots fine, but Excel
         // then fails to edit the model (Create Hierarchy -> "ASDetail::OnClone2") once a table has two relationships.
@@ -115,6 +162,8 @@ internal sealed class ModelSerializer
             LinkedTables = _tables.Where(t => t.IsLinked).Select(t => t.Id).ToHashSet(),
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
             Calc = calc,
+            KpiResavedTable = kpiTable,
+            KpiScriptVersion = (_tables.Any(t => t.DateColumn is not null) ? 10 : _hierarchies.Count > 0 ? 9 : 1) + ScriptEdits(),
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);
@@ -175,6 +224,7 @@ internal sealed class ModelSerializer
         {
             if (Info.Calc.CubeInfo) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         }
+        else if (Info.KpiProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         else if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {

@@ -72,6 +72,23 @@ var tests = new (string Name, Action Body)[]
     ("Calculated columns: BLANK run-length entry from 64 rows, bit-packed below (H21, H23)", Tests.CalculatedColumnBlankEncoding),
     ("Calculated columns with a date table: columns on Sales and on Dates (H29 to H32)", Tests.CalculatedColumnsWithDateTable),
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
+    ("KPI: script, annotations and status measures as in Excel's H47, H48 and H49", Tests.KpiScripts),
+    ("KPI: two KPIs in one model (H50)", Tests.KpiTwo),
+    ("KPI: lower is better, the LinearReversed scale (H51)", Tests.KpiReversed),
+    ("KPI: a model without hierarchies (H52)", Tests.KpiPlain),
+    ("KPI: a model with a date table (H53)", Tests.KpiDateTable),
+    ("KPI: a model with hidden columns (H54)", Tests.KpiHidden),
+    ("KPI: a one-table model without relationships (H57)", Tests.KpiOneTable),
+    ("KPI: a calculated column on the primary-side table Products (H58)", Tests.KpiCalculatedOnPrimary),
+    ("KPI: a hidden target measure (H59)", Tests.KpiHiddenTarget),
+    ("KPI: a hidden KPI measure (H60)", Tests.KpiHiddenMeasure),
+    ("KPI: the five icon styles, the gauge with five states (H61)", Tests.KpiIconStyles),
+    ("KPI: the four band layouts with three-state and five-state icons (H62)", Tests.KpiLayouts),
+    ("KPI: own gauge thresholds and Excel's annotation order (H63)", Tests.KpiCustomGaugeThresholds),
+    ("KPI: four KPIs with a plain and a hidden measure beside them (extrapolated)", Tests.KpiMany),
+    ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
+    ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
+    ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
 
 int failed = 0;
@@ -2266,6 +2283,586 @@ namespace PivotWright.Tests
                 return;
             }
             throw new Exception("Expected " + typeof(T).Name + ": " + what);
+        }
+
+        // ---- KPIs (SPEC section 12; Excel's H47, H48, H49) ----
+
+        private const string MeasuresHeader = "----------------------------------------------------------\n-- PowerPivot measures command (do not modify manually) --\n----------------------------------------------------------\n\n\n";
+
+        private static (DataModelWriter model, ModelMeasure total) KpiModel(bool hierarchy = true)
+        {
+            var (model, _, sales) = CalcModel(hierarchy);
+            return (model, sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber));
+        }
+
+        private static ModelReader SaveKpiModel(DataModelWriter model)
+        {
+            var ms = new MemoryStream();
+            model.SaveModelPart(ms);
+            return ModelReader.Read(ms.ToArray());
+        }
+
+        // Texts and annotations of the script, parsed so that the assertions see what Excel sees.
+        private static (List<string> commands, Dictionary<string, Dictionary<string, string>> annotations, List<string> references) KpiScriptParts(ModelReader m)
+        {
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(Encoding.UTF8.GetString(m.Find(@"MdxScript\.\d+\.scr\.xml$")).TrimStart('\uFEFF'));
+            var commands = doc.GetElementsByTagName("Command").Cast<System.Xml.XmlNode>().Select(c => c["Text"]!.InnerText).ToList();
+            var annotations = new Dictionary<string, Dictionary<string, string>>();
+            var references = new List<string>();
+            foreach (System.Xml.XmlNode cp in doc.GetElementsByTagName("CalculationProperty"))
+            {
+                string reference = cp["CalculationReference"]!.InnerText;
+                references.Add(reference);
+                var map = new Dictionary<string, string>();
+                foreach (System.Xml.XmlNode a in cp["Annotations"]?.ChildNodes ?? doc.CreateElement("x").ChildNodes) map[a["Name"]!.InnerText] = a["Value"]!.InnerText.Trim();
+                annotations[reference] = map;
+            }
+            return (commands, annotations, references);
+        }
+
+        public static void KpiScripts()
+        {
+            // H47: a target of 1000, the default thresholds (400 and 800) and Traffic Light - Single.
+            {
+                var (model, total) = KpiModel();
+                using (model)
+                {
+                    var kpi = total.AddKpi(1000);
+                    Check.True(ReferenceEquals(kpi, total.Kpi), "Kpi property");
+                    Check.Equal("KPI of 'Sales'[Total Qty]", kpi.ToString(), "ToString");
+                    var (commands, ann, refs) = KpiScriptParts(SaveKpiModel(model));
+                    Check.Equal(2, commands.Count, "header command and the measure's");
+                    Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=SUM(Sales[Qty]);\nCREATE MEASURE 'Sales'[_Total Qty Goal] = 1000; \nCREATE MEASURE 'Sales'[_Total Qty Status] = if(ISBLANK('Sales'[Total Qty]),BLANK(),\n                    If('Sales'[Total Qty]<400,-1,\n\t                If('Sales'[Total Qty]<800,0,1)\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Qty] AS Measures.[Total Qty], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Qty Goal], STATUS = Measures.[_Total Qty Status], STATUS_GRAPHIC = 'Traffic Light - Single';\n",
+                        commands[1], "H47 command");
+                    Check.Equal("[Total Qty]|[_Total Qty Goal]|[_Total Qty Status]|KPIs.[Total Qty]|Measures.[__XL_Count of Models]", string.Join("|", refs), "calculation properties");
+                    var a = ann["[Total Qty]"];
+                    Check.Equal("Kpi", a["Type"], "Type");
+                    Check.Equal("StaticValue", a["GoalType"], "GoalType");
+                    Check.Equal("1000", a["GoalValue"], "GoalValue");
+                    Check.Equal("Linear", a["KpiStatusType"], "KpiStatusType");
+                    Check.Equal("Absolute", a["KpiThresholdType"], "KpiThresholdType");
+                    Check.Equal("Ascending", a["KpiThresholdOrdering"], "KpiThresholdOrdering");
+                    Check.Equal("2", a["KpiThresholdCount"], "KpiThresholdCount");
+                    Check.Equal("400", a["KpiThreshold_0"], "threshold 0");
+                    Check.Equal("800", a["KpiThreshold_1"], "threshold 1");
+                    Check.True(!a.ContainsKey("GoalMeasure"), "no goal measure");
+                    Check.Equal("SupportMdx", ann["[_Total Qty Goal]"]["Type"], "goal support measure");
+                    Check.Equal("Total Qty", ann["[_Total Qty Status]"]["MainObjectName"], "status support measure");
+                    Check.Equal("SupportKpi", ann["KPIs.[Total Qty]"]["Type"], "KPI support entry");
+                }
+            }
+            // H48: the target is the measure Target Qty; value / target against fractions, thresholds stored as percentages.
+            {
+                var (model, total) = KpiModel();
+                using (model)
+                {
+                    var target = model.Tables["Sales"].AddMeasure("Target Qty", "1000");
+                    var kpi = total.AddKpi(target);
+                    Check.True(ReferenceEquals(target, kpi.TargetMeasure) && kpi.Target is null, "target measure");
+                    var (commands, ann, refs) = KpiScriptParts(SaveKpiModel(model));
+                    Check.Equal(3, commands.Count, "header, Target Qty and Total Qty");
+                    Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Target Qty]=1000;\n", commands[1], "measures are listed by name");
+                    Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=SUM(Sales[Qty]);\nCREATE MEASURE 'Sales'[_Total Qty Goal] = 'Sales'[Target Qty]; \nCREATE MEASURE 'Sales'[_Total Qty Status] = if(ISBLANK('Sales'[Total Qty]/'Sales'[_Total Qty Goal]),BLANK(),\n                    If('Sales'[Total Qty]/'Sales'[_Total Qty Goal]<0.4,-1,\n\t                If('Sales'[Total Qty]/'Sales'[_Total Qty Goal]<0.8,0,1)\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Qty] AS Measures.[Total Qty], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Qty Goal], STATUS = Measures.[_Total Qty Status], STATUS_GRAPHIC = 'Traffic Light - Single';\n",
+                        commands[2], "H48 command");
+                    Check.Equal("[Target Qty]|[Total Qty]|[_Total Qty Goal]|[_Total Qty Status]|KPIs.[Total Qty]|Measures.[__XL_Count of Models]", string.Join("|", refs), "calculation properties");
+                    var a = ann["[Total Qty]"];
+                    Check.Equal("Measure", a["GoalType"], "GoalType");
+                    Check.True(!a.ContainsKey("GoalValue"), "no fixed goal");
+                    Check.Equal("Percentage", a["KpiThresholdType"], "KpiThresholdType");
+                    Check.Equal("40", a["KpiThreshold_0"], "threshold 0");
+                    Check.Equal("80", a["KpiThreshold_1"], "threshold 1");
+                    Check.Equal("Target Qty", a["GoalMeasure"], "GoalMeasure");
+                    Check.Equal("Sales", a["GoalMeasureTableName"], "GoalMeasureTableName");
+                }
+            }
+            // H49: the Centered scale (five bands) with the Road Signs icons; the defaults are 340, 670, 1330 and 1660 for a target of 1000.
+            {
+                var (model, total) = KpiModel();
+                using (model)
+                {
+                    var kpi = total.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
+                    Check.Equal("Road Signs", kpi.IconStyle.Name, "icon style");
+                    var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                    Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=SUM(Sales[Qty]);\nCREATE MEASURE 'Sales'[_Total Qty Goal] = 1000; \nCREATE MEASURE 'Sales'[_Total Qty Status] = if(ISBLANK('Sales'[Total Qty]),BLANK(),\n                If('Sales'[Total Qty]<670,\n\t                If('Sales'[Total Qty]<340,-1,0),\n\t                If('Sales'[Total Qty]<1330,1,\n\t\t                If('Sales'[Total Qty]<1660,0,-1)\n\t                )\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Qty] AS Measures.[Total Qty], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Qty Goal], STATUS = Measures.[_Total Qty Status], STATUS_GRAPHIC = 'Road Signs';\n",
+                        commands[1], "H49 command");
+                    var a = ann["[Total Qty]"];
+                    Check.Equal("Centered", a["KpiStatusType"], "KpiStatusType");
+                    Check.Equal("4", a["KpiThresholdCount"], "KpiThresholdCount");
+                    Check.Equal("340|670|1330|1660", string.Join("|", Enumerable.Range(0, 4).Select(i => a["KpiThreshold_" + i])), "thresholds");
+                }
+            }
+            // Own thresholds are fractions of the target.
+            {
+                var (model, total) = KpiModel();
+                using (model)
+                {
+                    total.AddKpi(2500, new KpiOptions { Thresholds = new[] { 0.5, 0.9 } });
+                    var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                    Check.Equal("1250", ann["[Total Qty]"]["KpiThreshold_0"], "0.5 of 2500");
+                    Check.Equal("2250", ann["[Total Qty]"]["KpiThreshold_1"], "0.9 of 2500");
+                    Check.True(commands[1].Contains("= 2500; \n") && commands[1].Contains("<1250,-1,") && commands[1].Contains("<2250,0,1)"), "script");
+                }
+            }
+        }
+
+        // H59: the target measure of the KPI is hidden. The markup is that of any hidden measure; the hide is one more script edit (12, H48 has 11).
+        public static void KpiHiddenTarget()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var target = model.Tables["Sales"].AddMeasure("Target Qty", "1000");
+                target.IsHidden = true;
+                total.AddKpi(target);
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal("True", ann["[Target Qty]"]["IsPrivate"], "target hidden");
+                Check.True(Encoding.UTF8.GetString(m.Find(@"MdxScript\.12\.scr\.xml$")).Contains("<CalculationReference>[Target Qty]</CalculationReference><CalculationType>Member</CalculationType><Description/><Visible>false</Visible>"), "Visible=false as in H59");
+                Check.Equal("False", ann["[Total Qty]"]["IsPrivate"], "KPI measure visible");
+                Check.True(commands[2].Contains("_Total Qty Goal] = 'Sales'[Target Qty]; "), "goal refers to the hidden target");
+                Check.Equal(6, refs.Count, "calculation properties");
+                Encoding.UTF8.GetString(m.Find(@"MdxScript\.12\.scr\.xml$"));
+                Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+            }
+        }
+
+        // H61: one KPI per icon style Excel offers. The four three-state styles are written like H47; the gauge has five states (-2 to 2),
+        // four thresholds and the status type Linear.
+        public static void KpiIconStyles()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var sales = model.Tables["Sales"];
+                for (int i = 0; i < 4; i++)
+                    sales.AddMeasure("Style 0" + (i + 1), (i + 1).ToString()).AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.All[i] });
+                var gauge = sales.AddMeasure("Style 05", "5").AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending });
+                Check.Equal("0.2,0.4,0.6,0.8", string.Join(",", gauge.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "gauge defaults");
+                var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                string[] graphics = { "Traffic Light - Single", "Road Signs", "Traffic Light", "Shapes", "Gauge - Ascending" };
+                for (int i = 0; i < 5; i++)
+                    Check.True(commands.Any(c => c.Contains($"CREATE KPI CURRENTCUBE.[Style 0{i + 1}] AS") && c.Contains($"STATUS_GRAPHIC = '{graphics[i]}';")), "graphic " + graphics[i]);
+                Check.Equal("Linear", ann["[Style 05]"]["KpiStatusType"], "the gauge layout is Linear");
+                Check.Equal("4", ann["[Style 05]"]["KpiThresholdCount"], "four thresholds");
+                Check.Equal("200|400|600|800", string.Join("|", Enumerable.Range(0, 4).Select(i => ann["[Style 05]"]["KpiThreshold_" + i])), "thresholds");
+                Check.Equal("2", ann["[Style 04]"]["KpiThresholdCount"], "three-state styles keep two thresholds");
+                string gaugeCommand = commands.First(c => c.Contains("[Style 05]"));
+                Check.True(gaugeCommand.Contains("CREATE MEASURE 'Sales'[_Style 05 Status] = if(ISBLANK('Sales'[Style 05]),BLANK(),\n                If('Sales'[Style 05]<400,\n\t                If('Sales'[Style 05]<200,-2,-1),\n\t                If('Sales'[Style 05]<600,0,\n\t\t                If('Sales'[Style 05]<800,1,2)\n\t                )\n                )\n            )\n            ; \n"), "H61 gauge status");
+            }
+        }
+
+        // H63: a gauge from scratch with own thresholds (110, 475, 710, 1030 of 1000); the thresholds are the fractions times the target.
+        public static void KpiCustomGaugeThresholds()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var t = model.CreateTable("Table1", new[] { new ColumnDefinition("Value", ColumnDataType.Int64) });
+            for (int i = 1; i <= 5; i++) t.AddRow(i * 100);
+            t.AddMeasure("Val", "SUM(Table1[Value])").AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending, Thresholds = new[] { 0.11, 0.475, 0.71, 1.03 } });
+            var m = SaveKpiModel(model);
+            var (commands, ann, _) = KpiScriptParts(m);
+            Check.Equal(MeasuresHeader + "CREATE MEASURE 'Table1'[Val]=SUM(Table1[Value]);\nCREATE MEASURE 'Table1'[_Val Goal] = 1000; \nCREATE MEASURE 'Table1'[_Val Status] = if(ISBLANK('Table1'[Val]),BLANK(),\n                If('Table1'[Val]<475,\n\t                If('Table1'[Val]<110,-2,-1),\n\t                If('Table1'[Val]<710,0,\n\t\t                If('Table1'[Val]<1030,1,2)\n\t                )\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Val] AS Measures.[Val], ASSOCIATED_MEASURE_GROUP = 'Table1', GOAL = Measures.[_Val Goal], STATUS = Measures.[_Val Status], STATUS_GRAPHIC = 'Gauge - Ascending';\n",
+                commands[1], "H63 command");
+            Check.Equal("110|475|710|1030", string.Join("|", Enumerable.Range(0, 4).Select(i => ann["[Val]"]["KpiThreshold_" + i])), "thresholds");
+            // Excel's order of the annotations: two thresholds, the descriptions, the other thresholds.
+            string script = Encoding.UTF8.GetString(m.Find(@"MdxScript\.\d+\.scr\.xml$"));
+            var order = System.Text.RegularExpressions.Regex.Matches(script, @"<Name>(KpiThreshold_\d|\w+Description)</Name>").Select(x => x.Groups[1].Value).ToList();
+            Check.Equal("KpiThreshold_0|KpiThreshold_1|ValueDescription|GoalDescription|StatusDescription|TrendDescription|KpiThreshold_2|KpiThreshold_3", string.Join("|", order), "annotation order as in H49, H61, H62 and H63");
+        }
+
+        // H62: the four layouts not seen before, on measures of the Products table. CenteredReversed with three-state icons negates the Centered values;
+        // the gauge reversed negates its linear ones; the centered gauge has eight thresholds and nine bands (-2 up to 2 and back).
+        public static void KpiLayouts()
+        {
+            var (model, _) = KpiModel();
+            using (model)
+            {
+                var products = model.Tables["Products"];
+                products.AddMeasure("Layout A", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed });
+                products.AddMeasure("Layout B", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, IconStyle = KpiIconStyle.GaugeAscending });
+                products.AddMeasure("Layout C", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.GaugeAscending });
+                var d = products.AddMeasure("Layout D", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending });
+                Check.Equal("0.2,0.4,0.6,0.8,1.2,1.4,1.6,1.8", string.Join(",", d.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "centered gauge defaults");
+                var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                string StatusOf(string name) { string c = commands.First(c => c.Contains("CREATE KPI CURRENTCUBE.[" + name + "]")); int i = c.IndexOf("Status] =", StringComparison.Ordinal); return c[i..c.IndexOf("CREATE KPI", StringComparison.Ordinal)]; }
+                Check.Equal("Status] = if(ISBLANK('Products'[Layout A]),BLANK(),\n                If('Products'[Layout A]<670,\n\t                If('Products'[Layout A]<340,1,0),\n\t                If('Products'[Layout A]<1330,-1,\n\t\t                If('Products'[Layout A]<1660,0,1)\n\t                )\n                )\n            )\n            ; \n", StatusOf("Layout A"), "H62 layout A");
+                Check.Equal("Status] = if(ISBLANK('Products'[Layout B]),BLANK(),\n                If('Products'[Layout B]<400,\n\t                If('Products'[Layout B]<200,2,1),\n\t                If('Products'[Layout B]<600,0,\n\t\t                If('Products'[Layout B]<800,-1,-2)\n\t                )\n                )\n            )\n            ; \n", StatusOf("Layout B"), "H62 layout B");
+                Check.Equal("Status] = if(ISBLANK('Products'[Layout D]),BLANK(),\n                If('Products'[Layout D]<800,\n\t                If('Products'[Layout D]<400,\n\t\t                If('Products'[Layout D]<200,2,1),\n\t\t                    If('Products'[Layout D]<600,0,-1)\n\t                    ),\n\t                    If('Products'[Layout D]<1400,\n\t\t                    If('Products'[Layout D]<1200,-2,-1),\n\t\t                        If('Products'[Layout D]<1600,0,\n\t\t\t                        If('Products'[Layout D]<1800,1,2)\n\t\t                )\n\t                )\n                )\n            )\n            ; \n", StatusOf("Layout D"), "H62 layout D");
+                Check.True(StatusOf("Layout C").Contains("If('Products'[Layout C]<200,-2,-1)") && StatusOf("Layout C").Contains("If('Products'[Layout C]<1200,2,1)") && StatusOf("Layout C").Contains("If('Products'[Layout C]<1800,-1,-2)"), "H62 layout C: the values rise to 2 and fall again");
+                Check.Equal("CenteredReversed", ann["[Layout A]"]["KpiStatusType"], "type A");
+                Check.Equal("LinearReversed", ann["[Layout B]"]["KpiStatusType"], "type B");
+                Check.Equal("4", ann["[Layout B]"]["KpiThresholdCount"], "four thresholds for the reversed gauge");
+                Check.Equal("8", ann["[Layout C]"]["KpiThresholdCount"], "eight thresholds for the centered gauge");
+                Check.Equal("1800", ann["[Layout D]"]["KpiThreshold_7"], "last threshold");
+            }
+        }
+
+        // Extrapolated: four KPIs with a plain measure and a hidden target beside them (`datagen ... kpimany`). The script version counts KPIs (4),
+        // measures beyond the first (5) and hidden measures (1) on top of 9.
+        public static void KpiMany()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var sales = model.Tables["Sales"];
+                total.AddKpi(1000);
+                var target = sales.AddMeasure("Target Amount", "30000");
+                target.IsHidden = true;
+                sales.AddMeasure("Total Amount", "SUM(Sales[Amount])").AddKpi(target, new KpiOptions { Scale = KpiScale.Centered });
+                sales.AddMeasure("Sales Rows", "COUNTROWS(Sales)").AddKpi(1200, new KpiOptions { Scale = KpiScale.LinearReversed, Thresholds = new[] { 0.5, 0.9 } });
+                sales.AddMeasure("Average Qty", "AVERAGE(Sales[Qty])").AddKpi(3, new KpiOptions { Scale = KpiScale.Centered, Thresholds = new[] { 0.5, 0.8, 1.2, 1.5 } });
+                sales.AddMeasure("Max Amount", "MAX(Sales[Amount])");
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal(6, commands.Count - 1, "one command per measure");
+                // Measures without a KPI first, then the KPI measures in the order created.
+                Check.Equal("[Target Amount]|[Max Amount]|[Total Qty]", string.Join("|", refs.Take(3)), "plain measures first");
+                Check.Equal(4, refs.Count(r => r.StartsWith("KPIs.[", StringComparison.Ordinal)), "four KPI entries");
+                Check.Equal(1, refs.Count(r => r == "Measures.[__XL_Count of Models]"), "default member once");
+                Check.Equal("Percentage", ann["[Total Amount]"]["KpiThresholdType"], "measure target");
+                Check.Equal("Absolute", ann["[Sales Rows]"]["KpiThresholdType"], "fixed target");
+                Check.Equal("600", ann["[Sales Rows]"]["KpiThreshold_0"], "0.5 of 1200");
+                Check.Equal("1080", ann["[Sales Rows]"]["KpiThreshold_1"], "0.9 of 1200");
+                Check.Equal("LinearReversed", ann["[Sales Rows]"]["KpiStatusType"], "reversed");
+                Check.Equal("1.5", ann["[Average Qty]"]["KpiThreshold_0"], "0.5 of 3");
+                Check.Equal("4.5", ann["[Average Qty]"]["KpiThreshold_3"], "1.5 of 3");
+                Check.Equal(0, commands.Count(c => c.Contains("CREATE MEASURE") && c.Contains("Max Amount") && c.Contains("CREATE KPI")), "no KPI on the plain measure");
+                Encoding.UTF8.GetString(m.Find(@"MdxScript\.19\.scr\.xml$"));
+                Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+                Encoding.UTF8.GetString(m.Find(@"Products_G\.6\.dim\.xml$"));
+            }
+        }
+
+        // H60: the KPI measure itself is hidden: the markup of a hidden measure on the base measure, the script one edit further (11).
+        public static void KpiHiddenMeasure()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000);
+                total.IsHidden = true;
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal("True", ann["[Total Qty]"]["IsPrivate"], "measure hidden");
+                Check.Equal("Kpi", ann["[Total Qty]"]["Type"], "still a KPI");
+                Check.True(Encoding.UTF8.GetString(m.Find(@"MdxScript\.11\.scr\.xml$")).Contains("<CalculationReference>[Total Qty]</CalculationReference><CalculationType>Member</CalculationType><Description/><Visible>false</Visible>"), "Visible=false as in H60");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+            }
+        }
+
+        // H58: the KPI on top of a calculated column on Products. Products holds the column, so Excel saved the next primary-side table, Dates.
+        public static void KpiCalculatedOnPrimary()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+            for (int i = 0; i < 60; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture)); }
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i % 60), 1 + i % 5);
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            model.AddRelationship(sales["Date"], dates["Date"]);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            dates.AddHierarchy("Calendar", "Year", "Month");
+            products.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+            var m = SaveKpiModel(model);
+            string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            var (commands, _, refs) = KpiScriptParts(m);
+            Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script");
+            Check.Equal(5, refs.Count, "calculation properties");
+            Check.True(Text(@"Model\.24\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.11.scr.xml</AssemblyFileList>"), "cube 24 and script 11 (the column alone gives 23 and 10)");
+            Text(@"\.cub\\info\.24\.xml$");
+            Check.True(!Text(@"Dates_G\.6\.dim\.xml$").Contains("<Value/>"), "Dates is the table saved again");
+            Text(@"Products_G\.9\.dim\.xml$");
+            Text(@"Sales_G\.3\.dim\.xml$");
+        }
+
+        // H57: the same KPI in a one-table model without relationships; every counter one step up from that model's own base.
+        public static void KpiOneTable()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, 1 + i % 5);
+            sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+            var m = SaveKpiModel(model);
+            string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            var (commands, _, refs) = KpiScriptParts(m);
+            Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as with relationships");
+            Check.Equal(5, refs.Count, "calculation properties");
+            Check.True(Text(@"Model\.2\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.2.scr.xml</AssemblyFileList>"), "cube and script version 2");
+            Text(@"\.cub\\info\.2\.xml$");
+            Text(@"Sales_G\.2\.det\.xml$");
+            Check.True(!Text(@"Sales_G\.2\.dim\.xml$").Contains("<Value/>"), "the only table is saved again: empty annotation values dropped");
+        }
+
+        // H55 and H56: the KPI on top of a calculated column on the many-side table. Excel calculated the column while it created the
+        // KPI; the library writes it uncalculated, so only the KPI step (one up from the calculated-column numbers) is expected.
+        public static void KpiCalculated()
+        {
+            ModelReader Save(bool workbook)
+            {
+                var (model, total) = KpiModel();
+                using (model)
+                {
+                    model.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    total.AddKpi(1000);
+                    if (!workbook) return SaveKpiModel(model);
+                    string path = Path.Combine(Path.GetTempPath(), "kpi_calc_" + Guid.NewGuid().ToString("N") + ".xlsx");   // the trigger table is added when a workbook is saved
+                    try { model.Save(path); return ModelReader.Read(ModelReader.ItemData(path)); }
+                    finally { File.Delete(path); }
+                }
+            }
+            foreach (bool workbook in new[] { false, true })
+            {
+                var m = Save(workbook);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as without the column");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Check.True(Text(@"Model\.26\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.12.scr.xml</AssemblyFileList>"), "cube 26 and script 12 (the column alone gives 25 and 11)");
+                Text(@"\.cub\\info\.26\.xml$");
+                Text(@"Sales_G\.26\.det\.xml$");
+                Text(@"Products_G\.26\.det\.xml$");
+                Text(@"Products_G\.7\.dim\.xml$");
+                Text(@"Sales_G\.7\.dim\.xml$");
+                Check.True(Text(@"Sales_G\.7\.dim\.xml$").Contains("<Expression>[Qty]*[Amount]</Expression>"), "the column stays a formula");
+                Check.Equal(workbook ? 1 : 0, m.Files.Keys.Count(k => k.Contains("PivotWrightTrigger") && k.EndsWith(".dim.xml", StringComparison.Ordinal)), "trigger table only in the workbook");
+            }
+        }
+
+        // H54: the same KPI in a model with a hidden column and hierarchies; every counter one step up from that model's own base.
+        public static void KpiHidden()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                model.Tables["Sales"]["Qty"].IsHidden = true;
+                total.AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as without hidden columns");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Check.True(Text(@"Model\.22\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.10.scr.xml</AssemblyFileList>"), "cube 22 and script 10");
+                Text(@"\.cub\\info\.22\.xml$");
+                Text(@"Sales_G\.21\.det\.xml$");
+                Text(@"Products_G\.21\.det\.xml$");
+                Text(@"Products_G\.6\.dim\.xml$");
+                Text(@"Sales_G\.4\.dim\.xml$");
+                Check.True(!Text(@"Products_G\.6\.dim\.xml$").Contains("<Value/>"), "saved dimension drops the empty annotation values");
+            }
+        }
+
+        // H53: the same KPI in a model with a date table; every counter one step up from that model's own base.
+        public static void KpiDateTable()
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            using (model)
+            {
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                for (int i = 0; i < 60; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture)); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i % 60), 1 + i % 5);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(sales["Date"], dates["Date"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                dates.MarkAsDateTable("Date");
+                sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as without a date table");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Check.True(Text(@"Model\.22\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.11.scr.xml</AssemblyFileList>"), "cube 22 and script 11");
+                Text(@"\.cub\\info\.22\.xml$");
+                Text(@"Products_G\.7\.dim\.xml$");
+                Text(@"Dates_G\.6\.dim\.xml$");
+                Text(@"Sales_G\.4\.dim\.xml$");
+                Text(@"Sales_G\.22\.det\.xml$");
+                Text(@"Sales_G\.10\.prt\.xml$");
+                Check.True(!Text(@"Products_G\.7\.dim\.xml$").Contains("<Value/>"), "saved dimension drops the empty annotation values");
+            }
+        }
+
+        // H52: the same KPI in a model without hierarchies; every counter one step up from that model's own base.
+        public static void KpiPlain()
+        {
+            var (model, total) = KpiModel(hierarchy: false);
+            using (model)
+            {
+                total.AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as with hierarchies");
+                Check.Equal("[Total Qty]|[_Total Qty Goal]|[_Total Qty Status]|KPIs.[Total Qty]|Measures.[__XL_Count of Models]", string.Join("|", refs), "calculation properties");
+                Check.True(Text(@"Model\.2\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.2.scr.xml</AssemblyFileList>"), "cube and script version 2");
+                Check.True(Text(@"Model\.2\.cub\.xml$").Contains("<StructureVersion>0</StructureVersion>"), "cube structure as before");
+                Text(@"\.cub\\info\.2\.xml$");
+                Text(@"Products_G\.2\.dim\.xml$");
+                Text(@"Sales_G\.2\.dim\.xml$");
+                Text(@"Sales_G\.2\.det\.xml$");
+                Text(@"Sales_G\.1\.prt\.xml$");
+                Check.True(!Text(@"Products_G\.2\.dim\.xml$").Contains("<Value/>"), "saved dimension drops the empty annotation values");
+            }
+        }
+
+        // H51: lower is better. Only KpiStatusType (LinearReversed) and the status values change; thresholds and ordering stay.
+        public static void KpiReversed()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed });
+                var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=SUM(Sales[Qty]);\nCREATE MEASURE 'Sales'[_Total Qty Goal] = 1000; \nCREATE MEASURE 'Sales'[_Total Qty Status] = if(ISBLANK('Sales'[Total Qty]),BLANK(),\n                    If('Sales'[Total Qty]<400,1,\n\t                If('Sales'[Total Qty]<800,0,-1)\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Qty] AS Measures.[Total Qty], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Qty Goal], STATUS = Measures.[_Total Qty Status], STATUS_GRAPHIC = 'Traffic Light - Single';\n",
+                    commands[1], "H51 command");
+                var a = ann["[Total Qty]"];
+                Check.Equal("LinearReversed", a["KpiStatusType"], "KpiStatusType");
+                Check.Equal("Ascending", a["KpiThresholdOrdering"], "ordering stays Ascending");
+                Check.Equal("2", a["KpiThresholdCount"], "two thresholds");
+                Check.Equal("400", a["KpiThreshold_0"], "threshold 0");
+                Check.Equal("800", a["KpiThreshold_1"], "threshold 1");
+            }
+        }
+
+        // H50: a second KPI changes only the script (version 12 with the extra measure); measures keep the order added.
+        public static void KpiTwo()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000);
+                model.Tables["Sales"].AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000);
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal(3, commands.Count, "header and two measures");
+                Check.True(commands[1].StartsWith(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=", StringComparison.Ordinal), "first KPI first");
+                Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Amount]=Sum(Sales[Amount]);\nCREATE MEASURE 'Sales'[_Total Amount Goal] = 10000; \nCREATE MEASURE 'Sales'[_Total Amount Status] = if(ISBLANK('Sales'[Total Amount]),BLANK(),\n                    If('Sales'[Total Amount]<4000,-1,\n\t                If('Sales'[Total Amount]<8000,0,1)\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Amount] AS Measures.[Total Amount], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Amount Goal], STATUS = Measures.[_Total Amount Status], STATUS_GRAPHIC = 'Traffic Light - Single';\n",
+                    commands[2], "H50 second command");
+                Check.Equal("[Total Qty]|[_Total Qty Goal]|[_Total Qty Status]|KPIs.[Total Qty]|[Total Amount]|[_Total Amount Goal]|[_Total Amount Status]|KPIs.[Total Amount]|Measures.[__XL_Count of Models]", string.Join("|", refs), "properties, default member once");
+                Check.Equal("4000", ann["[Total Amount]"]["KpiThreshold_0"], "second thresholds");
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                Text(@"MdxScript\.12\.scr\.xml$");
+                Text(@"Model\.19\.cub\.xml$");
+                Text(@"Products_G\.6\.dim\.xml$");
+            }
+        }
+
+        public static void KpiProfile()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                // The hierarchy model one edit further on: cube, measure groups and script one step up, the primary side of the first
+                // relationship saved again (empty annotation values dropped) at version 6, the other dimensions and the partitions as before.
+                Check.True(Text(@"Model\.19\.cub\.xml$").Contains("<ObjectVersion>19</ObjectVersion>"), "cube version");
+                Check.True(Text(@"Model\.19\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.10.scr.xml</AssemblyFileList>"), "script file");
+                Check.True(Text(@"Model\.19\.cub\.xml$").Contains("<Kpis/>"), "the cube lists no KPIs: they live in the script");
+                Check.True(Text(@"Model\.19\.cub\.xml$").Contains("<StructureVersion>11</StructureVersion>"), "cube structure as before");
+                Text(@"\.cub\\info\.19\.xml$");
+                Text(@"Products_G\.19\.det\.xml$");
+                Text(@"Sales_G\.19\.det\.xml$");
+                Text(@"Sales_G\.9\.prt\.xml$");
+                Text(@"Sales_G\.3\.dim\.xml$");
+                string products = Text(@"Products_G\.6\.dim\.xml$");
+                Check.True(!products.Contains("<Value/>"), "the saved dimension drops the empty annotation values");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Products_[0-9a-f-]+\.5\.dim\.xml$")), "no old Products dimension");
+                var mgOrder = System.Text.RegularExpressions.Regex.Match(Text(@"Model\.19\.cub\.xml$"), "<MeasureGroupFileList>(.*?)</MeasureGroupFileList>").Groups[1].Value.Split(';').Select(x => x[..x.IndexOf('.')]).ToList();
+                Check.Equal(string.Join(";", mgOrder.OrderBy(x => x, StringComparer.Ordinal)), string.Join(";", mgOrder), "measure groups listed by id");
+            }
+            // Without a KPI the counters stay those of the hierarchy model.
+            var (plainModel, _) = KpiModel();
+            using (plainModel)
+            {
+                var m = SaveKpiModel(plainModel);
+                m.Find(@"Model\.18\.cub\.xml$");
+                m.Find(@"MdxScript\.9\.scr\.xml$");
+                Check.Equal(0, m.Files.Keys.Count(k => k.Contains("__XL_Count") && k.Contains("KPIs")), "nothing KPI-related");
+                Check.True(!Encoding.UTF8.GetString(m.Find(@"MdxScript\.9\.scr\.xml$")).Contains("CalculationReference>Measures.[__XL_Count"), "no default member property without a KPI");
+            }
+        }
+
+        public static void KpiValidation()
+        {
+            // AddKpi
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var sales = model.Tables["Sales"];
+                var other = model.Tables["Products"].AddMeasure("Rows", "COUNTROWS(Products)");
+                Throws<ArgumentOutOfRangeException>(() => total.AddKpi(0), "zero target", "positive");
+                Throws<ArgumentOutOfRangeException>(() => total.AddKpi(-5), "negative target", "positive");
+                Throws<ArgumentOutOfRangeException>(() => total.AddKpi(double.NaN), "NaN target", "'Sales'[Total Qty]");
+                Throws<ArgumentNullException>(() => total.AddKpi((ModelMeasure)null!), "null target measure");
+                Throws<ArgumentException>(() => total.AddKpi(total), "the measure itself", "itself");
+                using (var foreign = new DataModelWriter())
+                {
+                    var t = foreign.AddTable("Sales", new[] { new { Qty = 1L } });
+                    Throws<ArgumentException>(() => total.AddKpi(t.AddMeasure("X", "1")), "measure of another model", "another DataModelWriter");
+                }
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Thresholds = new[] { 0.4, 0.8, 1.2 } }), "three thresholds for Linear", "2 thresholds");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, Thresholds = new[] { 0.4 } }), "one threshold for LinearReversed", "2 thresholds");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, Thresholds = new[] { 0.4, 0.8 } }), "two thresholds for Centered", "4 thresholds");
+                Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.8, 0.4 } }, "descending thresholds", "ascending");
+                Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.0, 0.4 } }, "zero threshold", "positive");
+                Throws<ArgumentOutOfRangeException>(() => new KpiOptions { Scale = (KpiScale)7 }, "scale out of range");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending, Thresholds = new[] { 0.4, 0.8 } }), "the gauge needs four thresholds", "takes 4 thresholds");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending, Thresholds = new[] { 0.2, 0.4, 0.6, 0.8 } }), "the centered gauge needs eight thresholds", "takes 8 thresholds");
+                Check.True(total.Kpi is null, "failed calls change nothing");
+                var kpi = total.AddKpi(1000);
+                Check.Equal("0.4,0.8", string.Join(",", kpi.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "default thresholds");
+                Check.Equal("Traffic Light - Single", kpi.IconStyle.Name, "default icon style");
+                Throws<InvalidOperationException>(() => total.AddKpi(2000), "second KPI on a measure", "already has a KPI");
+                Check.Equal(1000.0, kpi.Target!.Value, "the first KPI stays");
+                // Save: one KPI per model
+            }
+            // Save: shapes no Excel sample shows
+            {
+                var (m, t) = KpiModel();
+                using (m)
+                {
+                    t.AddKpi(1000);
+                    m.Tables["Products"].AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                    m.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "every primary-side table holds columns", "none");
+                }
+            }
+            {
+                var (m, t) = KpiModel();
+                using (m)
+                {
+                    t.AddKpi(1000);
+                    t.IsHidden = true;
+                    m.SaveModelPart(new MemoryStream());
+                }
+            }
+            {
+                var (m, t) = KpiModel();
+                using (m)
+                {
+                    t.AddKpi(1000);
+                    m.Tables["Sales"]["Qty"].IsHidden = true;
+                    m.SaveModelPart(new MemoryStream());
+                }
+            }
+            {
+                var (m, t) = KpiModel();
+                using (m)
+                {
+                    t.AddKpi(1000);
+                    m.Tables["Sales"].AddMeasure("_total qty goal", "1");
+                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "a measure named like the hidden goal measure", "_Total Qty Goal");
+                }
+            }
         }
 
         public static void ApiTableHandles()
