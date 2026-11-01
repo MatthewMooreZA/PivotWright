@@ -78,6 +78,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a model without hierarchies (H52)", Tests.KpiPlain),
     ("KPI: a model with a date table (H53)", Tests.KpiDateTable),
     ("KPI: a model with hidden columns (H54)", Tests.KpiHidden),
+    ("KPI: a one-table model without relationships (H57)", Tests.KpiOneTable),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
@@ -2396,6 +2397,24 @@ namespace PivotWright.Tests
                     Check.True(commands[1].Contains("= 2500; \n") && commands[1].Contains("<1250,-1,") && commands[1].Contains("<2250,0,1)"), "script");
                 }
             }
+        }
+
+        // H57: the same KPI in a one-table model without relationships; every counter one step up from that model's own base.
+        public static void KpiOneTable()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, 1 + i % 5);
+            sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+            var m = SaveKpiModel(model);
+            string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            var (commands, _, refs) = KpiScriptParts(m);
+            Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as with relationships");
+            Check.Equal(5, refs.Count, "calculation properties");
+            Check.True(Text(@"Model\.2\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.2.scr.xml</AssemblyFileList>"), "cube and script version 2");
+            Text(@"\.cub\\info\.2\.xml$");
+            Text(@"Sales_G\.2\.det\.xml$");
+            Check.True(!Text(@"Sales_G\.2\.dim\.xml$").Contains("<Value/>"), "the only table is saved again: empty annotation values dropped");
         }
 
         // H55 and H56: the KPI on top of a calculated column on the many-side table. Excel calculated the column while it created the

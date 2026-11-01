@@ -64,16 +64,14 @@ internal sealed class ModelSerializer
     }
 
     // A KPI is written the way Excel saves it right after "Create KPI" on a model with relationships, with or without hierarchies with or without a date table and with or without hidden columns
-    // (SPEC section 12, H47 to H54). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
+    // (SPEC section 12, H47 to H57). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
     // saves again, or null without a KPI.
     private string? ValidateKpis()
     {
         var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
         if (withKpi.Count == 0) return null;
         string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
-        string seen = " Excel-written samples exist only for KPIs in a model with relationships (with or without hierarchies, with or without a date table, with or without hidden columns, with calculated columns on the many-side table).";
-        if (_relationships.Count == 0)
-            throw new InvalidOperationException($"The KPI of {name} is in a model without relationships, which was never seen in an Excel-written file. Add a relationship (AddRelationship).{seen}");
+        string seen = " Excel-written samples exist only for KPIs in a model (with or without relationships, with or without hierarchies, with or without a date table, with or without hidden columns, with calculated columns on the many-side table).";
         foreach (var kpiMeasure in withKpi)
         {
             name = $"'{kpiMeasure.Table}'[{kpiMeasure.Name}]";
@@ -86,7 +84,9 @@ internal sealed class ModelSerializer
                 if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
                     throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
         }
-        return _relationships[0].To.Id;
+        // The table Excel saves again: the primary side of the first relationship (H47), or the only table of a model without relationships (H57);
+        // with several tables and no relationship, the table of the KPI measure.
+        return _relationships.Count > 0 ? _relationships[0].To.Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
     }
 
     public void Write(Stream output)
