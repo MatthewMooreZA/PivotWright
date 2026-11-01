@@ -76,6 +76,7 @@ if (rolePlay) salesDefs.Add(Col("Sales", "Ship Date", ColumnDataType.DateTime));
 if (delivery) salesDefs.Add(Col("Sales", "Delivery Date", ColumnDataType.DateTime));
 if (returned) salesDefs.Add(Col("Sales", "Return Date", ColumnDataType.DateTime));
 var s = m.CreateTable("Sales", salesDefs);
+if (rolePlay && args.Skip(3).Contains("hideqty")) s["Qty"].IsHidden = true;   // roleplay hideqty: Sales[Qty] hidden from client tools (the shape of H8)
 int salesRows = args.Select(a => a.StartsWith("rows=") ? int.Parse(a[5..]) : 0).FirstOrDefault(n => n > 0);   // "rows=1100000" for a table of several segments
 if (salesRows == 0) salesRows = 1000;
 for (int i = 0; i < salesRows; i++)
