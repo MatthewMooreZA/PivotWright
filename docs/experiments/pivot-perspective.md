@@ -66,3 +66,9 @@ All on `H66_perspective_hierarchies_manual.xlsx` (the Perspectives dialog lists 
 - `tools/python/add_perspective_connections.py`: H68.
 - `tools/python/pivot_experiment.py`: the PivotTable variants.
 - Samples: `reference/excel-samples/H64`, `H65`, `H66`, `H70`, `H71`, `H72`; files given to Excel: `reference/experiments/`.
+
+## What the web says (searched 2026-11-01; search summaries, not a reading of the full pages)
+
+- Microsoft's own page [Perspectives in Power Pivot](https://support.microsoft.com/en-us/Excel/perspectives-in-power-pivot): a perspective works as a data source only when the workbook is stored on a server (SharePoint with Excel Services); Excel can use the entire model even when a perspective leaves things out. That matches what we found: perspectives are stored in the model and shown in the Perspectives dialog, but a PivotTable on the workbook's own data model has no way to pick one.
+- A Fabric community thread about [a perspective in an on-premises SSAS tabular model](https://community.fabric.microsoft.com/t5/Power-Query/Perspective-in-a-Tabular-Model-recently-broken-for-anyone-else/m-p/11390/highlight/true) shows the working case: connecting to a server model from Excel and choosing the perspective there. That is an Analysis Services connection, which a workbook's embedded model does not offer.
+- No thread complaining about the gap for the embedded model turned up in two further searches (the results were generic Field List troubleshooting). That does not show there are none.
