@@ -63,17 +63,15 @@ internal sealed class ModelSerializer
         }
     }
 
-    // A KPI is written the way Excel saves it right after "Create KPI" on a model with hierarchies, relationships and one measure with a
-    // KPI (SPEC section 12, H47 to H49). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
+    // A KPI is written the way Excel saves it right after "Create KPI" on a model with relationships, with or without hierarchies
+    // (SPEC section 12, H47 to H52). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
     // saves again, or null without a KPI.
     private string? ValidateKpis()
     {
         var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
         if (withKpi.Count == 0) return null;
         string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
-        string seen = " Excel-written samples exist only for KPIs in a model with hierarchies and relationships, without a date table, hidden columns or calculated columns.";
-        if (_hierarchies.Count == 0)
-            throw new InvalidOperationException($"The KPI of {name} is in a model without hierarchies, which was never seen in an Excel-written file. Add a hierarchy (AddHierarchy).{seen}");
+        string seen = " Excel-written samples exist only for KPIs in a model with relationships (with or without hierarchies), without a date table, hidden columns or calculated columns.";
         if (_relationships.Count == 0)
             throw new InvalidOperationException($"The KPI of {name} is in a model without relationships, which was never seen in an Excel-written file. Add a relationship (AddRelationship).{seen}");
         if (_tables.Any(t => t.DateColumn is not null))
@@ -149,7 +147,7 @@ internal sealed class ModelSerializer
             DateReferencingTables = _relationships.Where(r => r.To.DateColumn is not null).Select(r => r.From.Id).ToHashSet(),
             Calc = calc,
             KpiResavedTable = kpiTable,
-            KpiScriptVersion = 9 + _measures.Count(m => m.Kpi is not null) + _measures.Count - 1,
+            KpiScriptVersion = (_hierarchies.Count > 0 ? 9 : 1) + _measures.Count(m => m.Kpi is not null) + _measures.Count - 1,
         };
 
         _abf = new AbfWriter(output, _options.XpressCompression ? new XpressCompressor() : null);

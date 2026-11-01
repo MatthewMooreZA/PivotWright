@@ -71,13 +71,14 @@ internal sealed class ModelInfo
     public string? KpiResavedTable { get; init; }
     public bool KpiProfile => KpiResavedTable is not null;
     /// <summary>
-    /// Script version in the KPI profile: 9 plus one per KPI plus one per measure beyond the first, which fits H47 (10), H48 (11) and H50 (12):
-    /// Excel counts each edit of the script, and the cube, measure groups and dimensions stay at 19 and 6 whatever the number of KPIs.
+    /// Script version in the KPI profile: the model's base (9 with hierarchies, 1 without) plus one per KPI plus one per measure beyond the
+    /// first, which fits H47 (10), H48 (11), H50 (12) and H52 (2, no hierarchies): Excel counts each edit of the script, and the cube, measure
+    /// groups and dimensions stay where the first KPI put them (19 and 6, or 2 and 2 without hierarchies) whatever the number of KPIs.
     /// </summary>
     public int KpiScriptVersion { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => Calc?.Cube ?? (KpiProfile ? 19 : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
+    public int CubeVersion => Calc?.Cube ?? (KpiProfile ? (AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
     public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? 20 : CubeVersion);
     public int ScriptVersion => Calc?.Script ?? (KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);

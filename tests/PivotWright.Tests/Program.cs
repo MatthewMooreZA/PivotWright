@@ -75,6 +75,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: script, annotations and status measures as in Excel's H47, H48 and H49", Tests.KpiScripts),
     ("KPI: two KPIs in one model (H50)", Tests.KpiTwo),
     ("KPI: lower is better, the LinearReversed scale (H51)", Tests.KpiReversed),
+    ("KPI: a model without hierarchies (H52)", Tests.KpiPlain),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
@@ -2394,6 +2395,29 @@ namespace PivotWright.Tests
             }
         }
 
+        // H52: the same KPI in a model without hierarchies; every counter one step up from that model's own base.
+        public static void KpiPlain()
+        {
+            var (model, total) = KpiModel(hierarchy: false);
+            using (model)
+            {
+                total.AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as with hierarchies");
+                Check.Equal("[Total Qty]|[_Total Qty Goal]|[_Total Qty Status]|KPIs.[Total Qty]|Measures.[__XL_Count of Models]", string.Join("|", refs), "calculation properties");
+                Check.True(Text(@"Model\.2\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.2.scr.xml</AssemblyFileList>"), "cube and script version 2");
+                Check.True(Text(@"Model\.2\.cub\.xml$").Contains("<StructureVersion>0</StructureVersion>"), "cube structure as before");
+                Text(@"\.cub\\info\.2\.xml$");
+                Text(@"Products_G\.2\.dim\.xml$");
+                Text(@"Sales_G\.2\.dim\.xml$");
+                Text(@"Sales_G\.2\.det\.xml$");
+                Text(@"Sales_G\.1\.prt\.xml$");
+                Check.True(!Text(@"Products_G\.2\.dim\.xml$").Contains("<Value/>"), "saved dimension drops the empty annotation values");
+            }
+        }
+
         // H51: lower is better. Only KpiStatusType (LinearReversed) and the status values change; thresholds and ordering stay.
         public static void KpiReversed()
         {
@@ -2508,11 +2532,12 @@ namespace PivotWright.Tests
             }
             // Save: shapes no Excel sample shows
             {
-                var (m, t) = KpiModel(hierarchy: false);
+                var (m, t) = KpiModel();
                 using (m)
                 {
                     t.AddKpi(1000);
-                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "no hierarchy", "without hierarchies");
+                    m.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "calculated column", "hidden or calculated");
                 }
             }
             {
