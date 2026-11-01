@@ -76,6 +76,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: two KPIs in one model (H50)", Tests.KpiTwo),
     ("KPI: lower is better, the LinearReversed scale (H51)", Tests.KpiReversed),
     ("KPI: a model without hierarchies (H52)", Tests.KpiPlain),
+    ("KPI: a model with a date table (H53)", Tests.KpiDateTable),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
@@ -2392,6 +2393,40 @@ namespace PivotWright.Tests
                     Check.Equal("2250", ann["[Total Qty]"]["KpiThreshold_1"], "0.9 of 2500");
                     Check.True(commands[1].Contains("= 2500; \n") && commands[1].Contains("<1250,-1,") && commands[1].Contains("<2250,0,1)"), "script");
                 }
+            }
+        }
+
+        // H53: the same KPI in a model with a date table; every counter one step up from that model's own base.
+        public static void KpiDateTable()
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            using (model)
+            {
+                var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+                for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+                var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+                for (int i = 0; i < 60; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture)); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i % 60), 1 + i % 5);
+                model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+                model.AddRelationship(sales["Date"], dates["Date"]);
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                dates.MarkAsDateTable("Date");
+                sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as without a date table");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Check.True(Text(@"Model\.22\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.11.scr.xml</AssemblyFileList>"), "cube 22 and script 11");
+                Text(@"\.cub\\info\.22\.xml$");
+                Text(@"Products_G\.7\.dim\.xml$");
+                Text(@"Dates_G\.6\.dim\.xml$");
+                Text(@"Sales_G\.4\.dim\.xml$");
+                Text(@"Sales_G\.22\.det\.xml$");
+                Text(@"Sales_G\.10\.prt\.xml$");
+                Check.True(!Text(@"Products_G\.7\.dim\.xml$").Contains("<Value/>"), "saved dimension drops the empty annotation values");
             }
         }
 
