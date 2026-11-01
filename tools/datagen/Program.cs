@@ -69,20 +69,24 @@ else
 // roleplay: Sales gets a second date column, "Ship Date", and only Date is related to Dates; Matthew adds the Ship Date relationship in
 // Excel's Diagram View (the base for the role-playing date samples, TODO item 7.1)
 bool rolePlay = args.Length > 2 && args[2] == "roleplay";
+bool delivery = rolePlay && args.Skip(3).Contains("delivery");   // roleplay delivery: a third date column, "Delivery Date", for a second inactive relationship
 var salesDefs = new List<ColumnDefinition> { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) };
 if (rolePlay) salesDefs.Add(Col("Sales", "Ship Date", ColumnDataType.DateTime));
+if (delivery) salesDefs.Add(Col("Sales", "Delivery Date", ColumnDataType.DateTime));
 var s = m.CreateTable("Sales", salesDefs);
 int salesRows = args.Select(a => a.StartsWith("rows=") ? int.Parse(a[5..]) : 0).FirstOrDefault(n => n > 0);   // "rows=1100000" for a table of several segments
 if (salesRows == 0) salesRows = 1000;
 for (int i = 0; i < salesRows; i++)
 {
-    if (rolePlay) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365));
+    if (delivery) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365), new DateTime(2025, 1, 1).AddDays((i + 3 + i % 11) % 365));
+    else if (rolePlay) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365));
     else s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
 }
 var dates = m.Tables["Dates"];
 m.AddRelationship(s["ProductKey"], p["ProductKey"]);
 m.AddRelationship(s["Date"], dates["Date"]);
 if (rolePlay && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Ship Date"], dates["Date"], isActive: false);   // roleplay inactive: the shape of H73
+if (delivery && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Delivery Date"], dates["Date"], isActive: false);   // roleplay delivery inactive: two inactive relationships
 // calcmf: a second fact table, Stock, related to Products (a second one to Dates would make a loop), with a calculated column on Stock and one on Sales (four tables, two many-side tables)
 if (args.Length > 2 && args[2] == "calcmf")
 {
