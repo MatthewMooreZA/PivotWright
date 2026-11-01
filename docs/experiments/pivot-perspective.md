@@ -19,4 +19,5 @@ Order of testing: `default` first (if a hand-written PivotTable does not load, t
 
 | Variant | Result |
 |---|---|
-| `default` | sent 2026-11-01, awaiting Excel |
+| `default` v1 | opened cleanly, the PivotTable showed 3000, then Excel asked for a username and password. Cause (by comparison with H43): the script set `refreshOnLoad="1"` in the cache, so Excel refreshed on opening and reached for the placeholder data source's credentials |
+| `default` v2 | `refreshOnLoad` removed (Excel's own cache does not have it); sent 2026-11-01, awaiting Excel |

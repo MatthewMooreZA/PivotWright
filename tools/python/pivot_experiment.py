@@ -12,6 +12,7 @@ Variants (see docs/experiments/pivot-perspective.md):
   conn-full    as conn, but the cache still lists the whole model (the connection alone decides).
   string       as conn, with an explicit MSOLAP connection string that has Cube=<perspective> (the advice found on the web).
 
+refreshOnLoad is off: with it Excel asked for the placeholder data source's credentials on opening (pivot_default_v1), and Excel's own PivotTables (H43) do not have it.
 Nothing here is part of the library; it only produces files for Excel to open.
 """
 import re
@@ -116,7 +117,7 @@ def main():
     TEMPLATE_CACHE_NAMES.extend(unique_name(e) for e in HIERARCHY.findall(cache_template))
     use_perspective = perspective if variant in ("conn", "string") else None
     connection_id = 2 if variant == "default" else 3
-    cache, index, kept = build_cache(cache_template, use_perspective, connection_id, refresh_on_load=True)
+    cache, index, kept = build_cache(cache_template, use_perspective, connection_id, refresh_on_load=False)
     pivot = build_pivot(pivot_template, index, kept)
 
     with zipfile.ZipFile(base) as z:
