@@ -11,6 +11,8 @@ Variants (see docs/experiments/pivot-perspective.md):
                only what the perspective shows.
   conn-full    as conn, but the cache still lists the whole model (the connection alone decides).
   string       as conn, with an explicit MSOLAP connection string that has Cube=<perspective> (the advice found on the web).
+  two          two PivotTables in one workbook: A3 on the default cube "Model" (connection 2, whole-model cache), C3 on the perspective
+               (connection 3, a cache of only what the perspective shows).
 
 refreshOnLoad is off: with it Excel asked for the placeholder data source's credentials on opening (pivot_default_v1), and Excel's own PivotTables (H43) do not have it.
 Nothing here is part of the library; it only produces files for Excel to open.
@@ -37,7 +39,7 @@ def unique_name(element):
     return re.search(r'uniqueName="([^"]*)"', element).group(1)
 
 
-def build_cache(template, perspective, connection_id, refresh_on_load):
+def build_cache(template, perspective, connection_id, refresh_on_load, uid=None):
     """The pivotCacheDefinition for a values-only PivotTable on Total Qty; with a perspective only its hierarchies and measures stay."""
     head, rest = template.split("<cacheFields", 1)
     hierarchies_xml = re.search(r'<cacheHierarchies count="\d+">(.*?)</cacheHierarchies>', rest, re.S).group(1)
@@ -81,44 +83,51 @@ def build_cache(template, perspective, connection_id, refresh_on_load):
     out = out.replace('<cacheSource type="external" connectionId="2"/>', f'<cacheSource type="external" connectionId="{connection_id}"/>')
     if refresh_on_load:
         out = out.replace(' saveData="0"', ' saveData="0" refreshOnLoad="1"', 1)
+    if uid:
+        out = out.replace("{C2AC926C-A3E2-4213-BAC8-BE765A2F3341}", uid)
     return out, index, kept
 
 
-def build_pivot(template, index, kept):
-    """The PivotTable: only the data field Total Qty, in the layout of H43's single value."""
+def build_pivot(template, kept, cache_id, name, ref, uid):
+    """A PivotTable with only the data field Total Qty, in the layout of H43's single value, at <ref> (two cells)."""
     pivot_hierarchies = []
     # H43 lists a pivotHierarchy per cache hierarchy, in the same order; look them up by position in the template.
     template_hierarchies = PIVOT_HIERARCHY.findall(template)
-    template_cache_names = TEMPLATE_CACHE_NAMES
     for e in kept:
-        name = unique_name(e)
-        i = template_cache_names.index(name)
-        pivot_hierarchies.append(template_hierarchies[i])
+        pivot_hierarchies.append(template_hierarchies[TEMPLATE_CACHE_NAMES.index(unique_name(e))])
     out = re.sub(r'<pivotHierarchies count="\d+">.*?</pivotHierarchies>',
                  '<pivotHierarchies count="%d">%s</pivotHierarchies>' % (len(pivot_hierarchies), "".join(pivot_hierarchies)), template, flags=re.S)
     out = out.replace('<dataField name="Sum of Line Total"', '<dataField name="Total Qty"')
-    return out.replace('cacheId="5"', f'cacheId="{CACHE_ID}"')
+    out = out.replace('cacheId="5"', f'cacheId="{cache_id}"').replace('name="PivotTable1"', f'name="{name}"')
+    out = out.replace('<location ref="A3:A4"', f'<location ref="{ref}"').replace("{41BAA373-BA2C-4F2F-A483-00DB18CC3E30}", uid)
+    return out
 
 
-CACHE_ID = 5
 TEMPLATE_CACHE_NAMES = []
+REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+RELS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">%s</Relationships>'
 
 
 def main():
     base, out_path, variant = sys.argv[1], sys.argv[2], sys.argv[3]
     perspective = sys.argv[4] if len(sys.argv) > 4 else "3 - both"
-    if variant not in ("default", "conn", "conn-full", "string"):
-        sys.exit("variant must be default, conn, conn-full or string")
+    if variant not in ("default", "conn", "conn-full", "string", "two"):
+        sys.exit("variant must be default, conn, conn-full, string or two")
     if variant != "default" and perspective not in PERSPECTIVES:
         sys.exit("perspective must be one of: " + "; ".join(PERSPECTIVES))
     with zipfile.ZipFile(TEMPLATE) as t:
         cache_template = t.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
         pivot_template = t.read("xl/pivotTables/pivotTable1.xml").decode("utf-8")
     TEMPLATE_CACHE_NAMES.extend(unique_name(e) for e in HIERARCHY.findall(cache_template))
-    use_perspective = perspective if variant in ("conn", "string") else None
-    connection_id = 2 if variant == "default" else 3
-    cache, index, kept = build_cache(cache_template, use_perspective, connection_id, refresh_on_load=False)
-    pivot = build_pivot(pivot_template, index, kept)
+
+    # The PivotTables: (name, cube shown, connection id, first column). A perspective gets connection 3, the default cube connection 2.
+    if variant == "default":
+        pivots = [("PivotTable1", None, 2, "A")]
+    elif variant == "two":
+        pivots = [("PivotTable1", None, 2, "A"), ("PivotTable2", perspective, 3, "C")]
+    else:
+        pivots = [("PivotTable1", perspective if variant in ("conn", "string") else None, 3, "A")]
+    uid = lambda n: "{%08X-0000-4000-8000-%012X}" % (0x70000000 + n, n)
 
     with zipfile.ZipFile(base) as z:
         parts = {i.filename: z.read(i.filename) for i in z.infolist()}
@@ -127,8 +136,8 @@ def main():
     def text(name):
         return parts[name].decode("utf-8")
 
-    # Connections: variants add connection 3, a copy of the data model connection.
-    if variant != "default":
+    # Connections: a copy of the data model connection as connection 3 when a PivotTable uses it.
+    if any(connection == 3 for _, _, connection, _ in pivots):
         connections = text("xl/connections.xml")
         if variant == "string":
             command = (f'connection="Provider=MSOLAP.8;Integrated Security=SSPI;Persist Security Info=True;'
@@ -142,37 +151,41 @@ def main():
                  '<x15:connection id="" model="1"/></ext></extLst></connection>')
         parts["xl/connections.xml"] = connections.replace("</connections>", extra + "</connections>").encode("utf-8")
 
-    # Workbook: the cache, its relationship and the content types.
     workbook = text("xl/workbook.xml")
     assert "<pivotCaches>" not in workbook
-    workbook = workbook.replace("<calcPr calcId=\"191029\"/>", f'<calcPr calcId="191029"/><pivotCaches><pivotCache cacheId="{CACHE_ID}" r:id="rId9"/></pivotCaches>', 1)
+    caches = "".join(f'<pivotCache cacheId="{5 + i}" r:id="rId{9 + i}"/>' for i in range(len(pivots)))
+    workbook = workbook.replace('<calcPr calcId="191029"/>', f'<calcPr calcId="191029"/><pivotCaches>{caches}</pivotCaches>', 1)
     assert "<pivotCaches>" in workbook
     parts["xl/workbook.xml"] = workbook.encode("utf-8")
-    rels = text("xl/_rels/workbook.xml.rels").replace(
-        "</Relationships>", '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition1.xml"/></Relationships>')
-    parts["xl/_rels/workbook.xml.rels"] = rels.encode("utf-8")
-    types = text("[Content_Types].xml").replace(
-        "</Types>",
-        '<Override PartName="/xl/pivotCache/pivotCacheDefinition1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>'
-        '<Override PartName="/xl/pivotTables/pivotTable1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/></Types>')
-    parts["[Content_Types].xml"] = types.encode("utf-8")
+    workbook_rels = "".join(f'<Relationship Id="rId{9 + i}" Type="{REL}pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition{i + 1}.xml"/>' for i in range(len(pivots)))
+    parts["xl/_rels/workbook.xml.rels"] = text("xl/_rels/workbook.xml.rels").replace("</Relationships>", workbook_rels + "</Relationships>").encode("utf-8")
+    overrides = "".join(
+        f'<Override PartName="/xl/pivotCache/pivotCacheDefinition{i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>'
+        f'<Override PartName="/xl/pivotTables/pivotTable{i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
+        for i in range(len(pivots)))
+    parts["[Content_Types].xml"] = text("[Content_Types].xml").replace("</Types>", overrides + "</Types>").encode("utf-8")
 
-    # Sheet: the two cells of a values-only PivotTable (Total Qty of 1000 rows with Qty 1..5 is 3000), and the relationship to the table.
-    sheet = text("xl/worksheets/sheet1.xml")
-    sheet = sheet.replace('<dimension ref="A1"/>', '<dimension ref="A3:A4"/>').replace(
-        "<sheetData/>", '<sheetData><row r="3"><c r="A3" t="inlineStr"><is><t>Total Qty</t></is></c></row><row r="4"><c r="A4"><v>3000</v></c></row></sheetData>')
+    # Sheet: two cells per PivotTable (Total Qty of 1000 rows with Qty 1..5 is 3000), and the relationships to the tables.
+    labels = "".join(f'<c r="{col}3" t="inlineStr"><is><t>Total Qty</t></is></c>' for *_, col in pivots)
+    values = "".join(f'<c r="{col}4"><v>3000</v></c>' for *_, col in pivots)
+    last = pivots[-1][3]
+    sheet = text("xl/worksheets/sheet1.xml").replace('<dimension ref="A1"/>', f'<dimension ref="A3:{last}4"/>').replace(
+        "<sheetData/>", f'<sheetData><row r="3">{labels}</row><row r="4">{values}</row></sheetData>')
     parts["xl/worksheets/sheet1.xml"] = sheet.encode("utf-8")
-    parts["xl/worksheets/_rels/sheet1.xml.rels"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable1.xml"/></Relationships>').encode("utf-8")
-    parts["xl/pivotTables/_rels/pivotTable1.xml.rels"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition1.xml"/></Relationships>').encode("utf-8")
-    parts["xl/pivotCache/pivotCacheDefinition1.xml"] = cache.encode("utf-8")
-    parts["xl/pivotTables/pivotTable1.xml"] = pivot.encode("utf-8")
-    for name in ("xl/worksheets/_rels/sheet1.xml.rels", "xl/pivotTables/_rels/pivotTable1.xml.rels", "xl/pivotCache/pivotCacheDefinition1.xml", "xl/pivotTables/pivotTable1.xml"):
-        if name not in order:
-            order.append(name)
+    parts["xl/worksheets/_rels/sheet1.xml.rels"] = (RELS % "".join(
+        f'<Relationship Id="rId{i + 1}" Type="{REL}pivotTable" Target="../pivotTables/pivotTable{i + 1}.xml"/>' for i in range(len(pivots)))).encode("utf-8")
+    new_parts = ["xl/worksheets/_rels/sheet1.xml.rels"]
+
+    summary = []
+    for i, (name, shown, connection, col) in enumerate(pivots):
+        cache, index, kept = build_cache(cache_template, shown, connection, refresh_on_load=False, uid=uid(100 + i))
+        pivot = build_pivot(pivot_template, kept, 5 + i, name, f"{col}3:{col}4", uid(200 + i))
+        parts[f"xl/pivotCache/pivotCacheDefinition{i + 1}.xml"] = cache.encode("utf-8")
+        parts[f"xl/pivotTables/pivotTable{i + 1}.xml"] = pivot.encode("utf-8")
+        parts[f"xl/pivotTables/_rels/pivotTable{i + 1}.xml.rels"] = (RELS % f'<Relationship Id="rId1" Type="{REL}pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition{i + 1}.xml"/>').encode("utf-8")
+        new_parts += [f"xl/pivotCache/pivotCacheDefinition{i + 1}.xml", f"xl/pivotTables/pivotTable{i + 1}.xml", f"xl/pivotTables/_rels/pivotTable{i + 1}.xml.rels"]
+        summary.append(f"{name} at {col}3: connection {connection}, {'perspective ' + shown if shown else 'whole model'}, {len(kept)} cache hierarchies")
+    order += [n for n in new_parts if n not in order]
 
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
         for name in order:
@@ -182,7 +195,7 @@ def main():
     for name in order:
         if name.endswith((".xml", ".rels")):
             xml.dom.minidom.parseString(parts[name])
-    print(f"{out_path}: {variant}, perspective={use_perspective}, cache hierarchies={len(kept)}")
+    print(f"{out_path}: {variant}; " + "; ".join(summary))
 
 
 if __name__ == "__main__":

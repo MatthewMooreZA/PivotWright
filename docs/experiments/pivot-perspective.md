@@ -9,6 +9,7 @@ Not part of the library. Question: can a PivotTable be bound to a perspective, u
 | `default` | `pivot_default_v1.xlsx` | control: PivotTable on `Model`, connection 2 unchanged |
 | `conn` | `pivot_conn_v1.xlsx` | a second model connection with `command="3 - both"` and a cache that lists only the perspective's hierarchies and measure |
 | `conn-full` | `pivot_conn-full_v1.xlsx` | as `conn`, but the cache lists the whole model (the connection alone decides) |
+| `two` | `pivot_two_v1.xlsx` | two PivotTables in one workbook: PivotTable1 at A3 on `Model` (connection 2, whole-model cache), PivotTable2 at C3 on perspective `3 - both` (connection 3, trimmed cache); each with its own cache (ids 5 and 6) |
 | `string` | `pivot_string_v1.xlsx` | as `conn`, with an explicit MSOLAP connection string `...;Data Source=$Embedded$;...;Cube=3 - both` (the advice found on the web) |
 
 Earlier result (H68, H70): extra connections in `connections.xml` are kept by Excel but their command is rewritten to `Model` on save.
@@ -31,3 +32,7 @@ Size note: the generated files are 70 KB when this script repacks them (it compr
 - The connection command does not survive: Excel normalises every model connection to `Model`. So nothing in the file ties the PivotTable to the perspective except the list in its cache. Whether a refresh keeps the filtering (rebuilds the cache from `Model`, which would show the whole model again) is not yet known; the first refresh of a generated file asks for credentials, see below.
 - Excel saving a workbook that has a PivotTable steps the model one edit (cube 20 to 21, Products dimension 6 to 7, `info.21.xml`, the Sales partition's `DataVersion` 1 to 0). H71 and H72 are identical in that respect.
 - Refresh asks for a username and password in the original files and also in `H72`, the copy Excel saved (tested 2026-11-01). The hypothesis that only unsaved generated files prompt is refuted. Every refresh in these hand-made PivotTable files reaches for the placeholder data source, so refresh cannot show whether a perspective filter survives; that stays untested. (Earlier checks of `perspective_three_v1` passed refresh with a PivotTable made in Excel; the difference between that and the hand-written PivotTable is not explained.)
+
+## Two PivotTables, one on each (2026-11-01)
+
+`pivot_two_v1.xlsx` (`pivot_experiment.py ... two "3 - both"`): requested to show that one workbook can hold a PivotTable on the default cube and another on a custom perspective. What to look for: both open, A4 and C4 show 3000, clicking each PivotTable shows its own Fields pane (the whole model for the first, only the perspective's items for the second). No refresh (it prompts for credentials). Result: awaiting Excel.
