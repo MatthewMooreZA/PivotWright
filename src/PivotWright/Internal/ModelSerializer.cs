@@ -64,7 +64,7 @@ internal sealed class ModelSerializer
     }
 
     // Excel counts every edit of the script in its version: one per KPI, one per measure beyond the first and one per hidden measure
-    // (fits H47 to H59: H48 and H50 add a measure, H59 hides it).
+    // (fits H47 to H60: H48 and H50 add a measure, H59 and H60 hide one).
     private int ScriptEdits() => _measures.Count(m => m.Kpi is not null) + _measures.Count - 1 + _measures.Count(m => m.Hidden);
 
     // A KPI is written the way Excel saves it right after "Create KPI" on a model with relationships, with or without hierarchies with or without a date table and with or without hidden columns
@@ -79,8 +79,6 @@ internal sealed class ModelSerializer
         foreach (var kpiMeasure in withKpi)
         {
             name = $"'{kpiMeasure.Table}'[{kpiMeasure.Name}]";
-            if (kpiMeasure.Hidden)
-                throw new InvalidOperationException($"{name} is hidden and has a KPI, which was never seen in an Excel-written file.{seen}");
             // Power Pivot creates two hidden measures for the KPI, named after the measure.
             foreach (var hidden in new[] { "_" + kpiMeasure.Name + " Goal", "_" + kpiMeasure.Name + " Status" })
                 if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)

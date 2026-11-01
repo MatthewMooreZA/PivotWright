@@ -81,6 +81,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a one-table model without relationships (H57)", Tests.KpiOneTable),
     ("KPI: a calculated column on the primary-side table Products (H58)", Tests.KpiCalculatedOnPrimary),
     ("KPI: a hidden target measure (H59)", Tests.KpiHiddenTarget),
+    ("KPI: a hidden KPI measure (H60)", Tests.KpiHiddenMeasure),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
@@ -2422,6 +2423,24 @@ namespace PivotWright.Tests
             }
         }
 
+        // H60: the KPI measure itself is hidden: the markup of a hidden measure on the base measure, the script one edit further (11).
+        public static void KpiHiddenMeasure()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000);
+                total.IsHidden = true;
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal("True", ann["[Total Qty]"]["IsPrivate"], "measure hidden");
+                Check.Equal("Kpi", ann["[Total Qty]"]["Type"], "still a KPI");
+                Check.True(Encoding.UTF8.GetString(m.Find(@"MdxScript\.11\.scr\.xml$")).Contains("<CalculationReference>[Total Qty]</CalculationReference><CalculationType>Member</CalculationType><Description/><Visible>false</Visible>"), "Visible=false as in H60");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+            }
+        }
+
         // H58: the KPI on top of a calculated column on Products. Products holds the column, so Excel saved the next primary-side table, Dates.
         public static void KpiCalculatedOnPrimary()
         {
@@ -2712,7 +2731,7 @@ namespace PivotWright.Tests
                 {
                     t.AddKpi(1000);
                     t.IsHidden = true;
-                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "hidden KPI measure", "hidden");
+                    m.SaveModelPart(new MemoryStream());
                 }
             }
             {
