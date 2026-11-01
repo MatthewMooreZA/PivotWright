@@ -106,11 +106,11 @@ internal sealed class ModelInfo
     public int KpiScriptVersion { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => Calc?.Cube ?? (InactiveProfile ? (AnyDate ? 21 : 18) + 1 + 2 * InactiveCount : PerspectiveProfile ? 20 : KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
+    public int CubeVersion => Calc?.Cube ?? (InactiveProfile ? (AnyDate ? 21 : AnyHierarchy ? 18 : 1) + 1 + 2 * InactiveCount : PerspectiveProfile ? 20 : KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
     public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? (KpiProfile ? 21 : 20) : CubeVersion);
-    public int ScriptVersion => Calc?.Script ?? (InactiveProfile ? (AnyDate ? 10 : 9) + InactiveCount : PerspectiveProfile ? 10 : KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
-    public int PartitionVersion => Calc?.Partition ?? (InactiveProfile ? (AnyDate ? 10 : 9) + InactiveCount : PerspectiveProfile || AnyDate ? 10 : AnyHierarchy ? 9 : 1);
+    public int ScriptVersion => Calc?.Script ?? (InactiveProfile ? (AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile ? 10 : KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
+    public int PartitionVersion => Calc?.Partition ?? (InactiveProfile ? (AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile || AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
     public int MeasureGroupVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : MeasureGroupVersion;
     /// <summary>Object version of a partition: 1 for the linked trigger table (H42).</summary>
@@ -616,7 +616,7 @@ internal static class AsslWriter
             }
             sb.Append("</Dimension>");
         }
-        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.Calc?.CubeStructure ?? (m.InactiveProfile ? (m.AnyDate ? 12 : 11) + m.InactiveCount : m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0)) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
+        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.Calc?.CubeStructure ?? (m.InactiveProfile ? (m.AnyDate ? 12 : m.AnyHierarchy ? 11 : 0) + m.InactiveCount : m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0)) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.HiddenProfile ? m.EditedAt.AddMilliseconds(200) : m.Created)).Append("</LastUpdate>");
         sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile || m.KpiProfile || m.InactiveProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersionOf(t.Id) + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append(m.PerspectiveProfile
@@ -919,7 +919,7 @@ internal static class AsslWriter
         foreach (var r in t.Relationships.Where(r => r.IsActive)) ReferenceDimension(sb, m, t, r, tablesById[r.PrimaryTableId]);
         // With perspectives (H64 to H66) the measure groups are one edit further on: structure 9, and cache 2 (3 for the table that holds
         // relationships, whose data version drops to 0).
-        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.Calc?.MeasureGroupStructure ?? (m.InactiveProfile ? (m.AnyDate ? 9 : 8) + m.InactiveCount : m.AnyDate || m.PerspectiveProfile ? 9 : m.AnyHierarchy ? 8 : 0)) + "</StructureVersion><CacheVersion>" + (m.Calc?.MeasureGroupCache ?? (m.InactiveProfile ? (m.AnyDate ? 2 : 1) + m.InactiveCount : m.PerspectiveProfile ? (t.Relationships.Count > 0 ? 3 : 2) : m.AnyDate ? 2 : 1)) + "</CacheVersion><DataVersion>" + (m.Calc is not null ? m.Calc.MeasureGroupData[t.Id] : !m.AnyHierarchy ? 0 
+        sb.Append("</Dimensions><Translations/><StructureVersion>" + (m.Calc?.MeasureGroupStructure ?? (m.InactiveProfile ? (m.AnyDate ? 9 : m.AnyHierarchy ? 8 : 0) + m.InactiveCount : m.AnyDate || m.PerspectiveProfile ? 9 : m.AnyHierarchy ? 8 : 0)) + "</StructureVersion><CacheVersion>" + (m.Calc?.MeasureGroupCache ?? (m.InactiveProfile ? (m.AnyDate ? 2 : 1) + m.InactiveCount : m.PerspectiveProfile ? (t.Relationships.Count > 0 ? 3 : 2) : m.AnyDate ? 2 : 1)) + "</CacheVersion><DataVersion>" + (m.Calc is not null ? m.Calc.MeasureGroupData[t.Id] : t.Id == m.InactiveTable ? -1 : !m.AnyHierarchy ? 0 
             : m.HierarchyTables.Contains(t.Id) ? -1 : t.Id == m.InactiveTable ? -1 : t.Relationships.Count > 0 ? (m.PerspectiveProfile ? 0 : 1) : 0) + "</DataVersion>");
         sb.Append("<LastBindingChange>").Append(t.Id == m.InactiveTable ? T(m.EditedAt) : "1601-01-01T00:00:00").Append("</LastBindingChange><AggregationDesignFileList/><PartitionFileList>")
           .Append(E(t.Id)).Append(".").Append(m.PartitionVersion).Append(".prt.xml</PartitionFileList></MeasureGroup></ObjectDefinition></Load>");
@@ -1057,7 +1057,7 @@ internal static class AsslWriter
         sb.Append(m.Calc is not null
             ? "<DataVersion>" + m.Calc.PartitionData[tableId] + "</DataVersion>"
             : m.PerspectiveProfile ? "<DataVersion>" + (m.HierarchyTables.Contains(tableId) ? -1 : tableId == m.PerspectiveInfoTable ? 1 : 0) + "</DataVersion>"
-            : m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) || tableId == m.InactiveTable ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>").Append(tableId == m.InactiveTable ? T(m.EditedAt) : "1601-01-01T00:00:00").Append("</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
+            : m.HierarchyTables.Contains(tableId) || m.DateReferencingTables.Contains(tableId) || m.InactiveProfile ? "<DataVersion>1</DataVersion>" : "<DataVersion>0</DataVersion>").Append("<LastBindingChange>").Append(tableId == m.InactiveTable ? T(m.EditedAt) : "1601-01-01T00:00:00").Append("</LastBindingChange><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Data</Type><AggregationPrefix/><StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><CurrentStorageMode valuens=\"ddl200_200\">InMemory</CurrentStorageMode>");
         sb.Append("<ddl300:StringStoresCompatibilityLevel>1050</ddl300:StringStoresCompatibilityLevel><ddl300:InternalStringStoresCompatibilityLevel>1050</ddl300:InternalStringStoresCompatibilityLevel><ddl300:CurrentStringStoresCompatibilityLevel>1050</ddl300:CurrentStringStoresCompatibilityLevel>");
         sb.Append("<ProcessingMode>Regular</ProcessingMode><ProcessingPriority>0</ProcessingPriority>").Append(ErrorConfiguration);

@@ -161,8 +161,8 @@ public sealed class DataModelWriter : IDisposable
     /// <remarks>
     /// Two tables have one active relationship. A further relationship between the same two tables, for example Sales[Ship Date] next to
     /// Sales[Date] to the date table (role-playing dates), is inactive, as Power Pivot makes it: pass <c>isActive: false</c> after the
-    /// active one. Measures use it with <c>USERELATIONSHIP</c>. Written as in Excel's H73 sample (SPEC section 14): <c>Save</c> accepts one
-    /// inactive relationship, in a model with hierarchies and without a date table, hidden or calculated columns, KPIs or perspectives.
+    /// active one. Measures use it with <c>USERELATIONSHIP</c>. Written as in Excel's H73 to H79 samples (SPEC section 14): <c>Save</c> accepts inactive
+    /// relationships from one table in a model with a measure, with or without hierarchies and a date table, and without hidden or calculated columns, KPIs or perspectives.
     /// </remarks>
     /// <param name="manyColumn">Foreign key column of the "many" table (for example Sales[ProductKey]).</param>
     /// <param name="oneColumn">Key column of the "one" table (for example Products[ProductKey]); its values must be unique and not

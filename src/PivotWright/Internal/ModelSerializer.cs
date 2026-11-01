@@ -127,7 +127,7 @@ internal sealed class ModelSerializer
     }
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
-    // H73): a model with hierarchies and a measure, with or without a date table (H76), without hidden columns, calculated columns, KPIs or perspectives.
+    // H73): a model with a measure, with or without hierarchies (H79) and a date table (H76), without hidden columns, calculated columns, KPIs or perspectives.
     // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
     // null without an inactive relationship.
     private (string many, string resaved)? ValidateInactiveRelationships()
@@ -136,11 +136,9 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with hierarchies and a measure, with or without a date table, and without hidden columns, calculated columns, KPIs or perspectives.";
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure, with or without hierarchies and a date table, and without hidden columns, calculated columns, KPIs or perspectives.";
         if (inactive.Any(r => r.From != rel.From))
             throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
-        if (_hierarchies.Count == 0)
-            throw new InvalidOperationException($"{what} needs the model to have a hierarchy (AddHierarchy).{seen}");
         if (!_measures.Any(m => !m.Helper))
             throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure).{seen}");
         if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden)
@@ -302,7 +300,7 @@ internal sealed class ModelSerializer
             if (Info.Calc.CubeInfo) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         }
         else if (Info.KpiProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
-        else if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
+        else if (!Info.AnyHierarchy && !Info.InactiveProfile) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {
             var ids = tableIds[t.Id];

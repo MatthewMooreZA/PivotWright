@@ -99,6 +99,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: invalid and unsupported shapes are rejected", Tests.InactiveRelationshipValidation),
     ("Inactive relationship: two of them, counters as Excel saves them (H77)", Tests.InactiveRelationshipTwo),
     ("Inactive relationship: the date relationship added first (H78)", Tests.InactiveRelationshipDateFirst),
+    ("Inactive relationship: a model without hierarchies (H79)", Tests.InactiveRelationshipPlain),
 };
 
 int failed = 0;
@@ -2325,7 +2326,7 @@ namespace PivotWright.Tests
         }
 
         // H73: Sales[Ship Date] dragged onto Dates[Date] in Diagram View, next to the active relationships of the standard model.
-        private static (DataModelWriter model, ModelTable products, ModelTable dates, ModelTable sales, ModelRelationship inactive) InactiveModel(bool inactive = true, bool measure = true, bool dateFirst = false)
+        private static (DataModelWriter model, ModelTable products, ModelTable dates, ModelTable sales, ModelRelationship inactive) InactiveModel(bool inactive = true, bool measure = true, bool dateFirst = false, bool hierarchies = true)
         {
             var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
@@ -2337,8 +2338,7 @@ namespace PivotWright.Tests
             if (dateFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
             else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
             var rel = inactive ? model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false) : null!;
-            products.AddHierarchy("Product Hierarchy", "Category", "Product");
-            dates.AddHierarchy("Calendar", "Year", "Month");
+            if (hierarchies) { products.AddHierarchy("Product Hierarchy", "Category", "Product"); dates.AddHierarchy("Calendar", "Year", "Month"); }
             if (measure) sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
             return (model, products, dates, sales, rel);
         }
@@ -2396,6 +2396,26 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
                 PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
             }
+        }
+
+        public static void InactiveRelationshipPlain()
+        {
+            // H79: the model without hierarchies (base 1): the cube 4, the script and partitions 2, Sales 3, Products 2, Dates 1, no cube information file.
+            var (model, _, _, _, _) = InactiveModel(hierarchies: false);
+            using (model)
+            {
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.4\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.2\.scr\.xml$");
+                string sales = PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.2\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.1\.dim\.xml$");
+                Check.True(sales.Contains("<StructureVersion>1</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>1</DataVersion>"), "Sales counters");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Model\.0\.cub\\info\.\d+\.xml$")), "no cube information file");
+            }
+            // The same model without the inactive relationship keeps the plain profile.
+            var (plain, _, _, _, _) = InactiveModel(inactive: false, hierarchies: false);
+            using (plain) PerspectiveText(SaveKpiModel(plain), @"Model\.1\.cub\.xml$");
         }
 
         public static void InactiveRelationshipDateFirst()
