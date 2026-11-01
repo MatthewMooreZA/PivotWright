@@ -98,6 +98,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: workbook lists only active relationships, models without one keep their counters", Tests.InactiveRelationshipWorkbookAndAbsent),
     ("Inactive relationship: invalid and unsupported shapes are rejected", Tests.InactiveRelationshipValidation),
     ("Inactive relationship: two of them, counters as Excel saves them (H77)", Tests.InactiveRelationshipTwo),
+    ("Inactive relationship: the date relationship added first (H78)", Tests.InactiveRelationshipDateFirst),
 };
 
 int failed = 0;
@@ -2324,7 +2325,7 @@ namespace PivotWright.Tests
         }
 
         // H73: Sales[Ship Date] dragged onto Dates[Date] in Diagram View, next to the active relationships of the standard model.
-        private static (DataModelWriter model, ModelTable products, ModelTable dates, ModelTable sales, ModelRelationship inactive) InactiveModel(bool inactive = true, bool measure = true)
+        private static (DataModelWriter model, ModelTable products, ModelTable dates, ModelTable sales, ModelRelationship inactive) InactiveModel(bool inactive = true, bool measure = true, bool dateFirst = false)
         {
             var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
@@ -2333,8 +2334,8 @@ namespace PivotWright.Tests
             for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); }
             var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Ship Date", ColumnDataType.DateTime) });
             for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5, new DateTime(2025, 1, 1).AddDays((i + 3) % 40));
-            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
-            model.AddRelationship(sales["Date"], dates["Date"]);
+            if (dateFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
+            else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
             var rel = inactive ? model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false) : null!;
             products.AddHierarchy("Product Hierarchy", "Category", "Product");
             dates.AddHierarchy("Calendar", "Year", "Month");
@@ -2394,6 +2395,20 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"Model\.18\.cub\.xml$");
                 PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
                 PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipDateFirst()
+        {
+            // H78: the date relationship before the product one. Excel still saved Products again (6) and left Dates at 5.
+            var (model, _, _, _, _) = InactiveModel(dateFirst: true);
+            using (model)
+            {
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.21\.cub\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
             }
         }
 
@@ -2475,7 +2490,7 @@ namespace PivotWright.Tests
                 sales2.AddCalculatedColumn("Line", "[Qty]*2", ColumnDataType.Int64);
                 Throws<InvalidOperationException>(() => two.SaveModelPart(new MemoryStream()), "calculated columns", "calculated columns");
             }
-            // The first relationship pointing to the same table as the inactive one was not seen.
+            // The only other relationship pointing to the same table as the inactive one: nothing to compare with in Excel's samples.
             var flipped = new DataModelWriter(new DataModelOptions { XpressCompression = false });
             var d = flipped.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
             d.AddRow(new DateTime(2025, 1, 1), 2025, 1);
@@ -2485,7 +2500,7 @@ namespace PivotWright.Tests
             flipped.AddRelationship(s["Ship Date"], d["Date"], isActive: false);
             d.AddHierarchy("Calendar", "Year", "Month");
             s.AddMeasure("Rows", "COUNTROWS(Sales)");
-            using (flipped) Throws<InvalidOperationException>(() => flipped.SaveModelPart(new MemoryStream()), "first relationship to the same table", "add a relationship to a different table first");
+            using (flipped) Throws<InvalidOperationException>(() => flipped.SaveModelPart(new MemoryStream()), "no other active relationship of the table", "needs another active relationship");
         }
 
         public static void PerspectiveOne()

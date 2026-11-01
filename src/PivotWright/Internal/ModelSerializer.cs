@@ -128,7 +128,7 @@ internal sealed class ModelSerializer
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
     // H73): a model with hierarchies and a measure, with or without a date table (H76), without hidden columns, calculated columns, KPIs or perspectives.
-    // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of the first relationship), or
+    // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
     // null without an inactive relationship.
     private (string many, string resaved)? ValidateInactiveRelationships()
     {
@@ -151,10 +151,11 @@ internal sealed class ModelSerializer
             throw new InvalidOperationException($"{what} is not supported together with KPIs ('{kpi.Table}'[{kpi.Name}]).{seen}");
         if (_perspectives.Count > 0)
             throw new InvalidOperationException($"{what} is not supported together with perspectives.{seen}");
-        var first = _relationships[0];
-        if (first.To == rel.To)
-            throw new InvalidOperationException($"{what} points to '{rel.To.Name}', the primary table of the first relationship. In Excel's sample the first relationship pointed to another table (Products) and the inactive one to Dates; add a relationship to a different table first.{seen}");
-        return (rel.From.Id, first.To.Id);
+        // Excel saved Products again, both with the product relationship before the date relationship (H73) and after it (H78): the primary side
+        // of another active relationship of the same many-side table. Without one nothing was seen.
+        var other = _relationships.FirstOrDefault(r => r.IsActive && r.From == rel.From && r.To != rel.To)
+            ?? throw new InvalidOperationException($"{what} needs another active relationship from '{rel.From.Name}' to a table other than '{rel.To.Name}' (in Excel's samples Sales was also related to Products); no sample of another shape exists.{seen}");
+        return (rel.From.Id, other.To.Id);
     }
 
     public void Write(Stream output)
