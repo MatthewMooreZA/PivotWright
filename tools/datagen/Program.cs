@@ -105,7 +105,7 @@ if (args.Length > 2 && args[2] == "calcmf")
 bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain", or a trailing "plain" after a calc mode)
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
-var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+var totalQty = rolePlay && args.Skip(3).Contains("nomeasure") ? null! : s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);   // roleplay nomeasure: only the hidden helper measure (SPEC section 11)
 // kpi: a KPI on Total Qty with a target of 1000 and the default thresholds (H47); kpimeasure: the target is the measure Target Qty (H48);
 // kpistyle: the Centered scale with the Road Signs icons (H49)
 if (args.Length > 2 && (args[2] == "kpi" || args.Skip(2).Contains("kpi"))) totalQty.AddKpi(1000);
