@@ -49,14 +49,14 @@ All on `H66_perspective_hierarchies_manual.xlsx` (the Perspectives dialog lists 
 - Data > Get Data > From Analysis Services with server name `$Embedded$`: "Unable to locate database server".
 - Connection Properties of the `PivotWright` connection (the placeholder source): Connection type Model OLE DB Query, command type Table Collection, command text `"Products","Dates","Sales"`; editing it asks for credentials. A web summary suggested adding `Cube=<perspective>` to a connection string or a command text; it describes Analysis Services connections and did not apply here.
 - `H67` (a PivotTable made by Excel on a perspective) was therefore never obtained.
-- Never reported: Power Pivot window > Home > PivotTable (whether its Fields pane has a perspective picker).
+- Power Pivot window > Home > PivotTable: reported by Matthew (2026-11-01) that Excel never offers a choice of perspective, there or anywhere else for a PivotTable on the workbook's data model. The screenshots of that Fields pane and its gear menu were not taken.
 
 ## Open questions (left open 2026-11-01)
 
 1. **Why does refresh ask for credentials in these files?** The prompt is for the placeholder source (`Provider=Microsoft.ACE.OLEDB.12.0;Data Source=PivotWright;Persist Security Info=false`). `docs/research-refresh.md` (Excel treats a changed model as dirty and reprocesses it from source) explains the case after a model edit, but not these files: Refresh prompted in the files as generated (`pivot_default_v2`) and in the copy Excel saved (H72, H71), all with hand-written PivotTables, while a PivotTable made in Excel on `perspective_three_v1` refreshed without a prompt. Decisive test, not run: insert a PivotTable from the data model in H72 and refresh it.
 2. **Does a refresh keep a perspective-only cache?** Untestable while refresh prompts. If Excel rebuilds the field list from the connection (`Model`), the whole model comes back.
 3. **What does Excel keep of two caches?** `pivot_two_v1.xlsx` was not saved by Excel.
-4. **Is there any way to make Excel itself bind a PivotTable to a perspective?** No route found (above).
+4. **Is there any way to make Excel itself bind a PivotTable to a perspective?** Matthew reports that Excel offers no choice of perspective for a PivotTable on the workbook's data model (all routes above, including the Power Pivot window). A PivotTable with a perspective-only cache is therefore something Excel does not write itself, and the experiment files here are the only ones of their kind; there is no Excel-written sample (H67) to compare with, and none can be made through the UI.
 5. Variants never run: `conn-full`, `string`, and a connection without the `x15:connection model="1"` marker.
 
 ## Tools made for this
