@@ -35,4 +35,8 @@ Size note: the generated files are 70 KB when this script repacks them (it compr
 
 ## Two PivotTables, one on each (2026-11-01)
 
-`pivot_two_v1.xlsx` (`pivot_experiment.py ... two "3 - both"`): requested to show that one workbook can hold a PivotTable on the default cube and another on a custom perspective. What to look for: both open, A4 and C4 show 3000, clicking each PivotTable shows its own Fields pane (the whole model for the first, only the perspective's items for the second). No refresh (it prompts for credentials). Result: awaiting Excel.
+`pivot_two_v1.xlsx` (`pivot_experiment.py ... two "3 - both"`): requested to show that one workbook can hold a PivotTable on the default cube and another on a custom perspective. What to look for: both open, A4 and C4 show 3000, clicking each PivotTable shows its own Fields pane (the whole model for the first, only the perspective's items for the second). No refresh (it prompts for credentials). Result (2026-11-01, reported by Matthew): the file loads, both PivotTables show 3000, the PivotTable on the left (default cube) shows the whole model in its Fields pane and the one on the right shows only the perspective's subset. No saved copy was taken, so what Excel keeps of the two caches is not recorded. Nothing was refreshed.
+
+## Conclusion of the experiment
+
+One workbook can hold PivotTables on different views of the model: each PivotTable's cache lists the hierarchies and measures its Fields pane offers (the cache holds no data: `saveData="0"`, no records part, a few kilobytes). Writing a cache that lists only what a perspective shows gives a PivotTable that offers only that subset. Not shown: that the PivotTable is *bound* to the perspective in the engine. Excel rewrites the connection command to `Model`, so a refresh, which would rebuild the field list from the connection, may show the whole model again; refresh prompts for credentials in these files, so this could not be tested.
