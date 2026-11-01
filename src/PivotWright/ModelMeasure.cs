@@ -87,8 +87,13 @@ public sealed class ModelMeasure
         Table.Model.ThrowIfDisposed();
         if (_kpi is not null) throw new InvalidOperationException($"{this} already has a KPI; a measure has at most one.");
         options ??= new KpiOptions();
-        int count = options.Scale == KpiScale.Centered ? 4 : 2;
-        var thresholds = options.Thresholds ?? (options.Scale == KpiScale.Centered ? new[] { 0.34, 0.67, 1.33, 1.66 } : new[] { 0.4, 0.8 });
+        int count = options.Scale is KpiScale.Centered or KpiScale.LinearFiveBands ? 4 : 2;
+        // The gauge has five states and only the five-band linear layout writes them; the five-band layouts with three-state icons are the Centered one.
+        if (options.IconStyle.States == 5 != (options.Scale == KpiScale.LinearFiveBands))
+            throw new ArgumentException(options.IconStyle.States == 5
+                ? $"The icon style '{options.IconStyle}' has five states and needs KpiScale.LinearFiveBands, but the scale is {options.Scale}."
+                : $"KpiScale.LinearFiveBands needs the five-state icon style KpiIconStyle.GaugeAscending, but the style is '{options.IconStyle}'.", nameof(options));
+        var thresholds = options.Thresholds ?? (options.Scale switch { KpiScale.Centered => new[] { 0.34, 0.67, 1.33, 1.66 }, KpiScale.LinearFiveBands => new[] { 0.2, 0.4, 0.6, 0.8 }, _ => new[] { 0.4, 0.8 } });
         if (thresholds.Count != count)
             throw new ArgumentException($"The {options.Scale} scale takes {count} thresholds, but {thresholds.Count} were given.", nameof(options));
         var definition = new KpiDefinition

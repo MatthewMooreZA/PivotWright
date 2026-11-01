@@ -654,8 +654,12 @@ internal static class AsslWriter
             status += s20 + "If(" + v + "<" + th[0] + "," + low + ",\n\t" + s16 + "If(" + v + "<" + th[1] + ",0," + high + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
         }
         else
-            status += s16 + "If(" + v + "<" + th[1] + ",\n\t" + s16 + "If(" + v + "<" + th[0] + ",-1,0),\n\t" + s16 + "If(" + v + "<" + th[2] + ",1,\n\t\t"
-                + s16 + "If(" + v + "<" + th[3] + ",0,-1)\n\t" + s16 + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
+        {
+            // Five bands: Centered (H49) rises to the target and falls again, the five-state gauge (H61) rises from -2 to 2.
+            string[] st = k.Scale == KpiScale.Centered ? new[] { "-1", "0", "1", "0", "-1" } : new[] { "-2", "-1", "0", "1", "2" };
+            status += s16 + "If(" + v + "<" + th[1] + ",\n\t" + s16 + "If(" + v + "<" + th[0] + "," + st[0] + "," + st[1] + "),\n\t" + s16 + "If(" + v + "<" + th[2] + "," + st[2] + ",\n\t\t"
+                + s16 + "If(" + v + "<" + th[3] + "," + st[3] + "," + st[4] + ")\n\t" + s16 + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
+        }
         return "CREATE MEASURE " + t + "[" + GoalName(me) + "] = " + goal + "; \n"
              + "CREATE MEASURE " + t + "[" + StatusName(me) + "] = " + status
              + "CREATE KPI CURRENTCUBE.[" + me.Name + "] AS Measures.[" + me.Name + "], ASSOCIATED_MEASURE_GROUP = '" + me.Table.Replace("'", "''")
@@ -672,7 +676,7 @@ internal static class AsslWriter
         var sb = new StringBuilder();
         sb.Append(Annotation("GoalType", ratio ? "Measure" : "StaticValue"));
         if (!ratio) sb.Append(Annotation("GoalValue", Num((decimal)k.GoalValue!.Value)));
-        sb.Append(Annotation("KpiStatusType", k.Scale.ToString()))
+        sb.Append(Annotation("KpiStatusType", k.Scale == KpiScale.LinearFiveBands ? "Linear" : k.Scale.ToString()))   // Excel calls the gauge layout Linear with four thresholds (H61)
           .Append(Annotation("KpiThresholdType", ratio ? "Percentage" : "Absolute"))
           .Append(Annotation("KpiThresholdOrdering", "Ascending"))
           .Append(Annotation("KpiThresholdCount", k.Thresholds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)));

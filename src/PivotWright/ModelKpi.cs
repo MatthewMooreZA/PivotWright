@@ -30,7 +30,7 @@ public sealed class ModelKpi
     public IReadOnlyList<double> Thresholds => _definition.Thresholds;
 
     /// <summary>The status icons.</summary>
-    public KpiIconStyle IconStyle => KpiIconStyle.Named(_definition.Graphic);
+    public KpiIconStyle IconStyle => KpiIconStyle.FromName(_definition.Graphic);
 
     /// <summary>The KPI in Power Pivot notation, for example <c>KPI of 'Sales'[Total Qty]</c>.</summary>
     public override string ToString() => "KPI of " + Measure;

@@ -9,36 +9,43 @@ public enum KpiScale
     LinearReversed,
     /// <summary>The best values lie around the target, with four thresholds and five bands: bad, medium, good, medium, bad.</summary>
     Centered,
+    /// <summary>
+    /// Higher is better, with four thresholds and five bands, for the five-state icon style <see cref="KpiIconStyle.GaugeAscending"/> (Excel's
+    /// H61 writes it as status type Linear with four thresholds and the states -2 to 2).
+    /// </summary>
+    LinearFiveBands,
 }
 
-/// <summary>The status icons of a KPI, like the "Select icon style" choice in Power Pivot.</summary>
-/// <remarks>
-/// Only <see cref="TrafficLightSingle"/> and <see cref="RoadSigns"/> have been seen in Excel-written files. Other styles can be
-/// named with <see cref="Named"/>; they are written the same way but were not tested in Excel.
-/// </remarks>
+/// <summary>The status icons of a KPI, like the "Select icon style" choice in Power Pivot. Excel offers exactly these five.</summary>
 public sealed class KpiIconStyle : IEquatable<KpiIconStyle>
 {
-    private KpiIconStyle(string name) => Name = name;
+    private KpiIconStyle(string name, int states) { Name = name; States = states; }
 
-    /// <summary>Excel's name of the style, as Power Pivot lists it.</summary>
+    /// <summary>Excel's name of the style, as it appears in the file.</summary>
     public string Name { get; }
 
-    /// <summary>"Traffic Light - Single", Excel's default style.</summary>
-    public static KpiIconStyle TrafficLightSingle { get; } = new("Traffic Light - Single");
+    /// <summary>Number of different statuses the icons show: 3 (bad, medium, good) or 5 (<see cref="GaugeAscending"/>).</summary>
+    public int States { get; }
 
-    /// <summary>"Road Signs".</summary>
-    public static KpiIconStyle RoadSigns { get; } = new("Road Signs");
+    /// <summary>The plain red, yellow and green circles; Excel's default.</summary>
+    public static KpiIconStyle TrafficLightSingle { get; } = new("Traffic Light - Single", 3);
 
-    /// <summary>A style by the name Power Pivot shows for it.</summary>
-    /// <exception cref="ArgumentException">The name is empty or contains a quote or a control character.</exception>
-    public static KpiIconStyle Named(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("The icon style name is required.", nameof(name));
-        name = name.Trim();
-        if (name.Contains('\'') || name.Any(char.IsControl))
-            throw new ArgumentException($"The icon style name '{name}' must not contain quotes or control characters.", nameof(name));
-        return new KpiIconStyle(name);
-    }
+    /// <summary>Circles with a cross, an exclamation mark and a tick.</summary>
+    public static KpiIconStyle RoadSigns { get; } = new("Road Signs", 3);
+
+    /// <summary>Red, yellow and green dots in black squares.</summary>
+    public static KpiIconStyle TrafficLight { get; } = new("Traffic Light", 3);
+
+    /// <summary>A red diamond, a yellow triangle and a green circle.</summary>
+    public static KpiIconStyle Shapes { get; } = new("Shapes", 3);
+
+    /// <summary>Quarter-filled circles, five states; needs <see cref="KpiScale.LinearFiveBands"/>.</summary>
+    public static KpiIconStyle GaugeAscending { get; } = new("Gauge - Ascending", 5);
+
+    /// <summary>All the styles.</summary>
+    public static IReadOnlyList<KpiIconStyle> All { get; } = new[] { TrafficLightSingle, RoadSigns, TrafficLight, Shapes, GaugeAscending };
+
+    internal static KpiIconStyle FromName(string name) => All.First(s => s.Name == name);
 
     public bool Equals(KpiIconStyle? other) => other is not null && Name == other.Name;
     public override bool Equals(object? obj) => Equals(obj as KpiIconStyle);
@@ -68,7 +75,7 @@ public sealed class KpiOptions
     /// <summary>
     /// Where the status changes, as fractions of the target in ascending order: two for <see cref="KpiScale.Linear"/> and <see cref="KpiScale.LinearReversed"/>, and four for
     /// <see cref="KpiScale.Centered"/>. For a target of 1000, <c>0.4, 0.8</c> turns the status at 400 and 800. Default 0.4 and 0.8
-    /// (Linear and LinearReversed) or 0.34, 0.67, 1.33 and 1.66 (Centered), the ones Power Pivot proposes.
+    /// (Linear and LinearReversed), 0.34, 0.67, 1.33 and 1.66 (Centered) or 0.2, 0.4, 0.6 and 0.8 (LinearFiveBands), the ones Power Pivot proposes.
     /// </summary>
     /// <exception cref="ArgumentException">A fraction is not positive, or they are not ascending.</exception>
     public IReadOnlyList<double>? Thresholds

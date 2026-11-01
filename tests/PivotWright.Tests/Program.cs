@@ -82,6 +82,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a calculated column on the primary-side table Products (H58)", Tests.KpiCalculatedOnPrimary),
     ("KPI: a hidden target measure (H59)", Tests.KpiHiddenTarget),
     ("KPI: a hidden KPI measure (H60)", Tests.KpiHiddenMeasure),
+    ("KPI: the five icon styles, the gauge with five states (H61)", Tests.KpiIconStyles),
     ("KPI: four KPIs with a plain and a hidden measure beside them (extrapolated)", Tests.KpiMany),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
@@ -2424,6 +2425,31 @@ namespace PivotWright.Tests
             }
         }
 
+        // H61: one KPI per icon style Excel offers. The four three-state styles are written like H47; the gauge has five states (-2 to 2),
+        // four thresholds and the status type Linear.
+        public static void KpiIconStyles()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var sales = model.Tables["Sales"];
+                for (int i = 0; i < 4; i++)
+                    sales.AddMeasure("Style 0" + (i + 1), (i + 1).ToString()).AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.All[i] });
+                var gauge = sales.AddMeasure("Style 05", "5").AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearFiveBands, IconStyle = KpiIconStyle.GaugeAscending });
+                Check.Equal("0.2,0.4,0.6,0.8", string.Join(",", gauge.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "gauge defaults");
+                var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                string[] graphics = { "Traffic Light - Single", "Road Signs", "Traffic Light", "Shapes", "Gauge - Ascending" };
+                for (int i = 0; i < 5; i++)
+                    Check.True(commands.Any(c => c.Contains($"CREATE KPI CURRENTCUBE.[Style 0{i + 1}] AS") && c.Contains($"STATUS_GRAPHIC = '{graphics[i]}';")), "graphic " + graphics[i]);
+                Check.Equal("Linear", ann["[Style 05]"]["KpiStatusType"], "the gauge layout is Linear");
+                Check.Equal("4", ann["[Style 05]"]["KpiThresholdCount"], "four thresholds");
+                Check.Equal("200|400|600|800", string.Join("|", Enumerable.Range(0, 4).Select(i => ann["[Style 05]"]["KpiThreshold_" + i])), "thresholds");
+                Check.Equal("2", ann["[Style 04]"]["KpiThresholdCount"], "three-state styles keep two thresholds");
+                string gaugeCommand = commands.First(c => c.Contains("[Style 05]"));
+                Check.True(gaugeCommand.Contains("CREATE MEASURE 'Sales'[_Style 05 Status] = if(ISBLANK('Sales'[Style 05]),BLANK(),\n                If('Sales'[Style 05]<400,\n\t                If('Sales'[Style 05]<200,-2,-1),\n\t                If('Sales'[Style 05]<600,0,\n\t\t                If('Sales'[Style 05]<800,1,2)\n\t                )\n                )\n            )\n            ; \n"), "H61 gauge status");
+            }
+        }
+
         // Extrapolated: four KPIs with a plain measure and a hidden target beside them (`datagen ... kpimany`). The script version counts KPIs (4),
         // measures beyond the first (5) and hidden measures (1) on top of 9.
         public static void KpiMany()
@@ -2742,7 +2768,8 @@ namespace PivotWright.Tests
                 Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.8, 0.4 } }, "descending thresholds", "ascending");
                 Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.0, 0.4 } }, "zero threshold", "positive");
                 Throws<ArgumentOutOfRangeException>(() => new KpiOptions { Scale = (KpiScale)7 }, "scale out of range");
-                Throws<ArgumentException>(() => KpiIconStyle.Named("Bob's"), "quote in the icon style", "quotes");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearFiveBands }), "five bands with three-state icons", "GaugeAscending");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending }), "gauge with three bands", "LinearFiveBands");
                 Check.True(total.Kpi is null, "failed calls change nothing");
                 var kpi = total.AddKpi(1000);
                 Check.Equal("0.4,0.8", string.Join(",", kpi.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "default thresholds");
