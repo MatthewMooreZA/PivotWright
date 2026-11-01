@@ -11,3 +11,4 @@ TestResults/
 .vscode/
 *.nupkg
 .claude/settings.local.json
+out/
