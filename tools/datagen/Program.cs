@@ -22,6 +22,19 @@ if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship,
     m.Save(Path.Combine(dir, args[1] + ".xlsx"));
     return;
 }
+if (args.Length > 2 && args[2] == "kpigauge")   // one table of nine values, one gauge KPI per layout: every band of the linear (5) and centered (9) gauges shows in a PivotTable
+{
+    var steps = m.CreateTable("Steps", new[] { new ColumnDefinition("Step", ColumnDataType.Int64), new ColumnDefinition("Value", ColumnDataType.Int64) });
+    int[] values = { 100, 300, 500, 700, 1000, 1300, 1500, 1700, 1900 };   // target 1000: the middle of each band of the nine-band layouts
+    for (int i = 0; i < values.Length; i++) steps.AddRow(i + 1, values[i]);
+    var gauge = KpiIconStyle.GaugeAscending;
+    steps.AddMeasure("Linear", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.Linear, IconStyle = gauge });
+    steps.AddMeasure("Linear Reversed", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, IconStyle = gauge });
+    steps.AddMeasure("Centered", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = gauge });
+    steps.AddMeasure("Centered Reversed", "SUM(Steps[Value])", MeasureFormat.WholeNumber).AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = gauge });
+    m.Save(Path.Combine(dir, args[1] + ".xlsx"));
+    return;
+}
 if (args.Length > 2 && args[2] == "onetable")   // one table, no relationship, no hierarchy, one measure (the base for a KPI in a model without relationships)
 {
     var only = m.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
