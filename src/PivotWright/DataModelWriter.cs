@@ -158,13 +158,22 @@ public sealed class DataModelWriter : IDisposable
     /// column of the "many" table onto the key column of the "one" table:
     /// <c>AddRelationship(sales["ProductKey"], products["ProductKey"])</c>.
     /// </summary>
+    /// <remarks>
+    /// Two tables have one active relationship. A further relationship between the same two tables, for example Sales[Ship Date] next to
+    /// Sales[Date] to the date table (role-playing dates), is inactive, as Power Pivot makes it: pass <c>isActive: false</c> after the
+    /// active one. Measures use it with <c>USERELATIONSHIP</c>. Written as in Excel's H73 sample (SPEC section 14): <c>Save</c> accepts one
+    /// inactive relationship, in a model with hierarchies and without a date table, hidden or calculated columns, KPIs or perspectives.
+    /// </remarks>
     /// <param name="manyColumn">Foreign key column of the "many" table (for example Sales[ProductKey]).</param>
     /// <param name="oneColumn">Key column of the "one" table (for example Products[ProductKey]); its values must be unique and not
     /// blank, which is checked when saving.</param>
+    /// <param name="isActive">Default true. False makes an inactive relationship, which needs an active one between the same tables
+    /// first (same many table and same one table, other columns).</param>
     /// <returns>The relationship.</returns>
     /// <exception cref="ArgumentException">A column is of another model, both are of one table, the column types differ, the tables
-    /// are already related, or the relationship would make the model's relationships circular.</exception>
-    public ModelRelationship AddRelationship(ModelColumn manyColumn, ModelColumn oneColumn)
+    /// are already related and the new relationship is not an inactive one, an inactive relationship has no active one to sit next to,
+    /// the same two columns are already related, or the relationship would make the model's relationships circular.</exception>
+    public ModelRelationship AddRelationship(ModelColumn manyColumn, ModelColumn oneColumn, bool isActive = true)
     {
         ThrowIfDisposed();
         CheckOwned(manyColumn, nameof(manyColumn));
@@ -175,9 +184,16 @@ public sealed class DataModelWriter : IDisposable
         if (manyColumn.DataType != oneColumn.DataType)
             throw new ArgumentException(
                 $"{manyColumn} is {manyColumn.DataType} but {oneColumn} is {oneColumn.DataType}; related columns need the same data type.", nameof(oneColumn));
-        if (_relationships.Any(r => (r.ManyColumn.Table == many && r.OneColumn.Table == one) || (r.ManyColumn.Table == one && r.OneColumn.Table == many)))
-            throw new ArgumentException($"'{many.Name}' and '{one.Name}' are already related.", nameof(oneColumn));
-        if (Reaches(one, many))
+        var samePair = _relationships.Where(r => (r.ManyColumn.Table == many && r.OneColumn.Table == one) || (r.ManyColumn.Table == one && r.OneColumn.Table == many)).ToList();
+        if (_relationships.Any(r => r.ManyColumn == manyColumn && r.OneColumn == oneColumn))
+            throw new ArgumentException($"{manyColumn} and {oneColumn} are already related.", nameof(oneColumn));
+        if (isActive && samePair.Count > 0)
+            throw new ArgumentException(
+                $"'{many.Name}' and '{one.Name}' already have a relationship, and two tables have only one active relationship. Pass isActive: false to add {manyColumn} -> {oneColumn} as an inactive one (for example for a ship date next to an order date).", nameof(oneColumn));
+        if (!isActive && !samePair.Any(r => r.IsActive && r.ManyColumn.Table == many))
+            throw new ArgumentException(
+                $"An inactive relationship sits next to an active one between the same tables, and '{many.Name}' and '{one.Name}' have none (with '{many.Name}' as the many side). Add the active relationship first.", nameof(isActive));
+        if (isActive && Reaches(one, many))
             throw new ArgumentException($"Relating '{many.Name}' to '{one.Name}' would make the relationships circular.", nameof(oneColumn));
         manyColumn.Builder.IsForeignKey = true;
         oneColumn.Builder.IsPrimaryKey = true;
@@ -185,8 +201,9 @@ public sealed class DataModelWriter : IDisposable
         {
             Name = Guid.NewGuid().ToString("D"),
             From = many.Builder, FromColumn = manyColumn.Builder, To = one.Builder, ToColumn = oneColumn.Builder,
+            IsActive = isActive,
         });
-        var relationship = new ModelRelationship(manyColumn, oneColumn);
+        var relationship = new ModelRelationship(manyColumn, oneColumn, isActive);
         _relationships.Add(relationship);
         return relationship;
     }

@@ -91,13 +91,13 @@ internal static class XlsxWriter
               .Append("\" connection=\"").Append(Xml.Esc(t.IsLinked ? LinkedConnectionName(t) : info.DataSourceName)).Append("\"/>");
         }
         sb.Append("</x15:modelTables>");
-        if (tables.Any(t => t.Relationships.Count > 0))
+        if (tables.Any(t => t.Relationships.Any(r => r.IsActive)))
         {
             // The diagram view reads the relationships from here (by table and column name), not from the model.
             var byId = tables.ToDictionary(t => t.Id);
             sb.Append("<x15:modelRelationships>");
             foreach (var t in tables)
-                foreach (var r in t.Relationships)
+                foreach (var r in t.Relationships.Where(r => r.IsActive))   // an inactive relationship is not listed (H73)
                 {
                     var one = byId[r.PrimaryTableId];
                     sb.Append("<x15:modelRelationship fromTable=\"").Append(Xml.Esc(t.Name))

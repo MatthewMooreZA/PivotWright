@@ -82,6 +82,7 @@ for (int i = 0; i < salesRows; i++)
 var dates = m.Tables["Dates"];
 m.AddRelationship(s["ProductKey"], p["ProductKey"]);
 m.AddRelationship(s["Date"], dates["Date"]);
+if (rolePlay && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Ship Date"], dates["Date"], isActive: false);   // roleplay inactive: the shape of H73
 // calcmf: a second fact table, Stock, related to Products (a second one to Dates would make a loop), with a calculated column on Stock and one on Sales (four tables, two many-side tables)
 if (args.Length > 2 && args[2] == "calcmf")
 {

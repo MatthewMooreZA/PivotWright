@@ -11,6 +11,8 @@ internal sealed class RelationshipDefinition
     public required ColumnBuilder FromColumn { get; init; }
     public required TableBuilder To { get; init; }
     public required ColumnBuilder ToColumn { get; init; }
+    /// <summary>False for a second relationship between two tables (SPEC section 14): stored, but not used for filtering unless a measure asks for it.</summary>
+    public bool IsActive { get; init; } = true;
 }
 
 /// <summary>A relationship after its lookup index was written.</summary>
@@ -30,6 +32,8 @@ internal sealed class EncodedRelationship
     public required long ViolationCount { get; init; }
     /// <summary>Version of the R$ table and its INDEX file: 2 when the primary side is a date table, else 0.</summary>
     public int Version { get; init; }
+    /// <summary>False for an inactive relationship: no measure group dimension, no entry in the workbook's relationship list (SPEC section 14).</summary>
+    public bool IsActive { get; init; } = true;
 
     public string TableName => FileNames.RelationshipTable(ForeignTableId, Name);
 }
@@ -104,6 +108,7 @@ internal static class RelationshipEncoder
             Width = width,
             ViolationCount = violations,
             Version = version,
+            IsActive = rel.IsActive,
         };
 
         using (var s = sink.Create(FileNames.RelationshipIndex(fkTableId, rel.Name, version)))

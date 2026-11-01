@@ -292,7 +292,7 @@ internal static class TableXmlWriter
                     .Int("XMType", (int)col.XmType)
                     .Int("CompressionType", 0)
                     .Long("CompressionParam", 0)
-                    .Int("EncodingHint", t.Hierarchies.Count == 0 && t.CalculatedColumns.Count == 0 && (col.IsRowNumber || col.IsPrimaryKey) ? 1 : 0)
+                    .Int("EncodingHint", t.Hierarchies.Count == 0 && t.CalculatedColumns.Count == 0 && !t.Relationships.Any(r => !r.IsActive) && (col.IsRowNumber || col.IsPrimaryKey) ? 1 : 0)
                     .Long("AggCounter", 0)
                     .Long("WhereCounter", 0)
                     .Long("OrderByCounter", 0));

@@ -94,6 +94,9 @@ var tests = new (string Name, Action Body)[]
     ("Perspective: hierarchies live in the cube annotation, a table shows all its items (H66)", Tests.PerspectiveHierarchiesAndTables),
     ("Perspective: models without perspectives keep their counters", Tests.PerspectiveAbsent),
     ("Perspective: invalid definitions and unsupported models are rejected", Tests.PerspectiveValidation),
+    ("Inactive relationship: files and counters as Excel saves them (H73)", Tests.InactiveRelationship),
+    ("Inactive relationship: workbook lists only active relationships, models without one keep their counters", Tests.InactiveRelationshipWorkbookAndAbsent),
+    ("Inactive relationship: invalid and unsupported shapes are rejected", Tests.InactiveRelationshipValidation),
 };
 
 int failed = 0;
@@ -2317,6 +2320,123 @@ namespace PivotWright.Tests
             foreach (System.Xml.XmlNode a in doc.GetElementsByTagName("Annotation"))
                 if (a["Name"]!.InnerText == "PerspectiveEmptyHierarchyNames") return a["Value"]!.InnerText;
             return null;
+        }
+
+        // H73: Sales[Ship Date] dragged onto Dates[Date] in Diagram View, next to the active relationships of the standard model.
+        private static (DataModelWriter model, ModelTable products, ModelTable dates, ModelTable sales, ModelRelationship inactive) InactiveModel(bool inactive = true, bool measure = true)
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); }
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Ship Date", ColumnDataType.DateTime) });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5, new DateTime(2025, 1, 1).AddDays((i + 3) % 40));
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            model.AddRelationship(sales["Date"], dates["Date"]);
+            var rel = inactive ? model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false) : null!;
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            dates.AddHierarchy("Calendar", "Year", "Month");
+            if (measure) sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            return (model, products, dates, sales, rel);
+        }
+
+        public static void InactiveRelationship()
+        {
+            var (model, _, _, _, rel) = InactiveModel();
+            using (model)
+            {
+                Check.True(!rel.IsActive, "the relationship is inactive");
+                Check.True(model.Relationships.Take(2).All(r => r.IsActive), "the first two are active");
+                var m = SaveKpiModel(model);
+                // Versions of H73: cube and measure groups 21, partitions and script 10, Sales dimension 4, Products 6, Dates unchanged at 5.
+                string cube = PerspectiveText(m, @"Model\.21\.cub\.xml$");
+                Check.True(cube.Contains("<StructureVersion>12</StructureVersion>"), "cube structure 12");
+                PerspectiveText(m, @"MdxScript\.10\.scr\.xml$");
+                string sales = PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                // Three relationships in the Sales dimension and table, three index tables, but only two measure group dimensions.
+                Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(sales, "<ddl300_300:Relationship>").Count, "relationships in the dimension");
+                Check.True(sales.Contains("<StructureVersion>1</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>1</DataVersion>"), "Sales counters");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(sales, "<ColumnID>Ship_x0020_Date</ColumnID>").Count, "escaped column id in the attribute");
+                string det = PerspectiveText(m, @"Model\.0\.cub\\Sales_[^\\]+\.21\.det\.xml$");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(det, "ReferenceMeasureGroupDimension\"").Count, "measure group dimensions");
+                Check.True(det.Contains("<ColumnID>Ship_x0020_Date</ColumnID>"), "escaped column id in the measure group");
+                Check.True(det.Contains("<StructureVersion>9</StructureVersion><CacheVersion>2</CacheVersion><DataVersion>-1</DataVersion>"), "Sales measure group counters");
+                string table = PerspectiveText(m, @"Sales_[^\\]+\.1\.tbl\.xml$");
+                Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(table, "class=\"XMRelationship\"").Count, "relationships in the table");
+                Check.Equal(3, m.Files.Keys.Count(k => k.Contains("INDEX.0.idf") && k.Contains("R$Sales")), "index tables");
+                Check.True(PerspectiveText(m, @"Sales_[^\\]+\.0\.dim\\info\.4\.xml$").Contains("<DataVersion>1</DataVersion><IndexVersion>-1</IndexVersion>"), "Sales dimension information");
+            }
+        }
+
+        public static void InactiveRelationshipWorkbookAndAbsent()
+        {
+            var (model, _, _, _, _) = InactiveModel();
+            using (model)
+            {
+                var ms = new MemoryStream();
+                model.Save(ms);
+                ms.Position = 0;
+                using var zip = new System.IO.Compression.ZipArchive(ms);
+                using var reader = new StreamReader(zip.GetEntry("xl/workbook.xml")!.Open());
+                string workbook = reader.ReadToEnd();
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(workbook, "<x15:modelRelationship ").Count, "relationships in the workbook");
+                Check.True(!workbook.Contains("Ship Date"), "the inactive relationship is not listed");
+            }
+            // The same model without the inactive relationship keeps the hierarchy profile.
+            var (plain, _, _, _, _) = InactiveModel(inactive: false);
+            using (plain)
+            {
+                var m = SaveKpiModel(plain);
+                PerspectiveText(m, @"Model\.18\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipValidation()
+        {
+            var (model, products, dates, sales, _) = InactiveModel(inactive: false);
+            using (model)
+            {
+                // A second relationship between two tables must say it is inactive.
+                Throws<ArgumentException>(() => model.AddRelationship(sales["Ship Date"], dates["Date"]), "a second active relationship", "isActive: false");
+                Throws<ArgumentException>(() => model.AddRelationship(sales["Date"], dates["Date"], isActive: false), "the same columns again", "already related");
+                // An inactive relationship needs an active one first, with the same many side.
+                Throws<ArgumentException>(() => model.AddRelationship(dates["Date"], sales["Date"], isActive: false), "reversed", "Add the active relationship first");
+                var lone = model.CreateTable("Lone", new[] { new ColumnDefinition("Day", ColumnDataType.DateTime) });
+                lone.AddRow(new DateTime(2025, 1, 1));
+                Throws<ArgumentException>(() => model.AddRelationship(lone["Day"], dates["Date"], isActive: false), "no active relationship between the tables", "Add the active relationship first");
+                Check.Equal(2, model.Relationships.Count, "failed calls change nothing");
+                var second = model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false);
+                Check.True(!second.IsActive && model.Relationships[0].IsActive, "IsActive");
+                // Unsupported models are refused when saving.
+                Throws<InvalidOperationException>(() => { using var other = InactiveModel(measure: false).model; other.SaveModelPart(new MemoryStream()); }, "no measure", "AddMeasure");
+                sales["Qty"].IsHidden = true;
+                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "hidden columns", "hidden columns");
+                sales["Qty"].IsHidden = false;
+                dates.MarkAsDateTable("Date");
+                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "date table", "date table");
+            }
+            var (two, _, dates2, sales2, _) = InactiveModel();
+            using (two)
+            {
+                sales2.AddCalculatedColumn("Line", "[Qty]*2", ColumnDataType.Int64);
+                Throws<InvalidOperationException>(() => two.SaveModelPart(new MemoryStream()), "calculated columns", "calculated columns");
+            }
+            // The first relationship pointing to the same table as the inactive one was not seen.
+            var flipped = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var d = flipped.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
+            d.AddRow(new DateTime(2025, 1, 1), 2025, 1);
+            var s = flipped.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Ship Date", ColumnDataType.DateTime) });
+            s.AddRow(new DateTime(2025, 1, 1), new DateTime(2025, 1, 1));
+            flipped.AddRelationship(s["Date"], d["Date"]);
+            flipped.AddRelationship(s["Ship Date"], d["Date"], isActive: false);
+            d.AddHierarchy("Calendar", "Year", "Month");
+            s.AddMeasure("Rows", "COUNTROWS(Sales)");
+            using (flipped) Throws<InvalidOperationException>(() => flipped.SaveModelPart(new MemoryStream()), "first relationship to the same table", "add a relationship to a different table first");
         }
 
         public static void PerspectiveOne()

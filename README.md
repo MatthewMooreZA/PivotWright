@@ -191,9 +191,21 @@ model.AddRelationship(sales["CustomerKey"], customers["CustomerKey"]);
 
 PivotTables can then slice `Sales` by any column of `Products` and `Customers`. Rules, all enforced:
 
-- Both columns need the same data type, and the tables must differ and not already be related (directly or through a cycle).
+- Both columns need the same data type, and the tables must differ and not already be related (directly or through a cycle), except for an inactive relationship (below).
 - The key column of the "one" table must have no blanks and no duplicates (text is compared case-insensitively, like the engine does). This is checked when you call `Save`, which throws an `InvalidOperationException` naming the offending value.
 - Foreign key values with no match are allowed (as in Excel); they show up as BLANK.
+
+#### Inactive relationships and role-playing dates
+
+Two tables have one active relationship. A further one, such as a ship date next to an order date, is inactive, as Power Pivot makes it when you drag a second column onto the date table. Pass `isActive: false` after the active one; a measure uses it with `USERELATIONSHIP`:
+
+```csharp
+model.AddRelationship(sales["Date"], dates["Date"]);                       // active: filters Sales by order date
+var shipped = model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false);   // shipped.IsActive == false
+sales.AddMeasure("Qty by Ship Date", "CALCULATE(SUM(Sales[Qty]), USERELATIONSHIP(Sales[Ship Date], Dates[Date]))");
+```
+
+Written as Excel saves it (`reference/excel-samples/H73_roleplay_inactive_manual.xlsx`, `docs/SPEC.md` section 14). Only the shape of that sample is supported, so `Save` accepts one inactive relationship in a model with hierarchies and a measure, and without a date table, hidden columns, calculated columns, KPIs or perspectives; the first relationship must point to another table than the inactive one (add `Sales -> Products` before the date relationships). Other shapes are refused with a message. Unverified in Excel as a generated file until the `roleplay_inactive` test file is reported.
 
 `SaveModelPart(stream)` writes just the `item.data` part, if you want to inject the model into a workbook of your own.
 
