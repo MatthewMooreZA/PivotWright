@@ -71,11 +71,9 @@ internal sealed class ModelSerializer
         var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
         if (withKpi.Count == 0) return null;
         string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
-        string seen = " Excel-written samples exist only for KPIs in a model with relationships (with or without hierarchies, with or without a date table, with or without hidden columns), without calculated columns.";
+        string seen = " Excel-written samples exist only for KPIs in a model with relationships (with or without hierarchies, with or without a date table, with or without hidden columns, with calculated columns on the many-side table).";
         if (_relationships.Count == 0)
             throw new InvalidOperationException($"The KPI of {name} is in a model without relationships, which was never seen in an Excel-written file. Add a relationship (AddRelationship).{seen}");
-        if (_tables.Any(t => t.CalculatedColumns.Count > 0))
-            throw new InvalidOperationException($"The KPI of {name} is in a model with calculated columns, which was never seen in an Excel-written file.{seen}");
         foreach (var kpiMeasure in withKpi)
         {
             name = $"'{kpiMeasure.Table}'[{kpiMeasure.Name}]";
@@ -100,6 +98,23 @@ internal sealed class ModelSerializer
             foreach (var table in _tables)
                 foreach (var column in table.CalculatedColumns)
                     column.Versions = calc.Columns[(table.Id, column.Id)];
+        // A KPI on top of calculated columns (H55): the KPI edit steps the cube, every measure group, the script and the table Excel saves again
+        // up by one from the numbers of the uncalculated model. Excel also calculated the columns when it created the KPI in H55; the library
+        // writes them uncalculated, as it always does, so the processing steps of that file are not copied.
+        if (calc is not null && kpiTable is not null)
+        {
+            string saveAgain = _tables.First(t => t.Id == kpiTable).Name;
+            if (!calc.Tables.TryGetValue(kpiTable, out var saved))
+                throw new InvalidOperationException($"A KPI together with calculated columns was only seen with the columns on the many-side table (Excel's H55); here '{saveAgain}', the table Excel would save again, has no entry in the calculated-column plan.");
+            if (saved.HoldsColumns)
+                throw new InvalidOperationException($"A KPI together with calculated columns was only seen with the columns on the many-side table (Excel's H55); here '{saveAgain}', the table Excel would save again, holds calculated columns itself.");
+            var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables) { [kpiTable] = saved with { DimensionVersion = saved.DimensionVersion + 1 } };
+            calc = calc with
+            {
+                Cube = calc.Cube + 1, MeasureGroup = (calc.MeasureGroup ?? calc.Cube) + 1, Tables = facts,
+                Script = calc.Script + _measures.Count(m => m.Kpi is not null) + _measures.Count - 1,
+            };
+        }
         var now = DateTime.UtcNow;
         // Excel names the database with 20 upper-case hex digits. A GUID here loads and pivots fine, but Excel
         // then fails to edit the model (Create Hierarchy -> "ASDetail::OnClone2") once a table has two relationships.

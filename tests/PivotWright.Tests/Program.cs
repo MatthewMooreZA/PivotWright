@@ -78,6 +78,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a model without hierarchies (H52)", Tests.KpiPlain),
     ("KPI: a model with a date table (H53)", Tests.KpiDateTable),
     ("KPI: a model with hidden columns (H54)", Tests.KpiHidden),
+    ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
@@ -2397,6 +2398,41 @@ namespace PivotWright.Tests
             }
         }
 
+        // H55 and H56: the KPI on top of a calculated column on the many-side table. Excel calculated the column while it created the
+        // KPI; the library writes it uncalculated, so only the KPI step (one up from the calculated-column numbers) is expected.
+        public static void KpiCalculated()
+        {
+            ModelReader Save(bool workbook)
+            {
+                var (model, total) = KpiModel();
+                using (model)
+                {
+                    model.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    total.AddKpi(1000);
+                    if (!workbook) return SaveKpiModel(model);
+                    string path = Path.Combine(Path.GetTempPath(), "kpi_calc_" + Guid.NewGuid().ToString("N") + ".xlsx");   // the trigger table is added when a workbook is saved
+                    try { model.Save(path); return ModelReader.Read(ModelReader.ItemData(path)); }
+                    finally { File.Delete(path); }
+                }
+            }
+            foreach (bool workbook in new[] { false, true })
+            {
+                var m = Save(workbook);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as without the column");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Check.True(Text(@"Model\.26\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.12.scr.xml</AssemblyFileList>"), "cube 26 and script 12 (the column alone gives 25 and 11)");
+                Text(@"\.cub\\info\.26\.xml$");
+                Text(@"Sales_G\.26\.det\.xml$");
+                Text(@"Products_G\.26\.det\.xml$");
+                Text(@"Products_G\.7\.dim\.xml$");
+                Text(@"Sales_G\.7\.dim\.xml$");
+                Check.True(Text(@"Sales_G\.7\.dim\.xml$").Contains("<Expression>[Qty]*[Amount]</Expression>"), "the column stays a formula");
+                Check.Equal(workbook ? 1 : 0, m.Files.Keys.Count(k => k.Contains("PivotWrightTrigger") && k.EndsWith(".dim.xml", StringComparison.Ordinal)), "trigger table only in the workbook");
+            }
+        }
+
         // H54: the same KPI in a model with a hidden column and hierarchies; every counter one step up from that model's own base.
         public static void KpiHidden()
         {
@@ -2595,8 +2631,8 @@ namespace PivotWright.Tests
                 using (m)
                 {
                     t.AddKpi(1000);
-                    m.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
-                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "calculated column", "calculated columns");
+                    m.Tables["Products"].AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "calculated column on the table Excel saves again", "holds calculated columns itself");
                 }
             }
             {
