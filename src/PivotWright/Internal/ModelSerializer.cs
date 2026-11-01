@@ -127,7 +127,7 @@ internal sealed class ModelSerializer
     }
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
-    // H73): a model with hierarchies and a measure, without a date table, hidden columns, calculated columns, KPIs or perspectives.
+    // H73): a model with hierarchies and a measure, with or without a date table (H76), without hidden columns, calculated columns, KPIs or perspectives.
     // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of the first relationship), or
     // null without an inactive relationship.
     private (string many, string resaved)? ValidateInactiveRelationships()
@@ -136,15 +136,13 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for one inactive relationship in a model with hierarchies and a measure, and without a date table, hidden columns, calculated columns, KPIs or perspectives.";
+        const string seen = " Excel-written samples exist only for one inactive relationship in a model with hierarchies and a measure, with or without a date table, and without hidden columns, calculated columns, KPIs or perspectives.";
         if (inactive.Count > 1)
             throw new InvalidOperationException($"The model has {inactive.Count} inactive relationships; only one was seen in an Excel-written file.{seen}");
         if (_hierarchies.Count == 0)
             throw new InvalidOperationException($"{what} needs the model to have a hierarchy (AddHierarchy).{seen}");
         if (!_measures.Any(m => !m.Helper))
             throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure).{seen}");
-        if (_tables.FirstOrDefault(t => t.DateColumn is not null) is { } date)
-            throw new InvalidOperationException($"{what} is not supported together with the date table '{date.Name}'.{seen}");
         if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden)
             throw new InvalidOperationException($"{what} is not supported together with hidden columns (table '{hidden.Name}').{seen}");
         if (_tables.FirstOrDefault(t => t.CalculatedColumns.Count > 0) is { } calculated)
@@ -335,7 +333,7 @@ internal sealed class ModelSerializer
             var dim = Group(BackupLog.ClassDimension, t.Id, t.Name, dv, dimFolder, tableIds[t.Id].DimensionObjectId);
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", t.IsLinked ? AsslWriter.LinkedDimension(Info, t, names, size) : AsslWriter.Dimension(Info, t, names, size, dv));
-            if (t.IsLinked || !Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable));
+            if (t.IsLinked || !Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable ? (Info.AnyDate ? 2 : 1) : 0));
             dim.Files.AddRange(files);
         }
 

@@ -30,7 +30,7 @@ internal sealed class EncodedRelationship
     public required int Width { get; init; }
     /// <summary>Foreign key rows with a value that has no match in the primary key column.</summary>
     public required long ViolationCount { get; init; }
-    /// <summary>Version of the R$ table and its INDEX file: 2 when the primary side is a date table, else 0.</summary>
+    /// <summary>Version of the R$ table and its INDEX file: 2 when the primary side is a date table (not for an inactive relationship, H76), else 0.</summary>
     public int Version { get; init; }
     /// <summary>False for an inactive relationship: no measure group dimension, no entry in the workbook's relationship list (SPEC section 14).</summary>
     public bool IsActive { get; init; } = true;
@@ -60,7 +60,8 @@ internal static class RelationshipEncoder
         string fkColumnId, string pkTableId, string pkColumnId, StringComparer strings, IFileSink sink,
         Func<EncodedRelationship, string> tableXml)
     {
-        int version = rel.To.DateColumn is not null ? 2 : 0;
+        // An inactive relationship was added after the date table was marked, so its table stays at version 0 (H76).
+        int version = rel.To.DateColumn is not null && rel.IsActive ? 2 : 0;
         // Row number of every primary key value.
         var rows = new Dictionary<object, int>(new KeyComparer(strings));
         int row = 0;

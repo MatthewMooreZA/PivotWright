@@ -2417,8 +2417,18 @@ namespace PivotWright.Tests
                 sales["Qty"].IsHidden = true;
                 Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "hidden columns", "hidden columns");
                 sales["Qty"].IsHidden = false;
+                // A date table is supported (H76): the counters go three further, the dimensions as in H73 one step on from the date profile.
                 dates.MarkAsDateTable("Date");
-                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "date table", "date table");
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.24\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"\\Sales_[^\\]+\.2\.tbl\.xml$");
+                // The inactive relationship's index table stays at version 0 while the active one to the date table is at 2.
+                Check.Equal(1, m.Files.Keys.Count(k => k.Contains("R$Sales") && k.Contains("\\0.R$") && k.EndsWith("INDEX.0.idf")) - 1, "index tables at version 0: the product key and the inactive one");
+                Check.Equal(1, m.Files.Keys.Count(k => k.Contains("2.R$Sales") && k.EndsWith("INDEX.0.idf")), "index table of the active date relationship at version 2");
             }
             var (two, _, dates2, sales2, _) = InactiveModel();
             using (two)
