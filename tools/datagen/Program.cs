@@ -86,8 +86,9 @@ for (int i = 0; i < salesRows; i++)
     else s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
 }
 var dates = m.Tables["Dates"];
-m.AddRelationship(s["ProductKey"], p["ProductKey"]);
-m.AddRelationship(s["Date"], dates["Date"]);
+// "datefirst" (with roleplay): the date relationship before the product one, as a user may add them (which table Excel saves again)
+if (rolePlay && args.Skip(3).Contains("datefirst")) { m.AddRelationship(s["Date"], dates["Date"]); m.AddRelationship(s["ProductKey"], p["ProductKey"]); }
+else { m.AddRelationship(s["ProductKey"], p["ProductKey"]); m.AddRelationship(s["Date"], dates["Date"]); }
 if (rolePlay && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Ship Date"], dates["Date"], isActive: false);   // roleplay inactive: the shape of H73
 if (delivery && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Delivery Date"], dates["Date"], isActive: false);
 if (returned && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Return Date"], dates["Date"], isActive: false);   // roleplay delivery inactive: two inactive relationships
