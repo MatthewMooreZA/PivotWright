@@ -79,6 +79,8 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a model with a date table (H53)", Tests.KpiDateTable),
     ("KPI: a model with hidden columns (H54)", Tests.KpiHidden),
     ("KPI: a one-table model without relationships (H57)", Tests.KpiOneTable),
+    ("KPI: a calculated column on the primary-side table Products (H58)", Tests.KpiCalculatedOnPrimary),
+    ("KPI: a hidden target measure (H59)", Tests.KpiHiddenTarget),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
@@ -2399,6 +2401,55 @@ namespace PivotWright.Tests
             }
         }
 
+        // H59: the target measure of the KPI is hidden. The markup is that of any hidden measure; the hide is one more script edit (12, H48 has 11).
+        public static void KpiHiddenTarget()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var target = model.Tables["Sales"].AddMeasure("Target Qty", "1000");
+                target.IsHidden = true;
+                total.AddKpi(target);
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal("True", ann["[Target Qty]"]["IsPrivate"], "target hidden");
+                Check.True(Encoding.UTF8.GetString(m.Find(@"MdxScript\.12\.scr\.xml$")).Contains("<CalculationReference>[Target Qty]</CalculationReference><CalculationType>Member</CalculationType><Description/><Visible>false</Visible>"), "Visible=false as in H59");
+                Check.Equal("False", ann["[Total Qty]"]["IsPrivate"], "KPI measure visible");
+                Check.True(commands[2].Contains("_Total Qty Goal] = 'Sales'[Target Qty]; "), "goal refers to the hidden target");
+                Check.Equal(6, refs.Count, "calculation properties");
+                Encoding.UTF8.GetString(m.Find(@"MdxScript\.12\.scr\.xml$"));
+                Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+            }
+        }
+
+        // H58: the KPI on top of a calculated column on Products. Products holds the column, so Excel saved the next primary-side table, Dates.
+        public static void KpiCalculatedOnPrimary()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.String) });
+            for (int i = 0; i < 60; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture)); }
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i % 60), 1 + i % 5);
+            model.AddRelationship(sales["ProductKey"], products["ProductKey"]);
+            model.AddRelationship(sales["Date"], dates["Date"]);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            dates.AddHierarchy("Calendar", "Year", "Month");
+            products.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
+            sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+            var m = SaveKpiModel(model);
+            string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+            var (commands, _, refs) = KpiScriptParts(m);
+            Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script");
+            Check.Equal(5, refs.Count, "calculation properties");
+            Check.True(Text(@"Model\.24\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.11.scr.xml</AssemblyFileList>"), "cube 24 and script 11 (the column alone gives 23 and 10)");
+            Text(@"\.cub\\info\.24\.xml$");
+            Check.True(!Text(@"Dates_G\.6\.dim\.xml$").Contains("<Value/>"), "Dates is the table saved again");
+            Text(@"Products_G\.9\.dim\.xml$");
+            Text(@"Sales_G\.3\.dim\.xml$");
+        }
+
         // H57: the same KPI in a one-table model without relationships; every counter one step up from that model's own base.
         public static void KpiOneTable()
         {
@@ -2651,7 +2702,8 @@ namespace PivotWright.Tests
                 {
                     t.AddKpi(1000);
                     m.Tables["Products"].AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
-                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "calculated column on the table Excel saves again", "holds calculated columns itself");
+                    m.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "every primary-side table holds columns", "none");
                 }
             }
             {

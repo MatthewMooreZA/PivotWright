@@ -607,7 +607,9 @@ internal static class AsslWriter
             foreach (var me in measures)
             {
                 var (formatString, formatXml) = MeasureFormatXml(me.Format, m);
-                sb.Append("<CalculationProperty><CalculationReference>[").Append(E(me.Name)).Append("]</CalculationReference><CalculationType>Member</CalculationType><Description/><FormatString>")
+                sb.Append("<CalculationProperty><CalculationReference>[").Append(E(me.Name)).Append("]</CalculationReference><CalculationType>Member</CalculationType><Description/>")
+                  // Excel marks a hidden measure with Visible=false as well as the IsPrivate annotation (H59); the helper measure keeps its verified markup.
+                  .Append(me.Hidden && !me.Helper ? "<Visible>false</Visible>" : "").Append("<FormatString>")
                   .Append(E("'" + formatString.Replace("'", "''") + "'"))
                   .Append("</FormatString><ForeColor/><BackColor/><FontName/><FontSize/><FontFlags/><NonEmptyBehavior/><AssociatedMeasureGroupID/><DisplayFolder/><Language/><Annotations>")
                   .Append("\n                <Annotation>\n                  <Name>Type</Name>\n                  <Value>").Append(me.Kpi is null ? "User" : "Kpi").Append("</Value>\n                </Annotation>")

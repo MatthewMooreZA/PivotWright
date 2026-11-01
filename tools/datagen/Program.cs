@@ -78,7 +78,7 @@ var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeN
 if (args.Length > 2 && (args[2] == "kpi" || args.Skip(2).Contains("kpi"))) totalQty.AddKpi(1000);
 if (args.Length > 2 && args[2] == "kpireversed") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed });   // lower is better (H51)
 if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000); }   // two KPIs (H50)
-if (args.Length > 2 && args[2] == "kpimeasure") totalQty.AddKpi(s.AddMeasure("Target Qty", "1000"));
+if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)
 if (args.Length > 2 && args[2] == "kpistyle") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
 if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
 if (args.Length > 2 && args[2] == "calc")
