@@ -115,6 +115,18 @@ if (args.Length > 2 && args[2] == "kpilayouts")
     p.AddMeasure("Layout C", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.GaugeAscending });
     p.AddMeasure("Layout D", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending });
 }
+// kpiicons: text measures that turn a KPI's hidden status measure into symbols (an experiment: custom "icons" through DAX). Total Qty is red by product
+// and green by category; Scaled Qty (2.8 times) is yellow by product and green by category.
+if (args.Length > 2 && args[2] == "kpiicons")
+{
+    totalQty.AddKpi(1000);
+    s.AddMeasure("Qty Symbol", "SWITCH(TRUE(), ISBLANK([_Total Qty Status]), BLANK(), [_Total Qty Status] < 0, \"\U0001F534\", [_Total Qty Status] = 0, \"\U0001F7E1\", \"\U0001F7E2\")");
+    s.AddMeasure("Qty Arrow", "SWITCH(TRUE(), ISBLANK([_Total Qty Status]), BLANK(), [_Total Qty Status] < 0, \"\u25BC\", [_Total Qty Status] = 0, \"\u25B6\", \"\u25B2\")");
+    s.AddMeasure("Qty Words", "SWITCH(TRUE(), ISBLANK([_Total Qty Status]), BLANK(), [_Total Qty Status] < 0, \"Behind\", [_Total Qty Status] = 0, \"On the way\", \"On target\")");
+    var scaled = s.AddMeasure("Scaled Qty", "SUM(Sales[Qty]) * 2.8", MeasureFormat.WholeNumber);
+    scaled.AddKpi(1000);
+    s.AddMeasure("Scaled Symbol", "SWITCH(TRUE(), ISBLANK([_Scaled Qty Status]), BLANK(), [_Scaled Qty Status] < 0, \"\U0001F534\", [_Scaled Qty Status] = 0, \"\U0001F7E1\", \"\U0001F7E2\")");
+}
 if (args.Skip(2).Contains("hidemeasure")) totalQty.IsHidden = true;   // the KPI measure itself is hidden (H60)
 if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000); }   // two KPIs (H50)
 if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)
