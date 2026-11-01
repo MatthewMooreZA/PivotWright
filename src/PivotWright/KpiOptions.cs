@@ -5,6 +5,8 @@ public enum KpiScale
 {
     /// <summary>Higher is better, with two thresholds and three bands: bad, medium, good (Excel's default).</summary>
     Linear,
+    /// <summary>Lower is better, with two thresholds and three bands: good, medium, bad (Power Pivot's reversed layout, Excel's H51).</summary>
+    LinearReversed,
     /// <summary>The best values lie around the target, with four thresholds and five bands: bad, medium, good, medium, bad.</summary>
     Centered,
 }
@@ -64,9 +66,9 @@ public sealed class KpiOptions
     }
 
     /// <summary>
-    /// Where the status changes, as fractions of the target in ascending order: two for <see cref="KpiScale.Linear"/> and four for
+    /// Where the status changes, as fractions of the target in ascending order: two for <see cref="KpiScale.Linear"/> and <see cref="KpiScale.LinearReversed"/>, and four for
     /// <see cref="KpiScale.Centered"/>. For a target of 1000, <c>0.4, 0.8</c> turns the status at 400 and 800. Default 0.4 and 0.8
-    /// (Linear) or 0.34, 0.67, 1.33 and 1.66 (Centered), the ones Power Pivot proposes.
+    /// (Linear and LinearReversed) or 0.34, 0.67, 1.33 and 1.66 (Centered), the ones Power Pivot proposes.
     /// </summary>
     /// <exception cref="ArgumentException">A fraction is not positive, or they are not ascending.</exception>
     public IReadOnlyList<double>? Thresholds

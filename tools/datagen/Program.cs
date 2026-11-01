@@ -67,6 +67,7 @@ var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeN
 // kpi: a KPI on Total Qty with a target of 1000 and the default thresholds (H47); kpimeasure: the target is the measure Target Qty (H48);
 // kpistyle: the Centered scale with the Road Signs icons (H49)
 if (args.Length > 2 && args[2] == "kpi") totalQty.AddKpi(1000);
+if (args.Length > 2 && args[2] == "kpireversed") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed });   // lower is better (H51)
 if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000); }   // two KPIs (H50)
 if (args.Length > 2 && args[2] == "kpimeasure") totalQty.AddKpi(s.AddMeasure("Target Qty", "1000"));
 if (args.Length > 2 && args[2] == "kpistyle") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });

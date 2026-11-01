@@ -643,8 +643,12 @@ internal static class AsslWriter
         string goal = ratio ? DaxTable(k.GoalMeasure!.Table) + "[" + k.GoalMeasure.Name + "]" : Num((decimal)k.GoalValue!.Value);
         string s12 = new(' ', 12), s16 = new(' ', 16), s20 = new(' ', 20);
         string status = "if(ISBLANK(" + v + "),BLANK(),\n";
-        if (k.Scale == KpiScale.Linear)
-            status += s20 + "If(" + v + "<" + th[0] + ",-1,\n\t" + s16 + "If(" + v + "<" + th[1] + ",0,1)\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
+        if (k.Scale is KpiScale.Linear or KpiScale.LinearReversed)
+        {
+            // Reversed (H51): the same thresholds, the status values the other way round.
+            string low = k.Scale == KpiScale.Linear ? "-1" : "1", high = k.Scale == KpiScale.Linear ? "1" : "-1";
+            status += s20 + "If(" + v + "<" + th[0] + "," + low + ",\n\t" + s16 + "If(" + v + "<" + th[1] + ",0," + high + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
+        }
         else
             status += s16 + "If(" + v + "<" + th[1] + ",\n\t" + s16 + "If(" + v + "<" + th[0] + ",-1,0),\n\t" + s16 + "If(" + v + "<" + th[2] + ",1,\n\t\t"
                 + s16 + "If(" + v + "<" + th[3] + ",0,-1)\n\t" + s16 + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";

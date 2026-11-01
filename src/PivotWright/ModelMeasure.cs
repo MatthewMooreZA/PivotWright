@@ -87,8 +87,8 @@ public sealed class ModelMeasure
         Table.Model.ThrowIfDisposed();
         if (_kpi is not null) throw new InvalidOperationException($"{this} already has a KPI; a measure has at most one.");
         options ??= new KpiOptions();
-        int count = options.Scale == KpiScale.Linear ? 2 : 4;
-        var thresholds = options.Thresholds ?? (options.Scale == KpiScale.Linear ? new[] { 0.4, 0.8 } : new[] { 0.34, 0.67, 1.33, 1.66 });
+        int count = options.Scale == KpiScale.Centered ? 4 : 2;
+        var thresholds = options.Thresholds ?? (options.Scale == KpiScale.Centered ? new[] { 0.34, 0.67, 1.33, 1.66 } : new[] { 0.4, 0.8 });
         if (thresholds.Count != count)
             throw new ArgumentException($"The {options.Scale} scale takes {count} thresholds, but {thresholds.Count} were given.", nameof(options));
         var definition = new KpiDefinition

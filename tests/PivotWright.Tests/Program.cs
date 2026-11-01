@@ -74,6 +74,7 @@ var tests = new (string Name, Action Body)[]
     ("Calculated column: invalid definitions are rejected", Tests.CalculatedColumnValidation),
     ("KPI: script, annotations and status measures as in Excel's H47, H48 and H49", Tests.KpiScripts),
     ("KPI: two KPIs in one model (H50)", Tests.KpiTwo),
+    ("KPI: lower is better, the LinearReversed scale (H51)", Tests.KpiReversed),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
@@ -2393,6 +2394,25 @@ namespace PivotWright.Tests
             }
         }
 
+        // H51: lower is better. Only KpiStatusType (LinearReversed) and the status values change; thresholds and ordering stay.
+        public static void KpiReversed()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                total.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed });
+                var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                Check.Equal(MeasuresHeader + "CREATE MEASURE 'Sales'[Total Qty]=SUM(Sales[Qty]);\nCREATE MEASURE 'Sales'[_Total Qty Goal] = 1000; \nCREATE MEASURE 'Sales'[_Total Qty Status] = if(ISBLANK('Sales'[Total Qty]),BLANK(),\n                    If('Sales'[Total Qty]<400,1,\n\t                If('Sales'[Total Qty]<800,0,-1)\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Total Qty] AS Measures.[Total Qty], ASSOCIATED_MEASURE_GROUP = 'Sales', GOAL = Measures.[_Total Qty Goal], STATUS = Measures.[_Total Qty Status], STATUS_GRAPHIC = 'Traffic Light - Single';\n",
+                    commands[1], "H51 command");
+                var a = ann["[Total Qty]"];
+                Check.Equal("LinearReversed", a["KpiStatusType"], "KpiStatusType");
+                Check.Equal("Ascending", a["KpiThresholdOrdering"], "ordering stays Ascending");
+                Check.Equal("2", a["KpiThresholdCount"], "two thresholds");
+                Check.Equal("400", a["KpiThreshold_0"], "threshold 0");
+                Check.Equal("800", a["KpiThreshold_1"], "threshold 1");
+            }
+        }
+
         // H50: a second KPI changes only the script (version 12 with the extra measure); measures keep the order added.
         public static void KpiTwo()
         {
@@ -2472,6 +2492,7 @@ namespace PivotWright.Tests
                     Throws<ArgumentException>(() => total.AddKpi(t.AddMeasure("X", "1")), "measure of another model", "another DataModelWriter");
                 }
                 Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Thresholds = new[] { 0.4, 0.8, 1.2 } }), "three thresholds for Linear", "2 thresholds");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, Thresholds = new[] { 0.4 } }), "one threshold for LinearReversed", "2 thresholds");
                 Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, Thresholds = new[] { 0.4, 0.8 } }), "two thresholds for Centered", "4 thresholds");
                 Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.8, 0.4 } }, "descending thresholds", "ascending");
                 Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.0, 0.4 } }, "zero threshold", "positive");
