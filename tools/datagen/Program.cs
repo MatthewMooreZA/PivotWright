@@ -93,7 +93,15 @@ if (args.Length > 2 && args[2] == "kpimany")
 // kpistyles: one KPI per icon style on measures Style 01 to Style 05 with the values 1 to 5 (H61, Part A; the gauge takes the five-band layout)
 if (args.Length > 2 && args[2] == "kpistyles")
     for (int n = 1; n <= 5; n++)
-        s.AddMeasure($"Style 0{n}", n.ToString()).AddKpi(1000, n == 5 ? new KpiOptions { Scale = KpiScale.LinearFiveBands, IconStyle = KpiIconStyle.GaugeAscending } : new KpiOptions { IconStyle = KpiIconStyle.All[n - 1] });
+        s.AddMeasure($"Style 0{n}", n.ToString()).AddKpi(1000, n == 5 ? new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending } : new KpiOptions { IconStyle = KpiIconStyle.All[n - 1] });
+// kpilayouts: the four layouts of H62 on measures of the Products table
+if (args.Length > 2 && args[2] == "kpilayouts")
+{
+    p.AddMeasure("Layout A", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed });
+    p.AddMeasure("Layout B", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, IconStyle = KpiIconStyle.GaugeAscending });
+    p.AddMeasure("Layout C", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.GaugeAscending });
+    p.AddMeasure("Layout D", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending });
+}
 if (args.Skip(2).Contains("hidemeasure")) totalQty.IsHidden = true;   // the KPI measure itself is hidden (H60)
 if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000); }   // two KPIs (H50)
 if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)

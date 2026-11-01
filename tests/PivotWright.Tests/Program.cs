@@ -83,6 +83,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a hidden target measure (H59)", Tests.KpiHiddenTarget),
     ("KPI: a hidden KPI measure (H60)", Tests.KpiHiddenMeasure),
     ("KPI: the five icon styles, the gauge with five states (H61)", Tests.KpiIconStyles),
+    ("KPI: the four band layouts with three-state and five-state icons (H62)", Tests.KpiLayouts),
     ("KPI: four KPIs with a plain and a hidden measure beside them (extrapolated)", Tests.KpiMany),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
@@ -2435,7 +2436,7 @@ namespace PivotWright.Tests
                 var sales = model.Tables["Sales"];
                 for (int i = 0; i < 4; i++)
                     sales.AddMeasure("Style 0" + (i + 1), (i + 1).ToString()).AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.All[i] });
-                var gauge = sales.AddMeasure("Style 05", "5").AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearFiveBands, IconStyle = KpiIconStyle.GaugeAscending });
+                var gauge = sales.AddMeasure("Style 05", "5").AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending });
                 Check.Equal("0.2,0.4,0.6,0.8", string.Join(",", gauge.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "gauge defaults");
                 var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
                 string[] graphics = { "Traffic Light - Single", "Road Signs", "Traffic Light", "Shapes", "Gauge - Ascending" };
@@ -2447,6 +2448,33 @@ namespace PivotWright.Tests
                 Check.Equal("2", ann["[Style 04]"]["KpiThresholdCount"], "three-state styles keep two thresholds");
                 string gaugeCommand = commands.First(c => c.Contains("[Style 05]"));
                 Check.True(gaugeCommand.Contains("CREATE MEASURE 'Sales'[_Style 05 Status] = if(ISBLANK('Sales'[Style 05]),BLANK(),\n                If('Sales'[Style 05]<400,\n\t                If('Sales'[Style 05]<200,-2,-1),\n\t                If('Sales'[Style 05]<600,0,\n\t\t                If('Sales'[Style 05]<800,1,2)\n\t                )\n                )\n            )\n            ; \n"), "H61 gauge status");
+            }
+        }
+
+        // H62: the four layouts not seen before, on measures of the Products table. CenteredReversed with three-state icons negates the Centered values;
+        // the gauge reversed negates its linear ones; the centered gauge has eight thresholds and nine bands (-2 up to 2 and back).
+        public static void KpiLayouts()
+        {
+            var (model, _) = KpiModel();
+            using (model)
+            {
+                var products = model.Tables["Products"];
+                products.AddMeasure("Layout A", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed });
+                products.AddMeasure("Layout B", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed, IconStyle = KpiIconStyle.GaugeAscending });
+                products.AddMeasure("Layout C", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.GaugeAscending });
+                var d = products.AddMeasure("Layout D", "1").AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending });
+                Check.Equal("0.2,0.4,0.6,0.8,1.2,1.4,1.6,1.8", string.Join(",", d.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "centered gauge defaults");
+                var (commands, ann, _) = KpiScriptParts(SaveKpiModel(model));
+                string StatusOf(string name) { string c = commands.First(c => c.Contains("CREATE KPI CURRENTCUBE.[" + name + "]")); int i = c.IndexOf("Status] =", StringComparison.Ordinal); return c[i..c.IndexOf("CREATE KPI", StringComparison.Ordinal)]; }
+                Check.Equal("Status] = if(ISBLANK('Products'[Layout A]),BLANK(),\n                If('Products'[Layout A]<670,\n\t                If('Products'[Layout A]<340,1,0),\n\t                If('Products'[Layout A]<1330,-1,\n\t\t                If('Products'[Layout A]<1660,0,1)\n\t                )\n                )\n            )\n            ; \n", StatusOf("Layout A"), "H62 layout A");
+                Check.Equal("Status] = if(ISBLANK('Products'[Layout B]),BLANK(),\n                If('Products'[Layout B]<400,\n\t                If('Products'[Layout B]<200,2,1),\n\t                If('Products'[Layout B]<600,0,\n\t\t                If('Products'[Layout B]<800,-1,-2)\n\t                )\n                )\n            )\n            ; \n", StatusOf("Layout B"), "H62 layout B");
+                Check.Equal("Status] = if(ISBLANK('Products'[Layout D]),BLANK(),\n                If('Products'[Layout D]<800,\n\t                If('Products'[Layout D]<400,\n\t\t                If('Products'[Layout D]<200,2,1),\n\t\t                    If('Products'[Layout D]<600,0,-1)\n\t                    ),\n\t                    If('Products'[Layout D]<1400,\n\t\t                    If('Products'[Layout D]<1200,-2,-1),\n\t\t                        If('Products'[Layout D]<1600,0,\n\t\t\t                        If('Products'[Layout D]<1800,1,2)\n\t\t                )\n\t                )\n                )\n            )\n            ; \n", StatusOf("Layout D"), "H62 layout D");
+                Check.True(StatusOf("Layout C").Contains("If('Products'[Layout C]<200,-2,-1)") && StatusOf("Layout C").Contains("If('Products'[Layout C]<1200,2,1)") && StatusOf("Layout C").Contains("If('Products'[Layout C]<1800,-1,-2)"), "H62 layout C: the values rise to 2 and fall again");
+                Check.Equal("CenteredReversed", ann["[Layout A]"]["KpiStatusType"], "type A");
+                Check.Equal("LinearReversed", ann["[Layout B]"]["KpiStatusType"], "type B");
+                Check.Equal("4", ann["[Layout B]"]["KpiThresholdCount"], "four thresholds for the reversed gauge");
+                Check.Equal("8", ann["[Layout C]"]["KpiThresholdCount"], "eight thresholds for the centered gauge");
+                Check.Equal("1800", ann["[Layout D]"]["KpiThreshold_7"], "last threshold");
             }
         }
 
@@ -2768,8 +2796,8 @@ namespace PivotWright.Tests
                 Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.8, 0.4 } }, "descending thresholds", "ascending");
                 Throws<ArgumentException>(() => new KpiOptions { Thresholds = new[] { 0.0, 0.4 } }, "zero threshold", "positive");
                 Throws<ArgumentOutOfRangeException>(() => new KpiOptions { Scale = (KpiScale)7 }, "scale out of range");
-                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearFiveBands }), "five bands with three-state icons", "GaugeAscending");
-                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending }), "gauge with three bands", "LinearFiveBands");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending, Thresholds = new[] { 0.4, 0.8 } }), "the gauge needs four thresholds", "takes 4 thresholds");
+                Throws<ArgumentException>(() => total.AddKpi(1000, new KpiOptions { Scale = KpiScale.CenteredReversed, IconStyle = KpiIconStyle.GaugeAscending, Thresholds = new[] { 0.2, 0.4, 0.6, 0.8 } }), "the centered gauge needs eight thresholds", "takes 8 thresholds");
                 Check.True(total.Kpi is null, "failed calls change nothing");
                 var kpi = total.AddKpi(1000);
                 Check.Equal("0.4,0.8", string.Join(",", kpi.Thresholds.Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))), "default thresholds");

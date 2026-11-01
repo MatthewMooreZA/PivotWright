@@ -645,25 +645,67 @@ internal static class AsslWriter
         string v = ratio ? value + "/" + t + "[" + GoalName(me) + "]" : value;
         var th = k.Thresholds.Select(f => ratio ? Num((decimal)f) : Num((decimal)f * (decimal)k.GoalValue!.Value)).ToList();
         string goal = ratio ? DaxTable(k.GoalMeasure!.Table) + "[" + k.GoalMeasure.Name + "]" : Num((decimal)k.GoalValue!.Value);
-        string s12 = new(' ', 12), s16 = new(' ', 16), s20 = new(' ', 20);
-        string status = "if(ISBLANK(" + v + "),BLANK(),\n";
-        if (k.Scale is KpiScale.Linear or KpiScale.LinearReversed)
-        {
-            // Reversed (H51): the same thresholds, the status values the other way round.
-            string low = k.Scale == KpiScale.Linear ? "-1" : "1", high = k.Scale == KpiScale.Linear ? "1" : "-1";
-            status += s20 + "If(" + v + "<" + th[0] + "," + low + ",\n\t" + s16 + "If(" + v + "<" + th[1] + ",0," + high + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
-        }
-        else
-        {
-            // Five bands: Centered (H49) rises to the target and falls again, the five-state gauge (H61) rises from -2 to 2.
-            string[] st = k.Scale == KpiScale.Centered ? new[] { "-1", "0", "1", "0", "-1" } : new[] { "-2", "-1", "0", "1", "2" };
-            status += s16 + "If(" + v + "<" + th[1] + ",\n\t" + s16 + "If(" + v + "<" + th[0] + "," + st[0] + "," + st[1] + "),\n\t" + s16 + "If(" + v + "<" + th[2] + "," + st[2] + ",\n\t\t"
-                + s16 + "If(" + v + "<" + th[3] + "," + st[3] + "," + st[4] + ")\n\t" + s16 + ")\n" + s16 + ")\n" + s12 + ")\n" + s12 + "; \n";
-        }
+        string status = "if(ISBLANK(" + v + "),BLANK(),\n" + StatusTree(v, th, StatusValues(k));
         return "CREATE MEASURE " + t + "[" + GoalName(me) + "] = " + goal + "; \n"
              + "CREATE MEASURE " + t + "[" + StatusName(me) + "] = " + status
              + "CREATE KPI CURRENTCUBE.[" + me.Name + "] AS Measures.[" + me.Name + "], ASSOCIATED_MEASURE_GROUP = '" + me.Table.Replace("'", "''")
              + "', GOAL = Measures.[" + GoalName(me) + "], STATUS = Measures.[" + StatusName(me) + "], STATUS_GRAPHIC = '" + k.Graphic + "';\n";
+    }
+
+    /// <summary>
+    /// The status each band gets, lowest band first. A linear layout rises from -m to m (m is 1 for three-state icons and 2 for the gauge), a
+    /// centered one rises and falls again; the reversed layouts are the same values negated (H49, H51, H61, H62).
+    /// </summary>
+    private static List<int> StatusValues(KpiDefinition k)
+    {
+        int states = KpiIconStyle.FromName(k.Graphic).States, m = (states - 1) / 2;
+        var up = Enumerable.Range(-m, states).ToList();
+        var values = k.Scale is KpiScale.Centered or KpiScale.CenteredReversed ? up.Concat(Enumerable.Reverse(up.Take(states - 1))).ToList() : up;
+        return k.Scale is KpiScale.LinearReversed or KpiScale.CenteredReversed ? values.Select(x => -x).ToList() : values;
+    }
+
+    /// <summary>
+    /// The nested IF Excel writes for 3, 5 or 9 bands, with its exact indentation (tabs and spaces as in H47, H49 and H62), ending in "; ".
+    /// </summary>
+    private static string StatusTree(string v, List<string> th, List<int> x)
+    {
+        string S(int n) => new(' ', n);
+        string c(int i) => v + "<" + th[i];
+        var sb = new StringBuilder();
+        void Line(string tabs, int spaces, string text) => sb.Append(tabs).Append(S(spaces)).Append(text).Append('\n');
+        switch (x.Count)
+        {
+            case 3:
+                Line("", 20, "If(" + c(0) + "," + x[0] + ",");
+                Line("\t", 16, "If(" + c(1) + "," + x[1] + "," + x[2] + ")");
+                Line("", 16, ")");
+                break;
+            case 5:
+                Line("", 16, "If(" + c(1) + ",");
+                Line("\t", 16, "If(" + c(0) + "," + x[0] + "," + x[1] + "),");
+                Line("\t", 16, "If(" + c(2) + "," + x[2] + ",");
+                Line("\t\t", 16, "If(" + c(3) + "," + x[3] + "," + x[4] + ")");
+                Line("\t", 16, ")");
+                Line("", 16, ")");
+                break;
+            default:   // 9 bands: the gauge in a centered layout (H62)
+                Line("", 16, "If(" + c(3) + ",");
+                Line("\t", 16, "If(" + c(1) + ",");
+                Line("\t\t", 16, "If(" + c(0) + "," + x[0] + "," + x[1] + "),");
+                Line("\t\t", 20, "If(" + c(2) + "," + x[2] + "," + x[3] + ")");
+                Line("\t", 20, "),");
+                Line("\t", 20, "If(" + c(5) + ",");
+                Line("\t\t", 20, "If(" + c(4) + "," + x[4] + "," + x[5] + "),");
+                Line("\t\t", 24, "If(" + c(6) + "," + x[6] + ",");
+                Line("\t\t\t", 24, "If(" + c(7) + "," + x[7] + "," + x[8] + ")");
+                Line("\t\t", 16, ")");
+                Line("\t", 16, ")");
+                Line("", 16, ")");
+                break;
+        }
+        Line("", 12, ")");
+        Line("", 12, "; ");
+        return sb.ToString();
     }
 
     private static string Annotation(string name, string value) =>
@@ -676,7 +718,7 @@ internal static class AsslWriter
         var sb = new StringBuilder();
         sb.Append(Annotation("GoalType", ratio ? "Measure" : "StaticValue"));
         if (!ratio) sb.Append(Annotation("GoalValue", Num((decimal)k.GoalValue!.Value)));
-        sb.Append(Annotation("KpiStatusType", k.Scale == KpiScale.LinearFiveBands ? "Linear" : k.Scale.ToString()))   // Excel calls the gauge layout Linear with four thresholds (H61)
+        sb.Append(Annotation("KpiStatusType", k.Scale.ToString()))
           .Append(Annotation("KpiThresholdType", ratio ? "Percentage" : "Absolute"))
           .Append(Annotation("KpiThresholdOrdering", "Ascending"))
           .Append(Annotation("KpiThresholdCount", k.Thresholds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
