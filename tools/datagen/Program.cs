@@ -22,6 +22,15 @@ if (args.Length > 2 && args[2] == "twotable")   // two tables, one relationship,
     m.Save(Path.Combine(dir, args[1] + ".xlsx"));
     return;
 }
+if (args.Length > 2 && args[2] == "onetable")   // one table, no relationship, no hierarchy, one measure (the base for a KPI in a model without relationships)
+{
+    var only = m.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
+    for (int i = 0; i < 500; i++) only.AddRow(1 + i % 12, 1 + i % 5, (decimal)(10 + i % 40));
+    var oneMeasure = only.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+    if (args.Skip(2).Contains("kpi")) oneMeasure.AddKpi(1000);
+    m.Save(Path.Combine(dir, args[1] + ".xlsx"));
+    return;
+}
 var p = m.CreateTable("Products", new[] { Col("Products", "ProductKey", ColumnDataType.Int64), Col("Products", "Category", ColumnDataType.String, "CategoryOrder"), Col("Products", "CategoryOrder", ColumnDataType.Int64), Col("Products", "Product", ColumnDataType.String) });
 string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
