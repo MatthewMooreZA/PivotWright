@@ -722,9 +722,11 @@ internal static class AsslWriter
           .Append(Annotation("KpiThresholdType", ratio ? "Percentage" : "Absolute"))
           .Append(Annotation("KpiThresholdOrdering", "Ascending"))
           .Append(Annotation("KpiThresholdCount", k.Thresholds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        for (int i = 0; i < k.Thresholds.Count; i++)
-            sb.Append(Annotation("KpiThreshold_" + i, Num(ratio ? (decimal)k.Thresholds[i] * 100m : (decimal)k.Thresholds[i] * (decimal)k.GoalValue!.Value)));
+        // Excel lists the first two thresholds, then the four descriptions, then the other thresholds (H49, H61, H62, H63).
+        string Threshold(int i) => Annotation("KpiThreshold_" + i, Num(ratio ? (decimal)k.Thresholds[i] * 100m : (decimal)k.Thresholds[i] * (decimal)k.GoalValue!.Value));
+        for (int i = 0; i < Math.Min(2, k.Thresholds.Count); i++) sb.Append(Threshold(i));
         sb.Append(Annotation("ValueDescription", "")).Append(Annotation("GoalDescription", "")).Append(Annotation("StatusDescription", "")).Append(Annotation("TrendDescription", ""));
+        for (int i = 2; i < k.Thresholds.Count; i++) sb.Append(Threshold(i));
         if (ratio) sb.Append(Annotation("GoalMeasure", k.GoalMeasure!.Name)).Append(Annotation("GoalMeasureTableName", k.GoalMeasure.Table));
         return sb.ToString();
     }

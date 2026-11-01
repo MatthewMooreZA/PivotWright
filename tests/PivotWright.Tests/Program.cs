@@ -84,6 +84,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a hidden KPI measure (H60)", Tests.KpiHiddenMeasure),
     ("KPI: the five icon styles, the gauge with five states (H61)", Tests.KpiIconStyles),
     ("KPI: the four band layouts with three-state and five-state icons (H62)", Tests.KpiLayouts),
+    ("KPI: own gauge thresholds and Excel's annotation order (H63)", Tests.KpiCustomGaugeThresholds),
     ("KPI: four KPIs with a plain and a hidden measure beside them (extrapolated)", Tests.KpiMany),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
@@ -2449,6 +2450,24 @@ namespace PivotWright.Tests
                 string gaugeCommand = commands.First(c => c.Contains("[Style 05]"));
                 Check.True(gaugeCommand.Contains("CREATE MEASURE 'Sales'[_Style 05 Status] = if(ISBLANK('Sales'[Style 05]),BLANK(),\n                If('Sales'[Style 05]<400,\n\t                If('Sales'[Style 05]<200,-2,-1),\n\t                If('Sales'[Style 05]<600,0,\n\t\t                If('Sales'[Style 05]<800,1,2)\n\t                )\n                )\n            )\n            ; \n"), "H61 gauge status");
             }
+        }
+
+        // H63: a gauge from scratch with own thresholds (110, 475, 710, 1030 of 1000); the thresholds are the fractions times the target.
+        public static void KpiCustomGaugeThresholds()
+        {
+            using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var t = model.CreateTable("Table1", new[] { new ColumnDefinition("Value", ColumnDataType.Int64) });
+            for (int i = 1; i <= 5; i++) t.AddRow(i * 100);
+            t.AddMeasure("Val", "SUM(Table1[Value])").AddKpi(1000, new KpiOptions { IconStyle = KpiIconStyle.GaugeAscending, Thresholds = new[] { 0.11, 0.475, 0.71, 1.03 } });
+            var m = SaveKpiModel(model);
+            var (commands, ann, _) = KpiScriptParts(m);
+            Check.Equal(MeasuresHeader + "CREATE MEASURE 'Table1'[Val]=SUM(Table1[Value]);\nCREATE MEASURE 'Table1'[_Val Goal] = 1000; \nCREATE MEASURE 'Table1'[_Val Status] = if(ISBLANK('Table1'[Val]),BLANK(),\n                If('Table1'[Val]<475,\n\t                If('Table1'[Val]<110,-2,-1),\n\t                If('Table1'[Val]<710,0,\n\t\t                If('Table1'[Val]<1030,1,2)\n\t                )\n                )\n            )\n            ; \nCREATE KPI CURRENTCUBE.[Val] AS Measures.[Val], ASSOCIATED_MEASURE_GROUP = 'Table1', GOAL = Measures.[_Val Goal], STATUS = Measures.[_Val Status], STATUS_GRAPHIC = 'Gauge - Ascending';\n",
+                commands[1], "H63 command");
+            Check.Equal("110|475|710|1030", string.Join("|", Enumerable.Range(0, 4).Select(i => ann["[Val]"]["KpiThreshold_" + i])), "thresholds");
+            // Excel's order of the annotations: two thresholds, the descriptions, the other thresholds.
+            string script = Encoding.UTF8.GetString(m.Find(@"MdxScript\.\d+\.scr\.xml$"));
+            var order = System.Text.RegularExpressions.Regex.Matches(script, @"<Name>(KpiThreshold_\d|\w+Description)</Name>").Select(x => x.Groups[1].Value).ToList();
+            Check.Equal("KpiThreshold_0|KpiThreshold_1|ValueDescription|GoalDescription|StatusDescription|TrendDescription|KpiThreshold_2|KpiThreshold_3", string.Join("|", order), "annotation order as in H49, H61, H62 and H63");
         }
 
         // H62: the four layouts not seen before, on measures of the Products table. CenteredReversed with three-state icons negates the Centered values;
