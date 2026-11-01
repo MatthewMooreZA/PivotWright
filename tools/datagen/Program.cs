@@ -66,10 +66,19 @@ else
     var d = m.CreateTable("Dates", new[] { Col("Dates", "Date", ColumnDataType.DateTime), Col("Dates", "Year", ColumnDataType.Int64), Col("Dates", "Month", ColumnDataType.String, "MonthNumber"), Col("Dates", "MonthNumber", ColumnDataType.Int64) });
     for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
 }
-var s = m.CreateTable("Sales", new[] { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) });
+// roleplay: Sales gets a second date column, "Ship Date", and only Date is related to Dates; Matthew adds the Ship Date relationship in
+// Excel's Diagram View (the base for the role-playing date samples, TODO item 7.1)
+bool rolePlay = args.Length > 2 && args[2] == "roleplay";
+var salesDefs = new List<ColumnDefinition> { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) };
+if (rolePlay) salesDefs.Add(Col("Sales", "Ship Date", ColumnDataType.DateTime));
+var s = m.CreateTable("Sales", salesDefs);
 int salesRows = args.Select(a => a.StartsWith("rows=") ? int.Parse(a[5..]) : 0).FirstOrDefault(n => n > 0);   // "rows=1100000" for a table of several segments
 if (salesRows == 0) salesRows = 1000;
-for (int i = 0; i < salesRows; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
+for (int i = 0; i < salesRows; i++)
+{
+    if (rolePlay) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365));
+    else s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
+}
 var dates = m.Tables["Dates"];
 m.AddRelationship(s["ProductKey"], p["ProductKey"]);
 m.AddRelationship(s["Date"], dates["Date"]);
