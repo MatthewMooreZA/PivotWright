@@ -25,7 +25,7 @@ Read first: `docs/SPEC.md` (the full specification as known), `README.md` (API, 
 | License | MIT (LICENSE, csproj) |
 | NuGet packaging | **`0.1.0-preview.1` (2026-10-11) and `0.1.0-preview.2` (2026-10-20, tag on `830111f`: hidden columns, the date table, `AddDateTable`, distinct Ordinals) published on nuget.org**, id `PivotWright`. Metadata, README, snupkg symbols and SourceLink set up. `release.yml` publishes on `v*` tags via nuget.org trusted publishing (environment `nuget` with required reviewer, secret `NUGET_USER` = nuget.org username; no API key) |
 
-Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 78 tests, all pass. The icon styles and band layouts (H61, H62) are done and Excel-verified for the generated files `kpi_styles_v1` is not yet sent, `kpi_kpilayouts_v1` passed. Nothing but the .NET 8 SDK is needed.
+Build and test: `dotnet build`, `dotnet run --project tests/PivotWright.Tests` — 78 tests, all pass. The icon styles and band layouts (H61, H62) are implemented; `kpi_kpilayouts_v1` is Excel-verified, `kpi_styles_v1` (`datagen ... kpistyles`, the five icon styles) is not yet tested. Nothing but the .NET 8 SDK is needed.
 
 ## 2. Immediate next steps, in order
 
