@@ -106,9 +106,9 @@ internal sealed class ModelInfo
     public int KpiScriptVersion { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => Calc?.Cube ?? (InactiveProfile ? (AnyDate ? 21 : AnyHierarchy ? 18 : 1) + 1 + 2 * InactiveCount : PerspectiveProfile ? 20 : KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
+    public int CubeVersion => Calc?.Cube ?? (InactiveProfile ? (AnyDate || HiddenProfile ? 21 : AnyHierarchy ? 18 : 1) + 1 + 2 * InactiveCount : PerspectiveProfile ? 20 : KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
-    public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? (KpiProfile ? 21 : 20) : CubeVersion);
+    public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? (InactiveProfile ? CubeVersion - 1 : KpiProfile ? 21 : 20) : CubeVersion);
     public int ScriptVersion => Calc?.Script ?? (InactiveProfile ? (AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile ? 10 : KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (InactiveProfile ? (AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile || AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
@@ -616,7 +616,7 @@ internal static class AsslWriter
             }
             sb.Append("</Dimension>");
         }
-        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.Calc?.CubeStructure ?? (m.InactiveProfile ? (m.AnyDate ? 12 : m.AnyHierarchy ? 11 : 0) + m.InactiveCount : m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0)) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
+        sb.Append("</Dimensions><Kpis/><Actions/><StructureVersion>" + (m.Calc?.CubeStructure ?? (m.InactiveProfile ? (m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0) + m.InactiveCount : m.AnyDate || m.HiddenProfile ? 12 : m.AnyHierarchy ? 11 : 0)) + "</StructureVersion><DataVersion>-1</DataVersion><CalcVersion>0</CalcVersion>");
         sb.Append("<LastBindingChange>1601-01-01T00:00:00</LastBindingChange><LastUpdate>").Append(T(m.HiddenProfile ? m.EditedAt.AddMilliseconds(200) : m.Created)).Append("</LastUpdate>");
         sb.Append("<MeasureGroupFileList>").Append(E(string.Join(";", (m.CalculatedProfile || m.KpiProfile || m.InactiveProfile ? tables.OrderBy(t => t.Id, StringComparer.Ordinal).ToList() : tables).Select(t => t.Id + "." + m.MeasureGroupVersionOf(t.Id) + ".det.xml")))).Append("</MeasureGroupFileList>");
         sb.Append(m.PerspectiveProfile

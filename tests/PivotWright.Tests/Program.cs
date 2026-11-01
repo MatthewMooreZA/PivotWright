@@ -2488,11 +2488,17 @@ namespace PivotWright.Tests
                 Check.True(!second.IsActive && model.Relationships[0].IsActive, "IsActive");
                 // Unsupported models are refused when saving.
                 Throws<InvalidOperationException>(() => { using var other = InactiveModel(measure: false).model; other.SaveModelPart(new MemoryStream()); }, "no measure", "AddMeasure");
+                // Hidden columns are supported with hierarchies and without a date table (H80): the cube 24, the measure groups one behind.
                 sales["Qty"].IsHidden = true;
-                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "hidden columns", "hidden columns");
+                var hiddenModel = SaveKpiModel(model);
+                PerspectiveText(hiddenModel, @"Model\.24\.cub\.xml$");
+                PerspectiveText(hiddenModel, @"Sales_[^\\]+\.23\.det\.xml$");
+                PerspectiveText(hiddenModel, @"MdxScript\.10\.scr\.xml$");
+                // ... but not together with a date table, which was not seen.
+                dates.MarkAsDateTable("Date");
+                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "hidden columns with a date table", "without a date table");
                 sales["Qty"].IsHidden = false;
                 // A date table is supported (H76): the counters go three further, the dimensions as in H73 one step on from the date profile.
-                dates.MarkAsDateTable("Date");
                 var m = SaveKpiModel(model);
                 PerspectiveText(m, @"Model\.24\.cub\.xml$");
                 PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
