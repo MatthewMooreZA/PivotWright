@@ -82,6 +82,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: a calculated column on the primary-side table Products (H58)", Tests.KpiCalculatedOnPrimary),
     ("KPI: a hidden target measure (H59)", Tests.KpiHiddenTarget),
     ("KPI: a hidden KPI measure (H60)", Tests.KpiHiddenMeasure),
+    ("KPI: four KPIs with a plain and a hidden measure beside them (extrapolated)", Tests.KpiMany),
     ("KPI: a model with calculated columns, with and without the trigger table (H55, H56)", Tests.KpiCalculated),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
@@ -2420,6 +2421,42 @@ namespace PivotWright.Tests
                 Check.Equal(6, refs.Count, "calculation properties");
                 Encoding.UTF8.GetString(m.Find(@"MdxScript\.12\.scr\.xml$"));
                 Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+            }
+        }
+
+        // Extrapolated: four KPIs with a plain measure and a hidden target beside them (`datagen ... kpimany`). The script version counts KPIs (4),
+        // measures beyond the first (5) and hidden measures (1) on top of 9.
+        public static void KpiMany()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                var sales = model.Tables["Sales"];
+                total.AddKpi(1000);
+                var target = sales.AddMeasure("Target Amount", "30000");
+                target.IsHidden = true;
+                sales.AddMeasure("Total Amount", "SUM(Sales[Amount])").AddKpi(target, new KpiOptions { Scale = KpiScale.Centered });
+                sales.AddMeasure("Sales Rows", "COUNTROWS(Sales)").AddKpi(1200, new KpiOptions { Scale = KpiScale.LinearReversed, Thresholds = new[] { 0.5, 0.9 } });
+                sales.AddMeasure("Average Qty", "AVERAGE(Sales[Qty])").AddKpi(3, new KpiOptions { Scale = KpiScale.Centered, Thresholds = new[] { 0.5, 0.8, 1.2, 1.5 } });
+                sales.AddMeasure("Max Amount", "MAX(Sales[Amount])");
+                var m = SaveKpiModel(model);
+                var (commands, ann, refs) = KpiScriptParts(m);
+                Check.Equal(6, commands.Count - 1, "one command per measure");
+                // Measures without a KPI first, then the KPI measures in the order created.
+                Check.Equal("[Target Amount]|[Max Amount]|[Total Qty]", string.Join("|", refs.Take(3)), "plain measures first");
+                Check.Equal(4, refs.Count(r => r.StartsWith("KPIs.[", StringComparison.Ordinal)), "four KPI entries");
+                Check.Equal(1, refs.Count(r => r == "Measures.[__XL_Count of Models]"), "default member once");
+                Check.Equal("Percentage", ann["[Total Amount]"]["KpiThresholdType"], "measure target");
+                Check.Equal("Absolute", ann["[Sales Rows]"]["KpiThresholdType"], "fixed target");
+                Check.Equal("600", ann["[Sales Rows]"]["KpiThreshold_0"], "0.5 of 1200");
+                Check.Equal("1080", ann["[Sales Rows]"]["KpiThreshold_1"], "0.9 of 1200");
+                Check.Equal("LinearReversed", ann["[Sales Rows]"]["KpiStatusType"], "reversed");
+                Check.Equal("1.5", ann["[Average Qty]"]["KpiThreshold_0"], "0.5 of 3");
+                Check.Equal("4.5", ann["[Average Qty]"]["KpiThreshold_3"], "1.5 of 3");
+                Check.Equal(0, commands.Count(c => c.Contains("CREATE MEASURE") && c.Contains("Max Amount") && c.Contains("CREATE KPI")), "no KPI on the plain measure");
+                Encoding.UTF8.GetString(m.Find(@"MdxScript\.19\.scr\.xml$"));
+                Encoding.UTF8.GetString(m.Find(@"Model\.19\.cub\.xml$"));
+                Encoding.UTF8.GetString(m.Find(@"Products_G\.6\.dim\.xml$"));
             }
         }
 

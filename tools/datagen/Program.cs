@@ -77,6 +77,19 @@ var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeN
 // kpistyle: the Centered scale with the Road Signs icons (H49)
 if (args.Length > 2 && (args[2] == "kpi" || args.Skip(2).Contains("kpi"))) totalQty.AddKpi(1000);
 if (args.Length > 2 && args[2] == "kpireversed") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.LinearReversed });   // lower is better (H51)
+// kpimany: the combinations no Excel sample shows together (four KPIs, a hidden measure target with the Centered scale, the reversed scale with Road Signs
+// and own thresholds, a plain measure beside them); the model is the hierarchy model of H47
+if (args.Length > 2 && args[2] == "kpimany")
+{
+    totalQty.AddKpi(1000);
+    var amount = s.AddMeasure("Total Amount", "SUM(Sales[Amount])", MeasureFormat.Currency());
+    var amountTarget = s.AddMeasure("Target Amount", "30000", MeasureFormat.Currency());
+    amountTarget.IsHidden = true;
+    amount.AddKpi(amountTarget, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
+    s.AddMeasure("Sales Rows", "COUNTROWS(Sales)", MeasureFormat.WholeNumber).AddKpi(1200, new KpiOptions { Scale = KpiScale.LinearReversed, Thresholds = new[] { 0.5, 0.9 }, IconStyle = KpiIconStyle.RoadSigns });
+    s.AddMeasure("Average Qty", "AVERAGE(Sales[Qty])", MeasureFormat.Decimal(2)).AddKpi(3, new KpiOptions { Scale = KpiScale.Centered, Thresholds = new[] { 0.5, 0.8, 1.2, 1.5 } });
+    s.AddMeasure("Max Amount", "MAX(Sales[Amount])");
+}
 if (args.Skip(2).Contains("hidemeasure")) totalQty.IsHidden = true;   // the KPI measure itself is hidden (H60)
 if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure("Total Amount", "Sum(Sales[Amount])").AddKpi(10000); }   // two KPIs (H50)
 if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)
