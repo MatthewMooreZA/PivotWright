@@ -40,3 +40,29 @@ Size note: the generated files are 70 KB when this script repacks them (it compr
 ## Conclusion of the experiment
 
 One workbook can hold PivotTables on different views of the model: each PivotTable's cache lists the hierarchies and measures its Fields pane offers (the cache holds no data: `saveData="0"`, no records part, a few kilobytes). Writing a cache that lists only what a perspective shows gives a PivotTable that offers only that subset. Not shown: that the PivotTable is *bound* to the perspective in the engine. Excel rewrites the connection command to `Model`, so a refresh, which would rebuild the field list from the connection, may show the whole model again; refresh prompts for credentials in these files, so this could not be tested.
+
+## Routes tried in the Excel UI to make a PivotTable on a perspective (no sample came of any)
+
+All on `H66_perspective_hierarchies_manual.xlsx` (the Perspectives dialog lists the three perspectives, so Excel knows them):
+- Insert PivotTable > Use an external data source > Existing Connections: the Tables tab lists "This Workbook Data Model" (3 tables) and the three placeholder tables, no perspective; the Show box offers All Tables, Connection Tables, Workbook Tables, none lists a perspective; the Connections tab lists only `PivotWright`.
+- The PivotTable Fields pane of a PivotTable on the data model has no perspective picker (the Active/All tabs and a gear menu only).
+- Data > Get Data > From Analysis Services with server name `$Embedded$`: "Unable to locate database server".
+- Connection Properties of the `PivotWright` connection (the placeholder source): Connection type Model OLE DB Query, command type Table Collection, command text `"Products","Dates","Sales"`; editing it asks for credentials. A web summary suggested adding `Cube=<perspective>` to a connection string or a command text; it describes Analysis Services connections and did not apply here.
+- `H67` (a PivotTable made by Excel on a perspective) was therefore never obtained.
+- Never reported: Power Pivot window > Home > PivotTable (whether its Fields pane has a perspective picker).
+
+## Open questions (left open 2026-11-01)
+
+1. **Why does refresh ask for credentials in these files?** The prompt is for the placeholder source (`Provider=Microsoft.ACE.OLEDB.12.0;Data Source=PivotWright;Persist Security Info=false`). `docs/research-refresh.md` (Excel treats a changed model as dirty and reprocesses it from source) explains the case after a model edit, but not these files: Refresh prompted in the files as generated (`pivot_default_v2`) and in the copy Excel saved (H72, H71), all with hand-written PivotTables, while a PivotTable made in Excel on `perspective_three_v1` refreshed without a prompt. Decisive test, not run: insert a PivotTable from the data model in H72 and refresh it.
+2. **Does a refresh keep a perspective-only cache?** Untestable while refresh prompts. If Excel rebuilds the field list from the connection (`Model`), the whole model comes back.
+3. **What does Excel keep of two caches?** `pivot_two_v1.xlsx` was not saved by Excel.
+4. **Is there any way to make Excel itself bind a PivotTable to a perspective?** No route found (above).
+5. Variants never run: `conn-full`, `string`, and a connection without the `x15:connection model="1"` marker.
+
+## Tools made for this
+
+- `tools/datagen` modes `persp1`, `persp3`, `perspH` (H64, H65, H66 on the standard model).
+- `tools/python/cmp_trees.py`: compares two extracted model trees keeping the version counters (xd.py ignores them).
+- `tools/python/add_perspective_connections.py`: H68.
+- `tools/python/pivot_experiment.py`: the PivotTable variants.
+- Samples: `reference/excel-samples/H64`, `H65`, `H66`, `H70`, `H71`, `H72`; files given to Excel: `reference/experiments/`.
