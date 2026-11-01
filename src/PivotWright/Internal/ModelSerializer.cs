@@ -136,9 +136,9 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for one inactive relationship in a model with hierarchies and a measure, with or without a date table, and without hidden columns, calculated columns, KPIs or perspectives.";
-        if (inactive.Count > 1)
-            throw new InvalidOperationException($"The model has {inactive.Count} inactive relationships; only one was seen in an Excel-written file.{seen}");
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with hierarchies and a measure, with or without a date table, and without hidden columns, calculated columns, KPIs or perspectives.";
+        if (inactive.Any(r => r.From != rel.From))
+            throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
         if (_hierarchies.Count == 0)
             throw new InvalidOperationException($"{what} needs the model to have a hierarchy (AddHierarchy).{seen}");
         if (!_measures.Any(m => !m.Helper))
@@ -237,6 +237,7 @@ internal sealed class ModelSerializer
             PerspectiveResavedTable = perspectiveTables?.resaved,
             PerspectiveInfoTable = perspectiveTables?.info,
             InactiveTable = inactiveTables?.many,
+            InactiveCount = _relationships.Count(r => !r.IsActive),
             InactiveResavedTable = inactiveTables?.resaved,
             KpiScriptVersion = (_tables.Any(t => t.DateColumn is not null) ? 10 : _hierarchies.Count > 0 ? 9 : 1) + ScriptEdits(),
         };
@@ -333,7 +334,8 @@ internal sealed class ModelSerializer
             var dim = Group(BackupLog.ClassDimension, t.Id, t.Name, dv, dimFolder, tableIds[t.Id].DimensionObjectId);
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", t.IsLinked ? AsslWriter.LinkedDimension(Info, t, names, size) : AsslWriter.Dimension(Info, t, names, size, dv));
-            if (t.IsLinked || !Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable ? (Info.AnyDate ? 2 : 1) : 0));
+            // With two or more inactive relationships Excel no longer keeps the many-side dimension's information file (H77).
+            if (t.IsLinked || (!Info.HierarchyTables.Contains(t.Id) && !(t.Id == Info.InactiveTable && Info.InactiveCount >= 2)) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable ? (Info.AnyDate ? 2 : 1) : 0));
             dim.Files.AddRange(files);
         }
 

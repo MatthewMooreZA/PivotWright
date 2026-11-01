@@ -97,6 +97,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: files and counters as Excel saves them (H73)", Tests.InactiveRelationship),
     ("Inactive relationship: workbook lists only active relationships, models without one keep their counters", Tests.InactiveRelationshipWorkbookAndAbsent),
     ("Inactive relationship: invalid and unsupported shapes are rejected", Tests.InactiveRelationshipValidation),
+    ("Inactive relationship: two of them, counters as Excel saves them (H77)", Tests.InactiveRelationshipTwo),
 };
 
 int failed = 0;
@@ -2393,6 +2394,44 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"Model\.18\.cub\.xml$");
                 PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
                 PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipTwo()
+        {
+            // H77: Ship Date and then Delivery Date dragged onto Dates[Date].
+            var two = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = two.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var d = two.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(day, day.Year, day.Month); }
+            var s = two.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Ship Date", ColumnDataType.DateTime), new ColumnDefinition("Delivery Date", ColumnDataType.DateTime) });
+            for (int i = 0; i < 40; i++) s.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5, new DateTime(2025, 1, 1).AddDays((i + 3) % 40), new DateTime(2025, 1, 1).AddDays((i + 5) % 40));
+            two.AddRelationship(s["ProductKey"], products["ProductKey"]);
+            two.AddRelationship(s["Date"], d["Date"]);
+            two.AddRelationship(s["Ship Date"], d["Date"], isActive: false);
+            two.AddRelationship(s["Delivery Date"], d["Date"], isActive: false);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            d.AddHierarchy("Calendar", "Year", "Month");
+            s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            using (two)
+            {
+                var m = SaveKpiModel(two);
+                // From 18, 9 and 3 (the hierarchy profile): the cube 23, the script and partitions 11, Sales 5, Products 6, Dates 5, Sales table 2.
+                string cube = PerspectiveText(m, @"Model\.23\.cub\.xml$");
+                Check.True(cube.Contains("<StructureVersion>13</StructureVersion>"), "cube structure 13");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                string sales = PerspectiveText(m, @"Sales_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"\\Sales_[^\\]+\.2\.tbl\.xml$");
+                Check.True(sales.Contains("<StructureVersion>2</StructureVersion><DataIDVersion>3</DataIDVersion><IncDataIDVersion>3</IncDataIDVersion><CacheVersion>3</CacheVersion><DataVersion>2</DataVersion>"), "Sales counters");
+                Check.Equal(4, System.Text.RegularExpressions.Regex.Matches(sales, "<ddl300_300:Relationship>").Count, "relationships in the dimension");
+                string det = PerspectiveText(m, @"Model\.0\.cub\\Sales_[^\\]+\.23\.det\.xml$");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(det, "ReferenceMeasureGroupDimension\"").Count, "measure group dimensions");
+                Check.True(det.Contains("<StructureVersion>10</StructureVersion><CacheVersion>3</CacheVersion><DataVersion>-1</DataVersion>"), "Sales measure group counters");
+                // The many-side dimension keeps no information file with two inactive relationships (one keeps it, H73).
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Sales_[^\\]+\.0\.dim\\info\.\d+\.xml$")), "no Sales information file");
             }
         }
 
