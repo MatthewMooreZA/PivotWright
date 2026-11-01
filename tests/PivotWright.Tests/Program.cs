@@ -77,6 +77,7 @@ var tests = new (string Name, Action Body)[]
     ("KPI: lower is better, the LinearReversed scale (H51)", Tests.KpiReversed),
     ("KPI: a model without hierarchies (H52)", Tests.KpiPlain),
     ("KPI: a model with a date table (H53)", Tests.KpiDateTable),
+    ("KPI: a model with hidden columns (H54)", Tests.KpiHidden),
     ("KPI: counters and files as Excel saves them after Create KPI (H47)", Tests.KpiProfile),
     ("KPI: invalid definitions and unsupported models are rejected", Tests.KpiValidation),
 };
@@ -2396,6 +2397,29 @@ namespace PivotWright.Tests
             }
         }
 
+        // H54: the same KPI in a model with a hidden column and hierarchies; every counter one step up from that model's own base.
+        public static void KpiHidden()
+        {
+            var (model, total) = KpiModel();
+            using (model)
+            {
+                model.Tables["Sales"]["Qty"].IsHidden = true;
+                total.AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string Text(string pattern) => Encoding.UTF8.GetString(m.Find(pattern));
+                var (commands, _, refs) = KpiScriptParts(m);
+                Check.True(commands[1].Contains("CREATE KPI CURRENTCUBE.[Total Qty]"), "same script as without hidden columns");
+                Check.Equal(5, refs.Count, "calculation properties");
+                Check.True(Text(@"Model\.22\.cub\.xml$").Contains("<AssemblyFileList>MdxScript.10.scr.xml</AssemblyFileList>"), "cube 22 and script 10");
+                Text(@"\.cub\\info\.22\.xml$");
+                Text(@"Sales_G\.21\.det\.xml$");
+                Text(@"Products_G\.21\.det\.xml$");
+                Text(@"Products_G\.6\.dim\.xml$");
+                Text(@"Sales_G\.4\.dim\.xml$");
+                Check.True(!Text(@"Products_G\.6\.dim\.xml$").Contains("<Value/>"), "saved dimension drops the empty annotation values");
+            }
+        }
+
         // H53: the same KPI in a model with a date table; every counter one step up from that model's own base.
         public static void KpiDateTable()
         {
@@ -2572,7 +2596,7 @@ namespace PivotWright.Tests
                 {
                     t.AddKpi(1000);
                     m.Tables["Sales"].AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
-                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "calculated column", "hidden or calculated");
+                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "calculated column", "calculated columns");
                 }
             }
             {
@@ -2590,7 +2614,7 @@ namespace PivotWright.Tests
                 {
                     t.AddKpi(1000);
                     m.Tables["Sales"]["Qty"].IsHidden = true;
-                    Throws<InvalidOperationException>(() => m.SaveModelPart(new MemoryStream()), "hidden column", "hidden or calculated");
+                    m.SaveModelPart(new MemoryStream());
                 }
             }
             {

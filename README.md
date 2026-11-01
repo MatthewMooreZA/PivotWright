@@ -74,7 +74,7 @@ total.AddKpi(sales.AddMeasure("Target Qty", "1000"));                // or: the 
 total.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });   // five bands
 ```
 
-Like Power Pivot's *Create KPI* on a measure: the PivotTable field list shows the KPI's Value, Goal, Status and Trend under the measure. Thresholds are fractions of the target (`0.4, 0.8` is 40 % and 80 %); `KpiScale.LinearReversed` is the "lower is better" layout. A measure has at most one KPI; a model can have several. Written the way Excel saves a KPI (SPEC section 12); only the shapes of Excel's samples are known, so `Save` refuses a model without relationships, or with hidden columns or calculated columns. Verified in Excel: a fixed target, a measure target, the Centered layout with other icons, two KPIs in one model, the lower-is-better layout, a model without hierarchies, and a model with a date table.
+Like Power Pivot's *Create KPI* on a measure: the PivotTable field list shows the KPI's Value, Goal, Status and Trend under the measure. Thresholds are fractions of the target (`0.4, 0.8` is 40 % and 80 %); `KpiScale.LinearReversed` is the "lower is better" layout. A measure has at most one KPI; a model can have several. Written the way Excel saves a KPI (SPEC section 12); only the shapes of Excel's samples are known, so `Save` refuses a model without relationships, or with calculated columns. Verified in Excel: a fixed target, a measure target, the Centered layout with other icons, two KPIs in one model, the lower-is-better layout, a model without hierarchies, and a model with a date table.
 
 ### Calculated columns
 

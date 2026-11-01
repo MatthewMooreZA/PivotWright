@@ -63,19 +63,19 @@ internal sealed class ModelSerializer
         }
     }
 
-    // A KPI is written the way Excel saves it right after "Create KPI" on a model with relationships, with or without hierarchies and with or without a date table
-    // (SPEC section 12, H47 to H53). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
+    // A KPI is written the way Excel saves it right after "Create KPI" on a model with relationships, with or without hierarchies with or without a date table and with or without hidden columns
+    // (SPEC section 12, H47 to H54). Other shapes were never seen in an Excel-written file, so they are refused. Returns the table Excel
     // saves again, or null without a KPI.
     private string? ValidateKpis()
     {
         var withKpi = _measures.Where(m => m.Kpi is not null).ToList();
         if (withKpi.Count == 0) return null;
         string name = $"'{withKpi[0].Table}'[{withKpi[0].Name}]";
-        string seen = " Excel-written samples exist only for KPIs in a model with relationships (with or without hierarchies, with or without a date table), without hidden columns or calculated columns.";
+        string seen = " Excel-written samples exist only for KPIs in a model with relationships (with or without hierarchies, with or without a date table, with or without hidden columns), without calculated columns.";
         if (_relationships.Count == 0)
             throw new InvalidOperationException($"The KPI of {name} is in a model without relationships, which was never seen in an Excel-written file. Add a relationship (AddRelationship).{seen}");
-        if (_tables.Any(t => t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Count > 0))
-            throw new InvalidOperationException($"The KPI of {name} is in a model with hidden or calculated columns, which was never seen in an Excel-written file.{seen}");
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0))
+            throw new InvalidOperationException($"The KPI of {name} is in a model with calculated columns, which was never seen in an Excel-written file.{seen}");
         foreach (var kpiMeasure in withKpi)
         {
             name = $"'{kpiMeasure.Table}'[{kpiMeasure.Name}]";

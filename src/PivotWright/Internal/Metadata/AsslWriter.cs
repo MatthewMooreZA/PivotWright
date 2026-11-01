@@ -72,16 +72,16 @@ internal sealed class ModelInfo
     public bool KpiProfile => KpiResavedTable is not null;
     /// <summary>
     /// Script version in the KPI profile: the model's base (9 with hierarchies, 1 without) plus one per KPI plus one per measure beyond the
-    /// first, which fits H47 (10), H48 (11), H50 (12), H52 (2, no hierarchies) and H53 (11, date table; base 10): Excel counts each edit of the
+    /// first, which fits H47 (10), H48 (11), H50 (12), H52 (2, no hierarchies), H53 (11, date table; base 10) and H54 (10, hidden columns; base 9): Excel counts each edit of the
     /// script, and the cube, measure groups and dimensions stay where the first KPI put them (19 and 6; 2 and 2 without hierarchies; 22 and 7
-    /// with a date table) whatever the number of KPIs.
+    /// with a date table; 22 and 6 with hidden columns and hierarchies, the measure groups at 21) whatever the number of KPIs.
     /// </summary>
     public int KpiScriptVersion { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => Calc?.Cube ?? (KpiProfile ? (AnyDate ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
+    public int CubeVersion => Calc?.Cube ?? (KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
-    public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? 20 : CubeVersion);
+    public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? (KpiProfile ? 21 : 20) : CubeVersion);
     public int ScriptVersion => Calc?.Script ?? (KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
