@@ -101,6 +101,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: the date relationship added first (H78)", Tests.InactiveRelationshipDateFirst),
     ("Inactive relationship: a model without hierarchies (H79)", Tests.InactiveRelationshipPlain),
     ("Inactive relationship: next to a KPI (H83)", Tests.InactiveRelationshipKpi),
+    ("Inactive relationship: next to a perspective (H84)", Tests.InactiveRelationshipPerspective),
 };
 
 int failed = 0;
@@ -2396,6 +2397,24 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"Model\.18\.cub\.xml$");
                 PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
                 PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipPerspective()
+        {
+            // H84: the perspective base (cube 20, script 10, partitions 10, Products 6): the cube 23, the script and partitions 11, Sales 4, Products 7,
+            // and the perspective file one version on (Sales view.1.persp.xml).
+            var (model, products, _, sales, _) = InactiveModel();
+            using (model)
+            {
+                model.AddPerspective("Sales view").Include(products.Hierarchies[0]).Include(sales.Measures[0]);
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.23\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @"Sales view\.1\.persp\.xml$");
+                Check.True(PerspectiveText(m, @"Model\.23\.cub\.xml$").Contains("<PerspectiveFileList>Sales view.1.persp.xml</PerspectiveFileList>"), "perspective list");
             }
         }
 

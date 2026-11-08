@@ -127,7 +127,7 @@ internal sealed class ModelSerializer
     }
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
-    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82) and KPIs (H83), without perspectives.
+    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82) KPIs (H83) and perspectives (H84).
     // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
     // null without an inactive relationship.
     private (string many, string resaved)? ValidateInactiveRelationships()
@@ -136,7 +136,7 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, and without perspectives.";
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, .";
         if (inactive.Any(r => r.From != rel.From))
             throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
         if (_measures.Count == 0)
@@ -151,8 +151,8 @@ internal sealed class ModelSerializer
             throw new InvalidOperationException($"{what} is only supported together with calculated columns in a model with hierarchies and without a date table or hidden columns (H82).{seen}");
         if (_measures.FirstOrDefault(m => m.Kpi is not null) is { } kpi && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.CalculatedColumns.Count > 0 || t.Columns.Any(c => c.Definition.IsHidden))))
             throw new InvalidOperationException($"{what} is only supported together with a KPI ('{kpi.Table}'[{kpi.Name}]) in a model with hierarchies and without a date table, calculated columns or hidden columns (H83).{seen}");
-        if (_perspectives.Count > 0)
-            throw new InvalidOperationException($"{what} is not supported together with perspectives.{seen}");
+        if (_perspectives.Count > 0 && inactive.Count > 1)
+            throw new InvalidOperationException($"{what}: perspectives together with several inactive relationships were not seen (H84 has one).{seen}");
         // Excel saved Products again, both with the product relationship before the date relationship (H73) and after it (H78): the primary side
         // of another active relationship of the same many-side table. Without one nothing was seen.
         var other = _relationships.FirstOrDefault(r => r.IsActive && r.From == rel.From && r.To != rel.To)
@@ -349,8 +349,8 @@ internal sealed class ModelSerializer
         // Perspectives sit between the partitions and the script in Excel's backup log (H65).
         for (int i = 0; i < _perspectives.Count; i++)
         {
-            var persp = Group(BackupLog.ClassPerspective, _perspectives[i].Name, _perspectives[i].Name, 0, cubeFolder, Xml.Guid());
-            AddText(persp, cubeFolder + "\\" + AsslWriter.PerspectiveFileName(_perspectives[i].Name),
+            var persp = Group(BackupLog.ClassPerspective, _perspectives[i].Name, _perspectives[i].Name, Info.PerspectiveVersion, cubeFolder, Xml.Guid());
+            AddText(persp, cubeFolder + "\\" + AsslWriter.PerspectiveFileName(_perspectives[i].Name, Info.PerspectiveVersion),
                 AsslWriter.Perspective(Info, _perspectives[i], i, persp.ObjectId, _tables));
         }
         var script = Group(BackupLog.ClassMdxScript, "MdxScript", "MdxScript", Info.ScriptVersion, cubeFolder, Info.MdxScriptObjectId);
