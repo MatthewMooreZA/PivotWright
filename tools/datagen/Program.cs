@@ -44,6 +44,14 @@ if (args.Length > 2 && args[2] == "onetable")   // one table, no relationship, n
     m.Save(Path.Combine(dir, args[1] + ".xlsx"));
     return;
 }
+// "datesfirst": the Dates table is created before Products, so the tables are in the order Dates, Products, Sales (which table Excel saves again)
+void MakePlainDates()
+{
+    var d = m.CreateTable("Dates", new[] { Col("Dates", "Date", ColumnDataType.DateTime), Col("Dates", "Year", ColumnDataType.Int64), Col("Dates", "Month", ColumnDataType.String, "MonthNumber"), Col("Dates", "MonthNumber", ColumnDataType.Int64) });
+    for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
+}
+bool datesFirst = args.Skip(2).Contains("datesfirst") && !(args.Length > 2 && args[2] == "gendate");
+if (datesFirst) MakePlainDates();
 var p = m.CreateTable("Products", new[] { Col("Products", "ProductKey", ColumnDataType.Int64), Col("Products", "Category", ColumnDataType.String, "CategoryOrder"), Col("Products", "CategoryOrder", ColumnDataType.Int64), Col("Products", "Product", ColumnDataType.String) });
 string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
@@ -61,11 +69,7 @@ if (generated)
             HideSortColumns = !(args.Length > 7 && args[7].Contains("nohide")),
             DateFormat = args.Length > 7 && args[7].Contains("datefmt") ? MeasureFormat.Date("dd MMM yyyy") : null,   // "datefmt" in the options word
         });
-else
-{
-    var d = m.CreateTable("Dates", new[] { Col("Dates", "Date", ColumnDataType.DateTime), Col("Dates", "Year", ColumnDataType.Int64), Col("Dates", "Month", ColumnDataType.String, "MonthNumber"), Col("Dates", "MonthNumber", ColumnDataType.Int64) });
-    for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
-}
+else if (!datesFirst) MakePlainDates();
 // roleplay: Sales gets a second date column, "Ship Date", and only Date is related to Dates; Matthew adds the Ship Date relationship in
 // Excel's Diagram View (the base for the role-playing date samples, TODO item 7.1)
 bool rolePlay = args.Length > 2 && args[2] == "roleplay";
