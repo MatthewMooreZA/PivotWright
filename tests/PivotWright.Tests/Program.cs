@@ -2424,8 +2424,9 @@ namespace PivotWright.Tests
 
         public static void KpiCalcResavedTable()
         {
-            // H90 (tables Dates, Products, Sales) and H91 (the Date relationship first): cube 26, script 12, and Dates and Products both at 6 (the
-            // calculated column step saved one, the KPI step the first table).
+            // H90 (tables Dates, Products, Sales) and H91 (the Date relationship first): cube 26, script 12. Both the calculated column step (H92, H93)
+            // and the KPI step (H90, H91) save the first table, so it is at 7 and the other table stays at 5 (H90 and H91 started from a base whose
+            // calculated column step had saved the other table, which is why they end with both at 6).
             foreach (var (datesFirst, dateRelFirst) in new[] { (true, false), (false, true) })
             {
                 using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, CalculateOnOpen = false });
@@ -2444,8 +2445,8 @@ namespace PivotWright.Tests
                 var m = SaveKpiModel(model);
                 PerspectiveText(m, @"Model\.26\.cub\.xml$");
                 PerspectiveText(m, @"MdxScript\.12\.scr\.xml$");
-                PerspectiveText(m, @"Dates_[^\\]+\.6\.dim\.xml$");
-                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @$"{(datesFirst ? "Dates" : "Products")}_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @$"{(datesFirst ? "Products" : "Dates")}_[^\\]+\.5\.dim\.xml$");
             }
         }
 
