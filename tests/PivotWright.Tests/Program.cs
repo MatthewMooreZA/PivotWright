@@ -2487,7 +2487,13 @@ namespace PivotWright.Tests
                 var second = model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false);
                 Check.True(!second.IsActive && model.Relationships[0].IsActive, "IsActive");
                 // Unsupported models are refused when saving.
-                Throws<InvalidOperationException>(() => { using var other = InactiveModel(measure: false).model; other.SaveModelPart(new MemoryStream()); }, "no measure", "AddMeasure");
+                // Without a measure of its own the hidden helper measure stands in, with the same counters (H81).
+                using (var other = InactiveModel(measure: false).model)
+                {
+                    var helper = SaveKpiModel(other);
+                    PerspectiveText(helper, @"Model\.21\.cub\.xml$");
+                    Check.True(PerspectiveText(helper, @"MdxScript\.10\.scr\.xml$").Contains("PivotWright helper"), "the helper measure");
+                }
                 // Hidden columns are supported with hierarchies and without a date table (H80): the cube 24, the measure groups one behind.
                 sales["Qty"].IsHidden = true;
                 var hiddenModel = SaveKpiModel(model);

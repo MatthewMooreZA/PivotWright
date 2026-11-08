@@ -136,11 +136,11 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure, with or without hierarchies and a date table, and without calculated columns, KPIs or perspectives.";
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, and without calculated columns, KPIs or perspectives.";
         if (inactive.Any(r => r.From != rel.From))
             throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
-        if (!_measures.Any(m => !m.Helper))
-            throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure).{seen}");
+        if (_measures.Count == 0)
+            throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure) or the hidden helper measure (DataModelOptions.AddHelperMeasure, the default).{seen}");
         if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null)))
             throw new InvalidOperationException($"{what} is only supported together with hidden columns (table '{hidden.Name}') in a model with hierarchies and without a date table (H80).{seen}");
         if (_tables.FirstOrDefault(t => t.CalculatedColumns.Count > 0) is { } calculated)
