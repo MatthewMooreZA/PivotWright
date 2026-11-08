@@ -103,6 +103,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: next to a KPI (H83)", Tests.InactiveRelationshipKpi),
     ("Inactive relationship: one in each of two fact tables (H85)", Tests.InactiveRelationshipTwoFacts),
     ("KPI: Excel saves the first table of the model again, not the primary side of the first relationship (H86, H87)", Tests.KpiResavedTableIsTheFirstTable),
+    ("Perspective: Excel saves the first table of the model again (H88, H89)", Tests.PerspectiveResavedTableIsTheFirstTable),
     ("Inactive relationship: next to a perspective (H84)", Tests.InactiveRelationshipPerspective),
 };
 
@@ -2417,6 +2418,31 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
                 PerspectiveText(m, @"Sales view\.1\.persp\.xml$");
                 Check.True(PerspectiveText(m, @"Model\.23\.cub\.xml$").Contains("<PerspectiveFileList>Sales view.1.persp.xml</PerspectiveFileList>"), "perspective list");
+            }
+        }
+
+        public static void PerspectiveResavedTableIsTheFirstTable()
+        {
+            // H88: tables created in the order Dates, Products, Sales: Dates saved again (6); H89: the Date relationship first: Products (6).
+            foreach (var (datesFirst, dateRelFirst) in new[] { (true, false), (false, true) })
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                ModelTable products = null!, dates = null!;
+                void MakeProducts() { products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) }); for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i); }
+                void MakeDates() { dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) }); for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); } }
+                if (datesFirst) { MakeDates(); MakeProducts(); } else { MakeProducts(); MakeDates(); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                if (dateRelFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
+                else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                var total = sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+                model.AddPerspective("Sales view").Include(products.Hierarchies[0]).Include(total);
+                var m = SaveKpiModel(model);
+                string saved = datesFirst ? "Dates" : "Products", other = datesFirst ? "Products" : "Dates";
+                PerspectiveText(m, @$"{saved}_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @$"{other}_[^\\]+\.5\.dim\.xml$");
             }
         }
 

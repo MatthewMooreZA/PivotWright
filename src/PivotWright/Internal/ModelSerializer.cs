@@ -125,7 +125,9 @@ internal sealed class ModelSerializer
                 if (group.Count() > 1)
                     throw new InvalidOperationException($"Perspective '{p.Name}' shows {group.Count()} hierarchies of table '{group.Key.Name}'; Excel's samples show one hierarchy per table. Include only one of them.");
         }
-        return (_relationships[0].To.Id, _relationships[0].From.Id);
+        // The dimension Excel saves again is the first table of the model (H88: Dates created first; H89: the Date relationship first, Products
+        // saved); the table that keeps its partition information was the many side in all samples.
+        return (_tables[0].Id, _relationships[0].From.Id);
     }
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
