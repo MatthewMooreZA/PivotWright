@@ -241,7 +241,7 @@ if (productsMatch.Success)
         p.AddCalculatedColumn(n == 1 ? "Name Length" : $"Name Length x{n}", n == 1 ? "LEN([Product])" : $"LEN([Product])*{n}", ColumnDataType.Int64);
 if (calcMode is "calcp" or "calcsp" or "calcpd" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 // persp1, persp3, perspH: the perspectives of Excel's H64, H65 and H66 samples on the standard model (SPEC section 13)
-if (calcMode == "persp1")
+if (calcMode == "persp1" || (rolePlay && args.Skip(3).Contains("persp")))   // roleplay persp: the perspective of H64 on the roleplay model
     m.AddPerspective("Sales view").Include(dates.Hierarchies[0]).Include(p.Hierarchies[0]).Include(s["Date"]).Include(s["Amount"]).Include(totalQty);
 if (calcMode == "persp3")
 {
