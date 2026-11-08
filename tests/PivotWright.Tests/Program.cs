@@ -101,6 +101,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: the date relationship added first (H78)", Tests.InactiveRelationshipDateFirst),
     ("Inactive relationship: a model without hierarchies (H79)", Tests.InactiveRelationshipPlain),
     ("Inactive relationship: next to a KPI (H83)", Tests.InactiveRelationshipKpi),
+    ("Inactive relationship: one in each of two fact tables (H85)", Tests.InactiveRelationshipTwoFacts),
     ("Inactive relationship: next to a perspective (H84)", Tests.InactiveRelationshipPerspective),
 };
 
@@ -2415,6 +2416,30 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
                 PerspectiveText(m, @"Sales view\.1\.persp\.xml$");
                 Check.True(PerspectiveText(m, @"Model\.23\.cub\.xml$").Contains("<PerspectiveFileList>Sales view.1.persp.xml</PerspectiveFileList>"), "perspective list");
+            }
+        }
+
+        public static void InactiveRelationshipTwoFacts()
+        {
+            // H85: Sales[Ship Date] and then Stock[Restock Date] onto Dates[Date], Stock related to Dates only: the cube 23 (18 and five), the script and
+            // partitions 11, Sales 4, Stock 5, Products and Dates unchanged at 5, and no information file for Stock, the table of the last relationship.
+            var (model, _, dates, sales, _) = InactiveModel();
+            using (model)
+            {
+                var stock = model.CreateTable("Stock", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Restock Date", ColumnDataType.DateTime), new ColumnDefinition("OnHand", ColumnDataType.Int64) });
+                for (int i = 0; i < 20; i++) stock.AddRow(new DateTime(2025, 1, 1).AddDays(i), new DateTime(2025, 1, 1).AddDays((i + 3) % 40), 100 + i);
+                model.AddRelationship(stock["Date"], dates["Date"]);
+                var restock = model.AddRelationship(stock["Restock Date"], dates["Date"], isActive: false);
+                Check.True(!restock.IsActive, "inactive");
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.23\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Stock_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                Check.Equal(1, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Sales_[^\\]+\.0\.dim\\info\.\d+\.xml$")), "Sales keeps its information file");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Stock_[^\\]+\.0\.dim\\info\.\d+\.xml$")), "Stock loses it");
             }
         }
 

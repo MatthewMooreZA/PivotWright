@@ -130,15 +130,23 @@ internal sealed class ModelSerializer
     // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82) KPIs (H83) and perspectives (H84).
     // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
     // null without an inactive relationship.
-    private (string many, string resaved)? ValidateInactiveRelationships()
+    private (IReadOnlyDictionary<string, int> byTable, string last, string resaved)? ValidateInactiveRelationships()
     {
         var inactive = _relationships.Where(r => !r.IsActive).ToList();
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
         const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, .";
-        if (inactive.Any(r => r.From != rel.From))
-            throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
+        var byTable = inactive.GroupBy(r => r.From.Id).ToDictionary(g => g.Key, g => g.Count());
+        if (byTable.Count > 1)
+        {
+            // H85: Sales[Ship Date] and then Stock[Restock Date], Stock related to Dates only. Only that shape was seen.
+            if (byTable.Count > 2 || byTable.Values.Any(n => n > 1))
+                throw new InvalidOperationException($"The model has inactive relationships from {byTable.Count} tables; only one inactive relationship in each of two tables was seen (Excel's H85).{seen}");
+            if (_hierarchies.Count == 0 || _measures.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.CalculatedColumns.Count > 0 || t.Columns.Any(c => c.Definition.IsHidden)) || _measures.Any(m => m.Kpi is not null) || _perspectives.Count > 0)
+                throw new InvalidOperationException($"Inactive relationships from two tables were only seen in a model with hierarchies and a measure, without a date table, calculated or hidden columns, KPIs or perspectives (H85).{seen}");
+            return (byTable, inactive[^1].From.Id, inactive[^1].From.Id);
+        }
         if (_measures.Count == 0)
             throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure) or the hidden helper measure (DataModelOptions.AddHelperMeasure, the default).{seen}");
         if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null)))
@@ -157,7 +165,7 @@ internal sealed class ModelSerializer
         // of another active relationship of the same many-side table. Without one nothing was seen.
         var other = _relationships.FirstOrDefault(r => r.IsActive && r.From == rel.From && r.To != rel.To)
             ?? throw new InvalidOperationException($"{what} needs another active relationship from '{rel.From.Name}' to a table other than '{rel.To.Name}' (in Excel's samples Sales was also related to Products); no sample of another shape exists.{seen}");
-        return (rel.From.Id, other.To.Id);
+        return (byTable, rel.From.Id, other.To.Id);
     }
 
     public void Write(Stream output)
@@ -198,8 +206,8 @@ internal sealed class ModelSerializer
         {
             int n = _relationships.Count(r => !r.IsActive);
             var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables);
-            if (facts.TryGetValue(inactiveStep.many, out var many))
-                facts[inactiveStep.many] = many with
+            if (facts.TryGetValue(inactiveStep.last, out var many))
+                facts[inactiveStep.last] = many with
                 {
                     DimensionVersion = many.DimensionVersion + n,
                     TableVersion = many.TableVersion is { } tv ? tv + n : null,
@@ -261,7 +269,8 @@ internal sealed class ModelSerializer
             Perspectives = _perspectives,
             PerspectiveResavedTable = perspectiveTables?.resaved,
             PerspectiveInfoTable = perspectiveTables?.info,
-            InactiveTable = inactiveTables?.many,
+            InactiveByTable = inactiveTables?.byTable ?? new Dictionary<string, int>(),
+            InactiveLastTable = inactiveTables?.last,
             InactiveCount = _relationships.Count(r => !r.IsActive),
             InactiveResavedTable = inactiveTables?.resaved,
             KpiScriptVersion = (_tables.Any(t => t.DateColumn is not null) ? 10 : _hierarchies.Count > 0 ? 9 : 1) + ScriptEdits(),
@@ -367,7 +376,7 @@ internal sealed class ModelSerializer
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", t.IsLinked ? AsslWriter.LinkedDimension(Info, t, names, size) : AsslWriter.Dimension(Info, t, names, size, dv));
             // With two or more inactive relationships Excel no longer keeps the many-side dimension's information file (H77).
-            if (t.IsLinked || (!Info.HierarchyTables.Contains(t.Id) && !(t.Id == Info.InactiveTable && Info.InactiveCount >= 2)) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable ? (Info.Calc is not null ? 4 : Info.AnyDate ? 2 : 1) : 0, t.Id == Info.InactiveTable && Info.Calc is not null));
+            if (t.IsLinked || (!Info.HierarchyTables.Contains(t.Id) && !(Info.InactiveCount >= 2 && t.Id == Info.InactiveLastTable)) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, Info.InactiveOf(t.Id) > 0 ? (Info.Calc is not null ? 4 : Info.AnyDate ? 2 : 1) : 0, Info.InactiveOf(t.Id) > 0 && Info.Calc is not null));
             dim.Files.AddRange(files);
         }
 
