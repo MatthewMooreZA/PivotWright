@@ -87,9 +87,11 @@ internal sealed class ModelSerializer
                 if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
                     throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
         }
-        // The table Excel saves again: the primary side of the first relationship (H47), or the only table of a model without relationships (H57);
-        // with several tables and no relationship, the table of the KPI measure.
-        return _relationships.Count > 0 ? _relationships[0].To.Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
+        // The table Excel saves again: the first table of the model (H47, H86: Dates created first, H87: the date relationship first, Products still
+        // saved), which was the primary side of the first relationship in H47 and the samples after it; the only table of a model without
+        // relationships (H57); with several tables and no relationship, the table of the KPI measure. Only samples whose first table is a
+        // primary-side dimension exist.
+        return _relationships.Count > 0 ? _tables[0].Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
     }
 
     // Perspectives are written the way Excel saves them right after the Perspectives dialog on a model with hierarchies and relationships
