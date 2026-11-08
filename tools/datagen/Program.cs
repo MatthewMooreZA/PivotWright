@@ -152,6 +152,7 @@ if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure(
 if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)
 if (args.Length > 2 && args[2] == "kpistyle") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
 if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
+if (rolePlay && args.Skip(3).Contains("calc")) s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);   // roleplay calc: one calculated column on Sales (add "notrigger" for the base of an Excel sample)
 if (args.Length > 2 && args[2] == "calc")
 {
     // calc [currency|whole|decimal|date|boolean|text|related]: one calculated column, as in Excel's H10 to H15 samples
