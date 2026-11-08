@@ -191,8 +191,10 @@ internal sealed class ModelSerializer
         {
             if (_relationships.Count > 0)
             {
-                var again = _relationships.Select(r => r.To).Distinct().FirstOrDefault(t => t.CalculatedColumns.Count == 0)
-                    ?? throw new InvalidOperationException("A KPI together with calculated columns was only seen when some table on the primary side of a relationship has none (Excel's H55 and H58); here every such table holds calculated columns, so the table Excel saves again is not known.");
+                // The first table of the model that holds no calculated column: Products in H55, Dates in H58 (Products holds the column there),
+                // Dates in H90 (tables created Dates, Products, Sales) and Products in H91 (the Date relationship first).
+                var again = _tables.FirstOrDefault(t => !t.IsLinked && t.CalculatedColumns.Count == 0)
+                    ?? throw new InvalidOperationException("A KPI together with calculated columns was only seen when some table of the model holds none (Excel's H55, H58, H90 and H91); here every table holds calculated columns.");
                 kpiTable = again.Id;
             }
             var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables);
