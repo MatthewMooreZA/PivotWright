@@ -93,6 +93,15 @@ else { m.AddRelationship(s["ProductKey"], p["ProductKey"]); m.AddRelationship(s[
 if (rolePlay && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Ship Date"], dates["Date"], isActive: false);   // roleplay inactive: the shape of H73
 if (delivery && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Delivery Date"], dates["Date"], isActive: false);
 if (returned && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Return Date"], dates["Date"], isActive: false);   // roleplay delivery inactive: two inactive relationships
+// roleplay stock: a second fact table, Stock (Date, Restock Date, OnHand), related to Dates only (a relationship to Products would close a loop), for
+// inactive relationships from two many-side tables
+if (rolePlay && args.Skip(3).Contains("stock"))
+{
+    var restock = m.CreateTable("Stock", new[] { Col("Stock", "Date", ColumnDataType.DateTime), Col("Stock", "Restock Date", ColumnDataType.DateTime), Col("Stock", "OnHand", ColumnDataType.Int64) });
+    for (int i = 0; i < 500; i++) restock.AddRow(new DateTime(2025, 1, 1).AddDays(i % 365), new DateTime(2025, 1, 1).AddDays((i + 2 + i % 9) % 365), 100 + i % 50);
+    m.AddRelationship(restock["Date"], dates["Date"]);
+    if (args.Skip(3).Contains("inactive")) m.AddRelationship(restock["Restock Date"], dates["Date"], isActive: false);   // roleplay stock inactive: Stock's inactive relationship too
+}
 // calcmf: a second fact table, Stock, related to Products (a second one to Dates would make a loop), with a calculated column on Stock and one on Sales (four tables, two many-side tables)
 if (args.Length > 2 && args[2] == "calcmf")
 {
