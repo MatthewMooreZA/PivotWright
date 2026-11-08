@@ -100,6 +100,7 @@ var tests = new (string Name, Action Body)[]
     ("Inactive relationship: two of them, counters as Excel saves them (H77)", Tests.InactiveRelationshipTwo),
     ("Inactive relationship: the date relationship added first (H78)", Tests.InactiveRelationshipDateFirst),
     ("Inactive relationship: a model without hierarchies (H79)", Tests.InactiveRelationshipPlain),
+    ("Inactive relationship: next to a KPI (H83)", Tests.InactiveRelationshipKpi),
 };
 
 int failed = 0;
@@ -2395,6 +2396,24 @@ namespace PivotWright.Tests
                 PerspectiveText(m, @"Model\.18\.cub\.xml$");
                 PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
                 PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipKpi()
+        {
+            // H83: the KPI base (cube 19, script 10, Products 6): the cube 22, the script 11, partitions 10, Sales 4, Products 7, no cube information file.
+            var (model, _, _, sales, _) = InactiveModel();
+            using (model)
+            {
+                sales.Measures[0].AddKpi(1000);
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.22\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                Check.True(PerspectiveText(m, @"MdxScript\.11\.scr\.xml$").Contains("KPIs.[Total Qty]"), "the KPI");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Model\.0\.cub\\info\.\d+\.xml$")), "no cube information file");
             }
         }
 

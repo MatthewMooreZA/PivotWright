@@ -127,7 +127,7 @@ internal sealed class ModelSerializer
     }
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
-    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82), without KPIs or perspectives.
+    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82) and KPIs (H83), without perspectives.
     // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
     // null without an inactive relationship.
     private (string many, string resaved)? ValidateInactiveRelationships()
@@ -136,7 +136,7 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, and without KPIs or perspectives.";
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, and without perspectives.";
         if (inactive.Any(r => r.From != rel.From))
             throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
         if (_measures.Count == 0)
@@ -149,8 +149,8 @@ internal sealed class ModelSerializer
             throw new InvalidOperationException($"{what}: calculated columns together with several inactive relationships were not seen (H82 has one).{seen}");
         if (_tables.Any(t => t.CalculatedColumns.Count > 0) && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Any(c => c.IsHidden))))
             throw new InvalidOperationException($"{what} is only supported together with calculated columns in a model with hierarchies and without a date table or hidden columns (H82).{seen}");
-        if (_measures.FirstOrDefault(m => m.Kpi is not null) is { } kpi)
-            throw new InvalidOperationException($"{what} is not supported together with KPIs ('{kpi.Table}'[{kpi.Name}]).{seen}");
+        if (_measures.FirstOrDefault(m => m.Kpi is not null) is { } kpi && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.CalculatedColumns.Count > 0 || t.Columns.Any(c => c.Definition.IsHidden))))
+            throw new InvalidOperationException($"{what} is only supported together with a KPI ('{kpi.Table}'[{kpi.Name}]) in a model with hierarchies and without a date table, calculated columns or hidden columns (H83).{seen}");
         if (_perspectives.Count > 0)
             throw new InvalidOperationException($"{what} is not supported together with perspectives.{seen}");
         // Excel saved Products again, both with the product relationship before the date relationship (H73) and after it (H78): the primary side
@@ -332,7 +332,7 @@ internal sealed class ModelSerializer
         {
             if (Info.Calc.CubeInfo) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         }
-        else if (Info.KpiProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
+        else if (Info.KpiProfile && !Info.InactiveProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         else if (!Info.AnyHierarchy && !Info.InactiveProfile) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {

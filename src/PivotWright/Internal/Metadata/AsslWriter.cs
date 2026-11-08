@@ -106,10 +106,10 @@ internal sealed class ModelInfo
     public int KpiScriptVersion { get; init; }
 
     // Version counters as Excel saves them after "Create Hierarchy" and after "Mark as Date Table" (SPEC sections 5 and 9).
-    public int CubeVersion => Calc?.Cube ?? (InactiveProfile ? (AnyDate || HiddenProfile ? 21 : AnyHierarchy ? 18 : 1) + 1 + 2 * InactiveCount : PerspectiveProfile ? 20 : KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
+    public int CubeVersion => Calc?.Cube ?? (InactiveProfile ? (AnyDate || HiddenProfile ? 21 : KpiProfile ? 19 : AnyHierarchy ? 18 : 1) + 1 + 2 * InactiveCount : PerspectiveProfile ? 20 : KpiProfile ? (AnyDate || HiddenProfile ? 22 : AnyHierarchy ? 19 : 2) : AnyDate ? 21 : HiddenProfile ? 21 : AnyHierarchy ? 18 : AsslWriter.CubeObjectVersion);
     /// <summary>Object version of the measure groups: the cube's, except after a hide operation, where Excel keeps them one step behind.</summary>
     public int MeasureGroupVersion => Calc?.MeasureGroup ?? (HiddenProfile ? (InactiveProfile ? CubeVersion - 1 : KpiProfile ? 21 : 20) : CubeVersion);
-    public int ScriptVersion => Calc?.Script ?? (InactiveProfile ? (AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile ? 10 : KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
+    public int ScriptVersion => Calc?.Script ?? (InactiveProfile ? (KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile ? 10 : KpiProfile ? KpiScriptVersion : AnyDate ? 10 : AnyHierarchy ? 9 : AsslWriter.CubeObjectVersion);
     public int PartitionVersion => Calc?.Partition ?? (InactiveProfile ? (AnyDate ? 10 : AnyHierarchy ? 9 : 1) + InactiveCount : PerspectiveProfile || AnyDate ? 10 : AnyHierarchy ? 9 : 1);
     /// <summary>Object version of a measure group: 1 for the linked trigger table, which Excel creates at version 1 (H42).</summary>
     public int MeasureGroupVersionOf(string tableId) => LinkedTables.Contains(tableId) ? LinkedVersion : MeasureGroupVersion;
