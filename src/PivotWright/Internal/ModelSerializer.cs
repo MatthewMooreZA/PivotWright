@@ -127,7 +127,7 @@ internal sealed class ModelSerializer
     }
 
     // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
-    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), without calculated columns, KPIs or perspectives.
+    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82), without KPIs or perspectives.
     // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
     // null without an inactive relationship.
     private (string many, string resaved)? ValidateInactiveRelationships()
@@ -136,15 +136,19 @@ internal sealed class ModelSerializer
         if (inactive.Count == 0) return null;
         var rel = inactive[0];
         string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
-        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, and without calculated columns, KPIs or perspectives.";
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, and without KPIs or perspectives.";
         if (inactive.Any(r => r.From != rel.From))
             throw new InvalidOperationException($"The inactive relationships come from different tables ('{rel.From.Name}' and '{inactive.First(r => r.From != rel.From).From.Name}'); in Excel's samples they all came from one table.{seen}");
         if (_measures.Count == 0)
             throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure) or the hidden helper measure (DataModelOptions.AddHelperMeasure, the default).{seen}");
         if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null)))
             throw new InvalidOperationException($"{what} is only supported together with hidden columns (table '{hidden.Name}') in a model with hierarchies and without a date table (H80).{seen}");
-        if (_tables.FirstOrDefault(t => t.CalculatedColumns.Count > 0) is { } calculated)
-            throw new InvalidOperationException($"{what} is not supported together with calculated columns (table '{calculated.Name}').{seen}");
+        if (_tables.FirstOrDefault(t => t.CalculatedColumns.Count > 0 && t != rel.From) is { } calculated)
+            throw new InvalidOperationException($"{what} is only supported together with calculated columns on its many-side table '{rel.From.Name}' (H82), not on '{calculated.Name}'.{seen}");
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0) && inactive.Count > 1)
+            throw new InvalidOperationException($"{what}: calculated columns together with several inactive relationships were not seen (H82 has one).{seen}");
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0) && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Any(c => c.IsHidden))))
+            throw new InvalidOperationException($"{what} is only supported together with calculated columns in a model with hierarchies and without a date table or hidden columns (H82).{seen}");
         if (_measures.FirstOrDefault(m => m.Kpi is not null) is { } kpi)
             throw new InvalidOperationException($"{what} is not supported together with KPIs ('{kpi.Table}'[{kpi.Name}]).{seen}");
         if (_perspectives.Count > 0)
@@ -185,6 +189,28 @@ internal sealed class ModelSerializer
             {
                 Cube = calc.Cube + 1, MeasureGroup = (calc.MeasureGroup ?? calc.Cube) + 1, Tables = facts,
                 Script = calc.Script + ScriptEdits(),
+            };
+        }
+        // An inactive relationship on top of calculated columns (H82, SPEC section 14): every counter of the uncalculated model steps by the
+        // same amounts as in a model without them (the cube three, the rest one per inactive relationship), the cube loses its information file,
+        // and the many-side table and the other table Excel saves again (Products) take one more dimension version.
+        if (calc is not null && inactiveTables is { } inactiveStep)
+        {
+            int n = _relationships.Count(r => !r.IsActive);
+            var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables);
+            if (facts.TryGetValue(inactiveStep.many, out var many))
+                facts[inactiveStep.many] = many with
+                {
+                    DimensionVersion = many.DimensionVersion + n,
+                    TableVersion = many.TableVersion is { } tv ? tv + n : null,
+                    DimensionCounters = many.DimensionCounters is var (st, di, ca, da) ? (st + n, di + n, ca + n, da + n) : null,
+                };
+            if (facts.TryGetValue(inactiveStep.resaved, out var other)) facts[inactiveStep.resaved] = other with { DimensionVersion = other.DimensionVersion + 1 };
+            calc = calc with
+            {
+                Cube = calc.Cube + 1 + 2 * n, MeasureGroup = (calc.MeasureGroup ?? calc.Cube) + 1 + 2 * n, Tables = facts,
+                CubeStructure = calc.CubeStructure + n, MeasureGroupStructure = calc.MeasureGroupStructure + n, MeasureGroupCache = calc.MeasureGroupCache + n,
+                Partition = calc.Partition + n, Script = calc.Script + n, CubeInfo = false,
             };
         }
         var now = DateTime.UtcNow;
@@ -254,6 +280,13 @@ internal sealed class ModelSerializer
         // Data: encode every table into its dimension folder.
         var encoded = new List<EncodedTable>();
         var dimensionFiles = new Dictionary<string, (List<LoggedFile> files, long size)>();
+        // An inactive relationship next to calculated columns stays unprocessed (H82, manual calculation mode): no index, a plain foreign key column.
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0))
+            foreach (var rel in _relationships.Where(r => !r.IsActive))
+            {
+                rel.Unprocessed = true;
+                if (!_relationships.Any(r => r.IsActive && r.FromColumn == rel.FromColumn)) rel.FromColumn.IsForeignKey = false;
+            }
         foreach (var t in _tables)
         {
             var sink = new DimensionSink(_abf, dbFolder + "\\" + t.Id + ".0.dim");
@@ -334,7 +367,7 @@ internal sealed class ModelSerializer
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", t.IsLinked ? AsslWriter.LinkedDimension(Info, t, names, size) : AsslWriter.Dimension(Info, t, names, size, dv));
             // With two or more inactive relationships Excel no longer keeps the many-side dimension's information file (H77).
-            if (t.IsLinked || (!Info.HierarchyTables.Contains(t.Id) && !(t.Id == Info.InactiveTable && Info.InactiveCount >= 2)) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable ? (Info.AnyDate ? 2 : 1) : 0));
+            if (t.IsLinked || (!Info.HierarchyTables.Contains(t.Id) && !(t.Id == Info.InactiveTable && Info.InactiveCount >= 2)) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, t.Id == Info.InactiveTable ? (Info.Calc is not null ? 4 : Info.AnyDate ? 2 : 1) : 0, t.Id == Info.InactiveTable && Info.Calc is not null));
             dim.Files.AddRange(files);
         }
 

@@ -13,6 +13,11 @@ internal sealed class RelationshipDefinition
     public required ColumnBuilder ToColumn { get; init; }
     /// <summary>False for a second relationship between two tables (SPEC section 14): stored, but not used for filtering unless a measure asks for it.</summary>
     public bool IsActive { get; init; } = true;
+    /// <summary>
+    /// True when the relationship is stored without its lookup index: Excel saved the inactive relationship it was given next to calculated columns
+    /// in manual calculation mode that way (H82, SPEC section 14): no R$ table, no index, an unprocessed relationship and a plain foreign key column.
+    /// </summary>
+    public bool Unprocessed { get; set; }
 }
 
 /// <summary>A relationship after its lookup index was written.</summary>
@@ -34,6 +39,8 @@ internal sealed class EncodedRelationship
     public int Version { get; init; }
     /// <summary>False for an inactive relationship: no measure group dimension, no entry in the workbook's relationship list (SPEC section 14).</summary>
     public bool IsActive { get; init; } = true;
+    /// <summary>The relationship has no index (see <see cref="RelationshipDefinition.Unprocessed"/>).</summary>
+    public bool Unprocessed { get; init; }
 
     public string TableName => FileNames.RelationshipTable(ForeignTableId, Name);
 }
@@ -62,6 +69,12 @@ internal static class RelationshipEncoder
     {
         // An inactive relationship was added after the date table was marked, so its table stays at version 0 (H76).
         int version = rel.To.DateColumn is not null && rel.IsActive ? 2 : 0;
+        if (rel.Unprocessed)
+            return new EncodedRelationship
+            {
+                Name = rel.Name, ForeignTableId = fkTableId, ForeignColumnId = fkColumnId, PrimaryTableId = pkTableId, PrimaryColumnId = pkColumnId,
+                Records = 0, MaxRow = -1, Width = 0, ViolationCount = 0, Version = version, IsActive = rel.IsActive, Unprocessed = true,
+            };
         // Row number of every primary key value.
         var rows = new Dictionary<object, int>(new KeyComparer(strings));
         int row = 0;

@@ -77,6 +77,7 @@ internal static class TableXmlWriter
         x.Open("XMRelationship", r.Name);
         x.Raw("<Properties><PrimaryTable>").Raw(Xml.Esc(r.PrimaryTableId)).Raw("</PrimaryTable><PrimaryColumn>")
          .Raw(Xml.Esc(r.PrimaryColumnId)).Raw("</PrimaryColumn><ForeignColumn>").Raw(Xml.Esc(r.ForeignColumnId)).Raw("</ForeignColumn></Properties>");
+        if (r.Unprocessed) { x.Close(); return; }
         x.DataObjects(d => d.DataObject(o =>
         {
             o.Open("XMRelationshipIndexDenseDIDs");

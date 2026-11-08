@@ -483,7 +483,7 @@ internal static class AsslWriter
             sb.Append("<ddl300_300:Relationships>");
             foreach (var r in t.Relationships)
             {
-                sb.Append("<ddl300_300:Relationship><ID>").Append(r.Name).Append("</ID><Visible>true</Visible><ddl300:ProcessingState>Processed</ddl300:ProcessingState>");
+                sb.Append("<ddl300_300:Relationship><ID>").Append(r.Name).Append("</ID><Visible>true</Visible><ddl300:ProcessingState>").Append(r.Unprocessed ? "Unprocessed" : "Processed").Append("</ddl300:ProcessingState>");
                 sb.Append("<ddl300_300:FromRelationshipEnd><Role/><ddl300_300:Multiplicity>Many</ddl300_300:Multiplicity><DimensionID>").Append(E(t.Id))
                   .Append("</DimensionID><Attributes><Attribute><AttributeID>").Append(E(r.ForeignColumnId)).Append("</AttributeID></Attribute></Attributes></ddl300_300:FromRelationshipEnd>");
                 sb.Append("<ddl300_300:ToRelationshipEnd><Role/><ddl300_300:Multiplicity>One</ddl300_300:Multiplicity><DimensionID>").Append(E(r.PrimaryTableId))
@@ -551,12 +551,13 @@ internal static class AsslWriter
     };
 
     /// <summary>Dimension information file (info.N.xml in the .dim folder, [MS-XLDM] 2.6.10.2).</summary>
-    public static string DimensionInfo(EncodedTable t, int inactiveDataVersion = 0)
+    public static string DimensionInfo(EncodedTable t, int inactiveDataVersion = 0, bool withCalculatedColumns = false)
     {
         var sb = new StringBuilder();
         sb.Append("<Dimension xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">");
         sb.Append(inactiveDataVersion > 0 ? "<DataVersion>" + inactiveDataVersion + "</DataVersion><IndexVersion>-1</IndexVersion>" : "<DataVersion>0</DataVersion><IndexVersion>0</IndexVersion>").Append("<DecodeStoreVersion>-1</DecodeStoreVersion><LevelStoreVersion>-1</LevelStoreVersion><Properties>");
-        foreach (var _ in t.AllColumns)
+        // After an inactive relationship next to calculated columns the file lists the calculated columns too (H82).
+        foreach (var _ in withCalculatedColumns ? t.AllColumns.Cast<object>().Concat(t.CalculatedColumns) : t.AllColumns)
         {
             sb.Append("<Property><ParentChild>false</ParentChild><MapDataset><m_cbOffsetHeader>9223372036854775808</m_cbOffsetHeader><m_cbOffsetData>9223372036854775808</m_cbOffsetData><m_cRecord>0</m_cRecord><m_cSegment>0</m_cSegment><m_mskFormat>269484288</m_mskFormat><m_cbHeader>0</m_cbHeader><m_cPath>0</m_cPath><m_cData>0</m_cData><m_cSegmentIndex>4294967295</m_cSegmentIndex><MapDataIndices/><MinMaxValues/></MapDataset><Depth>0</Depth><Balanced>false</Balanced><HasHoles>false</HasHoles></Property>");
         }
@@ -888,7 +889,7 @@ internal static class AsslWriter
         var sb = new StringBuilder(LoadOpen);
         sb.Append("<ParentObject><DatabaseID>").Append(m.DatabaseId).Append("</DatabaseID><CubeID>Model</CubeID></ParentObject>");
         sb.Append("<ObjectDefinition><MeasureGroup>");
-        CommonHeader(sb, t.Name, t.Id, m.Created, m.MeasureGroupVersion, ids.MeasureGroupObjectId, m.UniqueOrdinals ? ids.Ordinal + (m.CalculatedProfile ? 2 : m.InactiveProfile ? 3 * m.InactiveCount : m.PerspectiveProfile ? 3 : 0) : 0);
+        CommonHeader(sb, t.Name, t.Id, m.Created, m.MeasureGroupVersion, ids.MeasureGroupObjectId, m.UniqueOrdinals ? ids.Ordinal + (m.CalculatedProfile ? 2 + (m.InactiveProfile ? 3 * m.InactiveCount : 0) : m.InactiveProfile ? 3 * m.InactiveCount : m.PerspectiveProfile ? 3 : 0) : 0);
         sb.Append("<DataFileList/><Description/><LastProcessed>").Append(T(m.Processed)).Append("</LastProcessed>");
         sb.Append("<Type>Regular</Type><DataAggregation>DataAndCacheAggregatable</DataAggregation><AggregationPrefix/>");
         sb.Append("<StorageMode valuens=\"ddl200_200\">InMemory</StorageMode><ProcessingPriority>0</ProcessingPriority><StorageLocation/>");

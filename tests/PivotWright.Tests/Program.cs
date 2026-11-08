@@ -2519,8 +2519,17 @@ namespace PivotWright.Tests
             var (two, _, dates2, sales2, _) = InactiveModel();
             using (two)
             {
+                // A calculated column on the many-side table is supported (H82): the cube 28 (25 and three), the relationship stays unprocessed.
                 sales2.AddCalculatedColumn("Line", "[Qty]*2", ColumnDataType.Int64);
-                Throws<InvalidOperationException>(() => two.SaveModelPart(new MemoryStream()), "calculated columns", "calculated columns");
+                var withColumn = SaveKpiModel(two);
+                PerspectiveText(withColumn, @"Model\.28\.cub\.xml$");
+                PerspectiveText(withColumn, @"MdxScript\.12\.scr\.xml$");
+                string salesDim = PerspectiveText(withColumn, @"Sales_[^\\]+\.8\.dim\.xml$");
+                Check.True(salesDim.Contains("<ddl300:ProcessingState>Unprocessed</ddl300:ProcessingState><ddl300_300:FromRelationshipEnd>"), "the inactive relationship is unprocessed");
+                Check.Equal(2, withColumn.Files.Keys.Count(k => k.Contains("INDEX.0.idf") && k.Contains("R$Sales")), "index tables of the active relationships only");
+                // ... but not on another table.
+                dates2.AddCalculatedColumn("Year Text", "\"Y\" & [Year]", ColumnDataType.String);
+                Throws<InvalidOperationException>(() => two.SaveModelPart(new MemoryStream()), "calculated column on the date table", "many-side table");
             }
             // The only other relationship pointing to the same table as the inactive one: nothing to compare with in Excel's samples.
             var flipped = new DataModelWriter(new DataModelOptions { XpressCompression = false });
