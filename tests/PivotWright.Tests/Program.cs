@@ -94,6 +94,18 @@ var tests = new (string Name, Action Body)[]
     ("Perspective: hierarchies live in the cube annotation, a table shows all its items (H66)", Tests.PerspectiveHierarchiesAndTables),
     ("Perspective: models without perspectives keep their counters", Tests.PerspectiveAbsent),
     ("Perspective: invalid definitions and unsupported models are rejected", Tests.PerspectiveValidation),
+    ("Inactive relationship: files and counters as Excel saves them (H73)", Tests.InactiveRelationship),
+    ("Inactive relationship: workbook lists only active relationships, models without one keep their counters", Tests.InactiveRelationshipWorkbookAndAbsent),
+    ("Inactive relationship: invalid and unsupported shapes are rejected", Tests.InactiveRelationshipValidation),
+    ("Inactive relationship: two of them, counters as Excel saves them (H77)", Tests.InactiveRelationshipTwo),
+    ("Inactive relationship: the date relationship added first (H78)", Tests.InactiveRelationshipDateFirst),
+    ("Inactive relationship: a model without hierarchies (H79)", Tests.InactiveRelationshipPlain),
+    ("Inactive relationship: next to a KPI (H83)", Tests.InactiveRelationshipKpi),
+    ("Inactive relationship: one in each of two fact tables (H85)", Tests.InactiveRelationshipTwoFacts),
+    ("KPI: Excel saves the first table of the model again, not the primary side of the first relationship (H86, H87)", Tests.KpiResavedTableIsTheFirstTable),
+    ("Perspective: Excel saves the first table of the model again (H88, H89)", Tests.PerspectiveResavedTableIsTheFirstTable),
+    ("KPI with a calculated column: the first table without one is saved again (H90, H91)", Tests.KpiCalcResavedTable),
+    ("Inactive relationship: next to a perspective (H84)", Tests.InactiveRelationshipPerspective),
 };
 
 int failed = 0;
@@ -2317,6 +2329,363 @@ namespace PivotWright.Tests
             foreach (System.Xml.XmlNode a in doc.GetElementsByTagName("Annotation"))
                 if (a["Name"]!.InnerText == "PerspectiveEmptyHierarchyNames") return a["Value"]!.InnerText;
             return null;
+        }
+
+        // H73: Sales[Ship Date] dragged onto Dates[Date] in Diagram View, next to the active relationships of the standard model.
+        private static (DataModelWriter model, ModelTable products, ModelTable dates, ModelTable sales, ModelRelationship inactive) InactiveModel(bool inactive = true, bool measure = true, bool dateFirst = false, bool hierarchies = true)
+        {
+            var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); }
+            var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Ship Date", ColumnDataType.DateTime) });
+            for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5, new DateTime(2025, 1, 1).AddDays((i + 3) % 40));
+            if (dateFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
+            else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
+            var rel = inactive ? model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false) : null!;
+            if (hierarchies) { products.AddHierarchy("Product Hierarchy", "Category", "Product"); dates.AddHierarchy("Calendar", "Year", "Month"); }
+            if (measure) sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            return (model, products, dates, sales, rel);
+        }
+
+        public static void InactiveRelationship()
+        {
+            var (model, _, _, _, rel) = InactiveModel();
+            using (model)
+            {
+                Check.True(!rel.IsActive, "the relationship is inactive");
+                Check.True(model.Relationships.Take(2).All(r => r.IsActive), "the first two are active");
+                var m = SaveKpiModel(model);
+                // Versions of H73: cube and measure groups 21, partitions and script 10, Sales dimension 4, Products 6, Dates unchanged at 5.
+                string cube = PerspectiveText(m, @"Model\.21\.cub\.xml$");
+                Check.True(cube.Contains("<StructureVersion>12</StructureVersion>"), "cube structure 12");
+                PerspectiveText(m, @"MdxScript\.10\.scr\.xml$");
+                string sales = PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                // Three relationships in the Sales dimension and table, three index tables, but only two measure group dimensions.
+                Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(sales, "<ddl300_300:Relationship>").Count, "relationships in the dimension");
+                Check.True(sales.Contains("<StructureVersion>1</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>1</DataVersion>"), "Sales counters");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(sales, "<ColumnID>Ship_x0020_Date</ColumnID>").Count, "escaped column id in the attribute");
+                string det = PerspectiveText(m, @"Model\.0\.cub\\Sales_[^\\]+\.21\.det\.xml$");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(det, "ReferenceMeasureGroupDimension\"").Count, "measure group dimensions");
+                Check.True(det.Contains("<ColumnID>Ship_x0020_Date</ColumnID>"), "escaped column id in the measure group");
+                Check.True(det.Contains("<StructureVersion>9</StructureVersion><CacheVersion>2</CacheVersion><DataVersion>-1</DataVersion>"), "Sales measure group counters");
+                string table = PerspectiveText(m, @"Sales_[^\\]+\.1\.tbl\.xml$");
+                Check.Equal(3, System.Text.RegularExpressions.Regex.Matches(table, "class=\"XMRelationship\"").Count, "relationships in the table");
+                Check.Equal(3, m.Files.Keys.Count(k => k.Contains("INDEX.0.idf") && k.Contains("R$Sales")), "index tables");
+                Check.True(PerspectiveText(m, @"Sales_[^\\]+\.0\.dim\\info\.4\.xml$").Contains("<DataVersion>1</DataVersion><IndexVersion>-1</IndexVersion>"), "Sales dimension information");
+            }
+        }
+
+        public static void InactiveRelationshipWorkbookAndAbsent()
+        {
+            var (model, _, _, _, _) = InactiveModel();
+            using (model)
+            {
+                var ms = new MemoryStream();
+                model.Save(ms);
+                ms.Position = 0;
+                using var zip = new System.IO.Compression.ZipArchive(ms);
+                using var reader = new StreamReader(zip.GetEntry("xl/workbook.xml")!.Open());
+                string workbook = reader.ReadToEnd();
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(workbook, "<x15:modelRelationship ").Count, "relationships in the workbook");
+                Check.True(!workbook.Contains("Ship Date"), "the inactive relationship is not listed");
+            }
+            // The same model without the inactive relationship keeps the hierarchy profile.
+            var (plain, _, _, _, _) = InactiveModel(inactive: false);
+            using (plain)
+            {
+                var m = SaveKpiModel(plain);
+                PerspectiveText(m, @"Model\.18\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.9\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipPerspective()
+        {
+            // H84: the perspective base (cube 20, script 10, partitions 10, Products 6): the cube 23, the script and partitions 11, Sales 4, Products 7,
+            // and the perspective file one version on (Sales view.1.persp.xml).
+            var (model, products, _, sales, _) = InactiveModel();
+            using (model)
+            {
+                model.AddPerspective("Sales view").Include(products.Hierarchies[0]).Include(sales.Measures[0]);
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.23\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @"Sales view\.1\.persp\.xml$");
+                Check.True(PerspectiveText(m, @"Model\.23\.cub\.xml$").Contains("<PerspectiveFileList>Sales view.1.persp.xml</PerspectiveFileList>"), "perspective list");
+            }
+        }
+
+        public static void KpiCalcResavedTable()
+        {
+            // H90 (tables Dates, Products, Sales) and H91 (the Date relationship first): cube 26, script 12. Both the calculated column step (H92, H93)
+            // and the KPI step (H90, H91) save the first table, so it is at 7 and the other table stays at 5 (H90 and H91 started from a base whose
+            // calculated column step had saved the other table, which is why they end with both at 6).
+            foreach (var (datesFirst, dateRelFirst) in new[] { (true, false), (false, true) })
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false, CalculateOnOpen = false });
+                ModelTable products = null!, dates = null!;
+                void MakeProducts() { products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) }); for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i); }
+                void MakeDates() { dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) }); for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); } }
+                if (datesFirst) { MakeDates(); MakeProducts(); } else { MakeProducts(); MakeDates(); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Amount", ColumnDataType.Currency) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5, (decimal)(10 + i % 7));
+                if (dateRelFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
+                else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                sales.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);
+                sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.26\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.12\.scr\.xml$");
+                PerspectiveText(m, @$"{(datesFirst ? "Dates" : "Products")}_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @$"{(datesFirst ? "Products" : "Dates")}_[^\\]+\.5\.dim\.xml$");
+            }
+        }
+
+        public static void PerspectiveResavedTableIsTheFirstTable()
+        {
+            // H88: tables created in the order Dates, Products, Sales: Dates saved again (6); H89: the Date relationship first: Products (6).
+            foreach (var (datesFirst, dateRelFirst) in new[] { (true, false), (false, true) })
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                ModelTable products = null!, dates = null!;
+                void MakeProducts() { products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) }); for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i); }
+                void MakeDates() { dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) }); for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); } }
+                if (datesFirst) { MakeDates(); MakeProducts(); } else { MakeProducts(); MakeDates(); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                if (dateRelFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
+                else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                var total = sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+                model.AddPerspective("Sales view").Include(products.Hierarchies[0]).Include(total);
+                var m = SaveKpiModel(model);
+                string saved = datesFirst ? "Dates" : "Products", other = datesFirst ? "Products" : "Dates";
+                PerspectiveText(m, @$"{saved}_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @$"{other}_[^\\]+\.5\.dim\.xml$");
+            }
+        }
+
+        public static void KpiResavedTableIsTheFirstTable()
+        {
+            // H86: the tables created in the order Dates, Products, Sales (Sales to Products first): the KPI saves Dates again (6), Products stays 5.
+            // H87: the usual table order with the Date relationship first: Products (6), Dates 5.
+            foreach (var (datesFirst, dateRelFirst) in new[] { (true, false), (false, true) })
+            {
+                using var model = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+                ModelTable products = null!, dates = null!;
+                void MakeProducts() { products = model.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) }); for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i); }
+                void MakeDates() { dates = model.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) }); for (int i = 0; i < 40; i++) { var d = new DateTime(2025, 1, 1).AddDays(i); dates.AddRow(d, d.Year, d.Month); } }
+                if (datesFirst) { MakeDates(); MakeProducts(); } else { MakeProducts(); MakeDates(); }
+                var sales = model.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64) });
+                for (int i = 0; i < 40; i++) sales.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5);
+                if (dateRelFirst) { model.AddRelationship(sales["Date"], dates["Date"]); model.AddRelationship(sales["ProductKey"], products["ProductKey"]); }
+                else { model.AddRelationship(sales["ProductKey"], products["ProductKey"]); model.AddRelationship(sales["Date"], dates["Date"]); }
+                products.AddHierarchy("Product Hierarchy", "Category", "Product");
+                dates.AddHierarchy("Calendar", "Year", "Month");
+                sales.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber).AddKpi(1000);
+                var m = SaveKpiModel(model);
+                string saved = datesFirst ? "Dates" : "Products", other = datesFirst ? "Products" : "Dates";
+                PerspectiveText(m, @$"{saved}_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @$"{other}_[^\\]+\.5\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipTwoFacts()
+        {
+            // H85: Sales[Ship Date] and then Stock[Restock Date] onto Dates[Date], Stock related to Dates only: the cube 23 (18 and five), the script and
+            // partitions 11, Sales 4, Stock 5, Products and Dates unchanged at 5, and no information file for Stock, the table of the last relationship.
+            var (model, _, dates, sales, _) = InactiveModel();
+            using (model)
+            {
+                var stock = model.CreateTable("Stock", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Restock Date", ColumnDataType.DateTime), new ColumnDefinition("OnHand", ColumnDataType.Int64) });
+                for (int i = 0; i < 20; i++) stock.AddRow(new DateTime(2025, 1, 1).AddDays(i), new DateTime(2025, 1, 1).AddDays((i + 3) % 40), 100 + i);
+                model.AddRelationship(stock["Date"], dates["Date"]);
+                var restock = model.AddRelationship(stock["Restock Date"], dates["Date"], isActive: false);
+                Check.True(!restock.IsActive, "inactive");
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.23\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Stock_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                Check.Equal(1, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Sales_[^\\]+\.0\.dim\\info\.\d+\.xml$")), "Sales keeps its information file");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Stock_[^\\]+\.0\.dim\\info\.\d+\.xml$")), "Stock loses it");
+            }
+        }
+
+        public static void InactiveRelationshipKpi()
+        {
+            // H83: the KPI base (cube 19, script 10, Products 6): the cube 22, the script 11, partitions 10, Sales 4, Products 7, no cube information file.
+            var (model, _, _, sales, _) = InactiveModel();
+            using (model)
+            {
+                sales.Measures[0].AddKpi(1000);
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.22\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                Check.True(PerspectiveText(m, @"MdxScript\.11\.scr\.xml$").Contains("KPIs.[Total Qty]"), "the KPI");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Model\.0\.cub\\info\.\d+\.xml$")), "no cube information file");
+            }
+        }
+
+        public static void InactiveRelationshipPlain()
+        {
+            // H79: the model without hierarchies (base 1): the cube 4, the script and partitions 2, Sales 3, Products 2, Dates 1, no cube information file.
+            var (model, _, _, _, _) = InactiveModel(hierarchies: false);
+            using (model)
+            {
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.4\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.2\.scr\.xml$");
+                string sales = PerspectiveText(m, @"Sales_[^\\]+\.3\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.2\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.1\.dim\.xml$");
+                Check.True(sales.Contains("<StructureVersion>1</StructureVersion><DataIDVersion>2</DataIDVersion><IncDataIDVersion>2</IncDataIDVersion><CacheVersion>2</CacheVersion><DataVersion>1</DataVersion>"), "Sales counters");
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Model\.0\.cub\\info\.\d+\.xml$")), "no cube information file");
+            }
+            // The same model without the inactive relationship keeps the plain profile.
+            var (plain, _, _, _, _) = InactiveModel(inactive: false, hierarchies: false);
+            using (plain) PerspectiveText(SaveKpiModel(plain), @"Model\.1\.cub\.xml$");
+        }
+
+        public static void InactiveRelationshipDateFirst()
+        {
+            // H78: the date relationship before the product one. Excel still saved Products again (6) and left Dates at 5.
+            var (model, _, _, _, _) = InactiveModel(dateFirst: true);
+            using (model)
+            {
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.21\.cub\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.4\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+            }
+        }
+
+        public static void InactiveRelationshipTwo()
+        {
+            // H77: Ship Date and then Delivery Date dragged onto Dates[Date].
+            var two = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var products = two.CreateTable("Products", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Category", ColumnDataType.String), new ColumnDefinition("Product", ColumnDataType.String) });
+            for (int i = 1; i <= 6; i++) products.AddRow(i, i <= 3 ? "A" : "B", "P" + i);
+            var d = two.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
+            for (int i = 0; i < 40; i++) { var day = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(day, day.Year, day.Month); }
+            var s = two.CreateTable("Sales", new[] { new ColumnDefinition("ProductKey", ColumnDataType.Int64), new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Qty", ColumnDataType.Int64), new ColumnDefinition("Ship Date", ColumnDataType.DateTime), new ColumnDefinition("Delivery Date", ColumnDataType.DateTime) });
+            for (int i = 0; i < 40; i++) s.AddRow(1 + i % 6, new DateTime(2025, 1, 1).AddDays(i), 1 + i % 5, new DateTime(2025, 1, 1).AddDays((i + 3) % 40), new DateTime(2025, 1, 1).AddDays((i + 5) % 40));
+            two.AddRelationship(s["ProductKey"], products["ProductKey"]);
+            two.AddRelationship(s["Date"], d["Date"]);
+            two.AddRelationship(s["Ship Date"], d["Date"], isActive: false);
+            two.AddRelationship(s["Delivery Date"], d["Date"], isActive: false);
+            products.AddHierarchy("Product Hierarchy", "Category", "Product");
+            d.AddHierarchy("Calendar", "Year", "Month");
+            s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+            using (two)
+            {
+                var m = SaveKpiModel(two);
+                // From 18, 9 and 3 (the hierarchy profile): the cube 23, the script and partitions 11, Sales 5, Products 6, Dates 5, Sales table 2.
+                string cube = PerspectiveText(m, @"Model\.23\.cub\.xml$");
+                Check.True(cube.Contains("<StructureVersion>13</StructureVersion>"), "cube structure 13");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                string sales = PerspectiveText(m, @"Sales_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"\\Sales_[^\\]+\.2\.tbl\.xml$");
+                Check.True(sales.Contains("<StructureVersion>2</StructureVersion><DataIDVersion>3</DataIDVersion><IncDataIDVersion>3</IncDataIDVersion><CacheVersion>3</CacheVersion><DataVersion>2</DataVersion>"), "Sales counters");
+                Check.Equal(4, System.Text.RegularExpressions.Regex.Matches(sales, "<ddl300_300:Relationship>").Count, "relationships in the dimension");
+                string det = PerspectiveText(m, @"Model\.0\.cub\\Sales_[^\\]+\.23\.det\.xml$");
+                Check.Equal(2, System.Text.RegularExpressions.Regex.Matches(det, "ReferenceMeasureGroupDimension\"").Count, "measure group dimensions");
+                Check.True(det.Contains("<StructureVersion>10</StructureVersion><CacheVersion>3</CacheVersion><DataVersion>-1</DataVersion>"), "Sales measure group counters");
+                // The many-side dimension keeps no information file with two inactive relationships (one keeps it, H73).
+                Check.Equal(0, m.Files.Keys.Count(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"Sales_[^\\]+\.0\.dim\\info\.\d+\.xml$")), "no Sales information file");
+            }
+        }
+
+        public static void InactiveRelationshipValidation()
+        {
+            var (model, products, dates, sales, _) = InactiveModel(inactive: false);
+            using (model)
+            {
+                // A second relationship between two tables must say it is inactive.
+                Throws<ArgumentException>(() => model.AddRelationship(sales["Ship Date"], dates["Date"]), "a second active relationship", "isActive: false");
+                Throws<ArgumentException>(() => model.AddRelationship(sales["Date"], dates["Date"], isActive: false), "the same columns again", "already related");
+                // An inactive relationship needs an active one first, with the same many side.
+                Throws<ArgumentException>(() => model.AddRelationship(dates["Date"], sales["Date"], isActive: false), "reversed", "Add the active relationship first");
+                var lone = model.CreateTable("Lone", new[] { new ColumnDefinition("Day", ColumnDataType.DateTime) });
+                lone.AddRow(new DateTime(2025, 1, 1));
+                Throws<ArgumentException>(() => model.AddRelationship(lone["Day"], dates["Date"], isActive: false), "no active relationship between the tables", "Add the active relationship first");
+                Check.Equal(2, model.Relationships.Count, "failed calls change nothing");
+                var second = model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false);
+                Check.True(!second.IsActive && model.Relationships[0].IsActive, "IsActive");
+                // Unsupported models are refused when saving.
+                // Without a measure of its own the hidden helper measure stands in, with the same counters (H81).
+                using (var other = InactiveModel(measure: false).model)
+                {
+                    var helper = SaveKpiModel(other);
+                    PerspectiveText(helper, @"Model\.21\.cub\.xml$");
+                    Check.True(PerspectiveText(helper, @"MdxScript\.10\.scr\.xml$").Contains("PivotWright helper"), "the helper measure");
+                }
+                // Hidden columns are supported with hierarchies and without a date table (H80): the cube 24, the measure groups one behind.
+                sales["Qty"].IsHidden = true;
+                var hiddenModel = SaveKpiModel(model);
+                PerspectiveText(hiddenModel, @"Model\.24\.cub\.xml$");
+                PerspectiveText(hiddenModel, @"Sales_[^\\]+\.23\.det\.xml$");
+                PerspectiveText(hiddenModel, @"MdxScript\.10\.scr\.xml$");
+                // ... but not together with a date table, which was not seen.
+                dates.MarkAsDateTable("Date");
+                Throws<InvalidOperationException>(() => model.SaveModelPart(new MemoryStream()), "hidden columns with a date table", "without a date table");
+                sales["Qty"].IsHidden = false;
+                // A date table is supported (H76): the counters go three further, the dimensions as in H73 one step on from the date profile.
+                var m = SaveKpiModel(model);
+                PerspectiveText(m, @"Model\.24\.cub\.xml$");
+                PerspectiveText(m, @"MdxScript\.11\.scr\.xml$");
+                PerspectiveText(m, @"Sales_[^\\]+\.5\.dim\.xml$");
+                PerspectiveText(m, @"Products_[^\\]+\.7\.dim\.xml$");
+                PerspectiveText(m, @"Dates_[^\\]+\.6\.dim\.xml$");
+                PerspectiveText(m, @"\\Sales_[^\\]+\.2\.tbl\.xml$");
+                // The inactive relationship's index table stays at version 0 while the active one to the date table is at 2.
+                Check.Equal(1, m.Files.Keys.Count(k => k.Contains("R$Sales") && k.Contains("\\0.R$") && k.EndsWith("INDEX.0.idf")) - 1, "index tables at version 0: the product key and the inactive one");
+                Check.Equal(1, m.Files.Keys.Count(k => k.Contains("2.R$Sales") && k.EndsWith("INDEX.0.idf")), "index table of the active date relationship at version 2");
+            }
+            var (two, _, dates2, sales2, _) = InactiveModel();
+            using (two)
+            {
+                // A calculated column on the many-side table is supported (H82): the cube 28 (25 and three), the relationship stays unprocessed.
+                sales2.AddCalculatedColumn("Line", "[Qty]*2", ColumnDataType.Int64);
+                var withColumn = SaveKpiModel(two);
+                PerspectiveText(withColumn, @"Model\.28\.cub\.xml$");
+                PerspectiveText(withColumn, @"MdxScript\.12\.scr\.xml$");
+                string salesDim = PerspectiveText(withColumn, @"Sales_[^\\]+\.8\.dim\.xml$");
+                Check.True(salesDim.Contains("<ddl300:ProcessingState>Unprocessed</ddl300:ProcessingState><ddl300_300:FromRelationshipEnd>"), "the inactive relationship is unprocessed");
+                Check.Equal(2, withColumn.Files.Keys.Count(k => k.Contains("INDEX.0.idf") && k.Contains("R$Sales")), "index tables of the active relationships only");
+                // ... but not on another table.
+                dates2.AddCalculatedColumn("Year Text", "\"Y\" & [Year]", ColumnDataType.String);
+                Throws<InvalidOperationException>(() => two.SaveModelPart(new MemoryStream()), "calculated column on the date table", "many-side table");
+            }
+            // The only other relationship pointing to the same table as the inactive one: nothing to compare with in Excel's samples.
+            var flipped = new DataModelWriter(new DataModelOptions { XpressCompression = false });
+            var d = flipped.CreateTable("Dates", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Year", ColumnDataType.Int64), new ColumnDefinition("Month", ColumnDataType.Int64) });
+            d.AddRow(new DateTime(2025, 1, 1), 2025, 1);
+            var s = flipped.CreateTable("Sales", new[] { new ColumnDefinition("Date", ColumnDataType.DateTime), new ColumnDefinition("Ship Date", ColumnDataType.DateTime) });
+            s.AddRow(new DateTime(2025, 1, 1), new DateTime(2025, 1, 1));
+            flipped.AddRelationship(s["Date"], d["Date"]);
+            flipped.AddRelationship(s["Ship Date"], d["Date"], isActive: false);
+            d.AddHierarchy("Calendar", "Year", "Month");
+            s.AddMeasure("Rows", "COUNTROWS(Sales)");
+            using (flipped) Throws<InvalidOperationException>(() => flipped.SaveModelPart(new MemoryStream()), "no other active relationship of the table", "needs another active relationship");
         }
 
         public static void PerspectiveOne()

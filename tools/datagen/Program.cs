@@ -44,6 +44,14 @@ if (args.Length > 2 && args[2] == "onetable")   // one table, no relationship, n
     m.Save(Path.Combine(dir, args[1] + ".xlsx"));
     return;
 }
+// "datesfirst": the Dates table is created before Products, so the tables are in the order Dates, Products, Sales (which table Excel saves again)
+void MakePlainDates()
+{
+    var d = m.CreateTable("Dates", new[] { Col("Dates", "Date", ColumnDataType.DateTime), Col("Dates", "Year", ColumnDataType.Int64), Col("Dates", "Month", ColumnDataType.String, "MonthNumber"), Col("Dates", "MonthNumber", ColumnDataType.Int64) });
+    for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
+}
+bool datesFirst = args.Skip(2).Contains("datesfirst") && !(args.Length > 2 && args[2] == "gendate");
+if (datesFirst) MakePlainDates();
 var p = m.CreateTable("Products", new[] { Col("Products", "ProductKey", ColumnDataType.Int64), Col("Products", "Category", ColumnDataType.String, "CategoryOrder"), Col("Products", "CategoryOrder", ColumnDataType.Int64), Col("Products", "Product", ColumnDataType.String) });
 string[] cats = { "Bikes", "Clothing", "Accessories" };
 int k = 1;
@@ -61,18 +69,43 @@ if (generated)
             HideSortColumns = !(args.Length > 7 && args[7].Contains("nohide")),
             DateFormat = args.Length > 7 && args[7].Contains("datefmt") ? MeasureFormat.Date("dd MMM yyyy") : null,   // "datefmt" in the options word
         });
-else
-{
-    var d = m.CreateTable("Dates", new[] { Col("Dates", "Date", ColumnDataType.DateTime), Col("Dates", "Year", ColumnDataType.Int64), Col("Dates", "Month", ColumnDataType.String, "MonthNumber"), Col("Dates", "MonthNumber", ColumnDataType.Int64) });
-    for (int i = 0; i < 365; i++) { var dt = new DateTime(2025, 1, 1).AddDays(i); d.AddRow(dt, dt.Year, dt.ToString("MMMM", System.Globalization.CultureInfo.InvariantCulture), dt.Month); }
-}
-var s = m.CreateTable("Sales", new[] { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) });
+else if (!datesFirst) MakePlainDates();
+// roleplay: Sales gets a second date column, "Ship Date", and only Date is related to Dates; Matthew adds the Ship Date relationship in
+// Excel's Diagram View (the base for the role-playing date samples, TODO item 7.1)
+bool rolePlay = args.Length > 2 && args[2] == "roleplay";
+bool returned = rolePlay && args.Skip(3).Contains("returned");   // roleplay returned: a fourth date column, "Return Date", for a third inactive relationship
+bool delivery = rolePlay && (args.Skip(3).Contains("delivery") || returned);   // roleplay delivery: a third date column, "Delivery Date", for a second inactive relationship
+var salesDefs = new List<ColumnDefinition> { Col("Sales", "ProductKey", ColumnDataType.Int64), Col("Sales", "Date", ColumnDataType.DateTime), Col("Sales", "Qty", ColumnDataType.Int64), Col("Sales", "Amount", ColumnDataType.Currency) };
+if (rolePlay) salesDefs.Add(Col("Sales", "Ship Date", ColumnDataType.DateTime));
+if (delivery) salesDefs.Add(Col("Sales", "Delivery Date", ColumnDataType.DateTime));
+if (returned) salesDefs.Add(Col("Sales", "Return Date", ColumnDataType.DateTime));
+var s = m.CreateTable("Sales", salesDefs);
+if (rolePlay && args.Skip(3).Contains("hideqty")) s["Qty"].IsHidden = true;   // roleplay hideqty: Sales[Qty] hidden from client tools (the shape of H8)
 int salesRows = args.Select(a => a.StartsWith("rows=") ? int.Parse(a[5..]) : 0).FirstOrDefault(n => n > 0);   // "rows=1100000" for a table of several segments
 if (salesRows == 0) salesRows = 1000;
-for (int i = 0; i < salesRows; i++) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
+for (int i = 0; i < salesRows; i++)
+{
+    if (returned) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365), new DateTime(2025, 1, 1).AddDays((i + 3 + i % 11) % 365), new DateTime(2025, 1, 1).AddDays((i + 9 + i % 13) % 365));
+    else if (delivery) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365), new DateTime(2025, 1, 1).AddDays((i + 3 + i % 11) % 365));
+    else if (rolePlay) s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40), new DateTime(2025, 1, 1).AddDays((i + 1 + i % 7) % 365));
+    else s.AddRow(1 + i % 12, new DateTime(2025, 1, 1).AddDays(i % 365), 1 + i % 5, (decimal)(10 + i % 40));
+}
 var dates = m.Tables["Dates"];
-m.AddRelationship(s["ProductKey"], p["ProductKey"]);
-m.AddRelationship(s["Date"], dates["Date"]);
+// "datefirst" (with roleplay): the date relationship before the product one, as a user may add them (which table Excel saves again)
+if (rolePlay && args.Skip(3).Contains("datefirst")) { m.AddRelationship(s["Date"], dates["Date"]); m.AddRelationship(s["ProductKey"], p["ProductKey"]); }
+else { m.AddRelationship(s["ProductKey"], p["ProductKey"]); m.AddRelationship(s["Date"], dates["Date"]); }
+if (rolePlay && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Ship Date"], dates["Date"], isActive: false);   // roleplay inactive: the shape of H73
+if (delivery && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Delivery Date"], dates["Date"], isActive: false);
+if (returned && args.Skip(3).Contains("inactive")) m.AddRelationship(s["Return Date"], dates["Date"], isActive: false);   // roleplay delivery inactive: two inactive relationships
+// roleplay stock: a second fact table, Stock (Date, Restock Date, OnHand), related to Dates only (a relationship to Products would close a loop), for
+// inactive relationships from two many-side tables
+if (rolePlay && args.Skip(3).Contains("stock"))
+{
+    var restock = m.CreateTable("Stock", new[] { Col("Stock", "Date", ColumnDataType.DateTime), Col("Stock", "Restock Date", ColumnDataType.DateTime), Col("Stock", "OnHand", ColumnDataType.Int64) });
+    for (int i = 0; i < 500; i++) restock.AddRow(new DateTime(2025, 1, 1).AddDays(i % 365), new DateTime(2025, 1, 1).AddDays((i + 2 + i % 9) % 365), 100 + i % 50);
+    m.AddRelationship(restock["Date"], dates["Date"]);
+    if (args.Skip(3).Contains("inactive")) m.AddRelationship(restock["Restock Date"], dates["Date"], isActive: false);   // roleplay stock inactive: Stock's inactive relationship too
+}
 // calcmf: a second fact table, Stock, related to Products (a second one to Dates would make a loop), with a calculated column on Stock and one on Sales (four tables, two many-side tables)
 if (args.Length > 2 && args[2] == "calcmf")
 {
@@ -85,7 +118,7 @@ if (args.Length > 2 && args[2] == "calcmf")
 bool plain = args.Skip(2).Contains("plain");   // no hierarchies at all ("plain", or a trailing "plain" after a calc mode)
 if (!plain) p.AddHierarchy("Product Hierarchy", "Category", "Product");
 if (!generated && !plain) dates.AddHierarchy("Calendar", "Year", "Month");
-var totalQty = s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);
+var totalQty = rolePlay && args.Skip(3).Contains("nomeasure") ? null! : s.AddMeasure("Total Qty", "SUM(Sales[Qty])", MeasureFormat.WholeNumber);   // roleplay nomeasure: only the hidden helper measure (SPEC section 11)
 // kpi: a KPI on Total Qty with a target of 1000 and the default thresholds (H47); kpimeasure: the target is the measure Target Qty (H48);
 // kpistyle: the Centered scale with the Road Signs icons (H49)
 if (args.Length > 2 && (args[2] == "kpi" || args.Skip(2).Contains("kpi"))) totalQty.AddKpi(1000);
@@ -132,6 +165,7 @@ if (args.Length > 2 && args[2] == "kpi2") { totalQty.AddKpi(1000); s.AddMeasure(
 if (args.Length > 2 && args[2] == "kpimeasure") { var target = s.AddMeasure("Target Qty", "1000"); target.IsHidden = args.Skip(2).Contains("hidden"); totalQty.AddKpi(target); }   // "hidden": the target measure is hidden (H59)
 if (args.Length > 2 && args[2] == "kpistyle") totalQty.AddKpi(1000, new KpiOptions { Scale = KpiScale.Centered, IconStyle = KpiIconStyle.RoadSigns });
 if ((args.Length > 2 && args[2] == "date") || args.Skip(2).Contains("datetable")) dates.MarkAsDateTable("Date");   // "datetable" after a calc mode
+if (rolePlay && args.Skip(3).Contains("calc")) s.AddCalculatedColumn("Line Total", "[Qty]*[Amount]", ColumnDataType.Currency);   // roleplay calc: one calculated column on Sales (add "notrigger" for the base of an Excel sample)
 if (args.Length > 2 && args[2] == "calc")
 {
     // calc [currency|whole|decimal|date|boolean|text|related]: one calculated column, as in Excel's H10 to H15 samples
@@ -220,7 +254,7 @@ if (productsMatch.Success)
         p.AddCalculatedColumn(n == 1 ? "Name Length" : $"Name Length x{n}", n == 1 ? "LEN([Product])" : $"LEN([Product])*{n}", ColumnDataType.Int64);
 if (calcMode is "calcp" or "calcsp" or "calcpd" || (countMatch.Success && countMatch.Groups[2].Value == "p")) p.AddCalculatedColumn("Name Length", "LEN([Product])", ColumnDataType.Int64);
 // persp1, persp3, perspH: the perspectives of Excel's H64, H65 and H66 samples on the standard model (SPEC section 13)
-if (calcMode == "persp1")
+if (calcMode == "persp1" || (rolePlay && args.Skip(3).Contains("persp")))   // roleplay persp: the perspective of H64 on the roleplay model
     m.AddPerspective("Sales view").Include(dates.Hierarchies[0]).Include(p.Hierarchies[0]).Include(s["Date"]).Include(s["Amount"]).Include(totalQty);
 if (calcMode == "persp3")
 {

@@ -87,9 +87,11 @@ internal sealed class ModelSerializer
                 if (_measures.FirstOrDefault(m => string.Equals(m.Name, hidden, StringComparison.OrdinalIgnoreCase)) is { } clash)
                     throw new InvalidOperationException($"The KPI of {name} needs a hidden measure named '{hidden}', but '{clash.Table}'[{clash.Name}] has that name. Rename that measure.");
         }
-        // The table Excel saves again: the primary side of the first relationship (H47), or the only table of a model without relationships (H57);
-        // with several tables and no relationship, the table of the KPI measure.
-        return _relationships.Count > 0 ? _relationships[0].To.Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
+        // The table Excel saves again: the first table of the model (H47, H86: Dates created first, H87: the date relationship first, Products still
+        // saved), which was the primary side of the first relationship in H47 and the samples after it; the only table of a model without
+        // relationships (H57); with several tables and no relationship, the table of the KPI measure. Only samples whose first table is a
+        // primary-side dimension exist.
+        return _relationships.Count > 0 ? _tables[0].Id : _tables.First(t => t.Name == withKpi[0].Table).Id;
     }
 
     // Perspectives are written the way Excel saves them right after the Perspectives dialog on a model with hierarchies and relationships
@@ -123,12 +125,57 @@ internal sealed class ModelSerializer
                 if (group.Count() > 1)
                     throw new InvalidOperationException($"Perspective '{p.Name}' shows {group.Count()} hierarchies of table '{group.Key.Name}'; Excel's samples show one hierarchy per table. Include only one of them.");
         }
-        return (_relationships[0].To.Id, _relationships[0].From.Id);
+        // The dimension Excel saves again is the first table of the model (H88: Dates created first; H89: the Date relationship first, Products
+        // saved); the table that keeps its partition information was the many side in all samples.
+        return (_tables[0].Id, _relationships[0].From.Id);
+    }
+
+    // An inactive relationship is written the way Excel saves it right after Diagram View added it next to an active one (SPEC section 14,
+    // H73): a model with a measure, with or without hierarchies (H79), a date table (H76) and hidden columns (H80 with hierarchies and no date table), calculated columns on its many-side table (H82) KPIs (H83) and perspectives (H84).
+    // Returns the ids of the many-side table and of the other dimension Excel saves again (the primary side of another active relationship of the same many-side table, H73 and H78), or
+    // null without an inactive relationship.
+    private (IReadOnlyDictionary<string, int> byTable, string last, string resaved)? ValidateInactiveRelationships()
+    {
+        var inactive = _relationships.Where(r => !r.IsActive).ToList();
+        if (inactive.Count == 0) return null;
+        var rel = inactive[0];
+        string what = $"The inactive relationship {rel.From.Name}[{rel.FromColumn.Definition.Name}] -> {rel.To.Name}[{rel.ToColumn.Definition.Name}]";
+        const string seen = " Excel-written samples exist only for inactive relationships (one and two) from one table in a model with a measure (or the hidden helper measure), with or without hierarchies and a date table, .";
+        var byTable = inactive.GroupBy(r => r.From.Id).ToDictionary(g => g.Key, g => g.Count());
+        if (byTable.Count > 1)
+        {
+            // H85: Sales[Ship Date] and then Stock[Restock Date], Stock related to Dates only. Only that shape was seen.
+            if (byTable.Count > 2 || byTable.Values.Any(n => n > 1))
+                throw new InvalidOperationException($"The model has inactive relationships from {byTable.Count} tables; only one inactive relationship in each of two tables was seen (Excel's H85).{seen}");
+            if (_hierarchies.Count == 0 || _measures.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.CalculatedColumns.Count > 0 || t.Columns.Any(c => c.Definition.IsHidden)) || _measures.Any(m => m.Kpi is not null) || _perspectives.Count > 0)
+                throw new InvalidOperationException($"Inactive relationships from two tables were only seen in a model with hierarchies and a measure, without a date table, calculated or hidden columns, KPIs or perspectives (H85).{seen}");
+            return (byTable, inactive[^1].From.Id, inactive[^1].From.Id);
+        }
+        if (_measures.Count == 0)
+            throw new InvalidOperationException($"{what} needs the model to have a measure (AddMeasure) or the hidden helper measure (DataModelOptions.AddHelperMeasure, the default).{seen}");
+        if (_tables.FirstOrDefault(t => t.Columns.Any(c => c.Definition.IsHidden)) is { } hidden && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null)))
+            throw new InvalidOperationException($"{what} is only supported together with hidden columns (table '{hidden.Name}') in a model with hierarchies and without a date table (H80).{seen}");
+        if (_tables.FirstOrDefault(t => t.CalculatedColumns.Count > 0 && t != rel.From) is { } calculated)
+            throw new InvalidOperationException($"{what} is only supported together with calculated columns on its many-side table '{rel.From.Name}' (H82), not on '{calculated.Name}'.{seen}");
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0) && inactive.Count > 1)
+            throw new InvalidOperationException($"{what}: calculated columns together with several inactive relationships were not seen (H82 has one).{seen}");
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0) && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.Columns.Any(c => c.Definition.IsHidden) || t.CalculatedColumns.Any(c => c.IsHidden))))
+            throw new InvalidOperationException($"{what} is only supported together with calculated columns in a model with hierarchies and without a date table or hidden columns (H82).{seen}");
+        if (_measures.FirstOrDefault(m => m.Kpi is not null) is { } kpi && (_hierarchies.Count == 0 || _tables.Any(t => t.DateColumn is not null || t.CalculatedColumns.Count > 0 || t.Columns.Any(c => c.Definition.IsHidden))))
+            throw new InvalidOperationException($"{what} is only supported together with a KPI ('{kpi.Table}'[{kpi.Name}]) in a model with hierarchies and without a date table, calculated columns or hidden columns (H83).{seen}");
+        if (_perspectives.Count > 0 && inactive.Count > 1)
+            throw new InvalidOperationException($"{what}: perspectives together with several inactive relationships were not seen (H84 has one).{seen}");
+        // Excel saved Products again, both with the product relationship before the date relationship (H73) and after it (H78): the primary side
+        // of another active relationship of the same many-side table. Without one nothing was seen.
+        var other = _relationships.FirstOrDefault(r => r.IsActive && r.From == rel.From && r.To != rel.To)
+            ?? throw new InvalidOperationException($"{what} needs another active relationship from '{rel.From.Name}' to a table other than '{rel.To.Name}' (in Excel's samples Sales was also related to Products); no sample of another shape exists.{seen}");
+        return (byTable, rel.From.Id, other.To.Id);
     }
 
     public void Write(Stream output)
     {
         ValidateDateTables();
+        var inactiveTables = ValidateInactiveRelationships();
         var perspectiveTables = ValidatePerspectives();
         string? kpiTable = ValidateKpis();
         var calc = CalculatedPlan.Create(_tables.Where(t => !t.IsLinked).ToList(), _relationships, _hierarchies);
@@ -144,8 +191,10 @@ internal sealed class ModelSerializer
         {
             if (_relationships.Count > 0)
             {
-                var again = _relationships.Select(r => r.To).Distinct().FirstOrDefault(t => t.CalculatedColumns.Count == 0)
-                    ?? throw new InvalidOperationException("A KPI together with calculated columns was only seen when some table on the primary side of a relationship has none (Excel's H55 and H58); here every such table holds calculated columns, so the table Excel saves again is not known.");
+                // The first table of the model that holds no calculated column: Products in H55, Dates in H58 (Products holds the column there),
+                // Dates in H90 (tables created Dates, Products, Sales) and Products in H91 (the Date relationship first).
+                var again = _tables.FirstOrDefault(t => !t.IsLinked && t.CalculatedColumns.Count == 0)
+                    ?? throw new InvalidOperationException("A KPI together with calculated columns was only seen when some table of the model holds none (Excel's H55, H58, H90 and H91); here every table holds calculated columns.");
                 kpiTable = again.Id;
             }
             var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables);
@@ -154,6 +203,28 @@ internal sealed class ModelSerializer
             {
                 Cube = calc.Cube + 1, MeasureGroup = (calc.MeasureGroup ?? calc.Cube) + 1, Tables = facts,
                 Script = calc.Script + ScriptEdits(),
+            };
+        }
+        // An inactive relationship on top of calculated columns (H82, SPEC section 14): every counter of the uncalculated model steps by the
+        // same amounts as in a model without them (the cube three, the rest one per inactive relationship), the cube loses its information file,
+        // and the many-side table and the other table Excel saves again (Products) take one more dimension version.
+        if (calc is not null && inactiveTables is { } inactiveStep)
+        {
+            int n = _relationships.Count(r => !r.IsActive);
+            var facts = new Dictionary<string, CalculatedTableFacts>(calc.Tables);
+            if (facts.TryGetValue(inactiveStep.last, out var many))
+                facts[inactiveStep.last] = many with
+                {
+                    DimensionVersion = many.DimensionVersion + n,
+                    TableVersion = many.TableVersion is { } tv ? tv + n : null,
+                    DimensionCounters = many.DimensionCounters is var (st, di, ca, da) ? (st + n, di + n, ca + n, da + n) : null,
+                };
+            if (facts.TryGetValue(inactiveStep.resaved, out var other)) facts[inactiveStep.resaved] = other with { DimensionVersion = other.DimensionVersion + 1 };
+            calc = calc with
+            {
+                Cube = calc.Cube + 1 + 2 * n, MeasureGroup = (calc.MeasureGroup ?? calc.Cube) + 1 + 2 * n, Tables = facts,
+                CubeStructure = calc.CubeStructure + n, MeasureGroupStructure = calc.MeasureGroupStructure + n, MeasureGroupCache = calc.MeasureGroupCache + n,
+                Partition = calc.Partition + n, Script = calc.Script + n, CubeInfo = false,
             };
         }
         var now = DateTime.UtcNow;
@@ -204,6 +275,10 @@ internal sealed class ModelSerializer
             Perspectives = _perspectives,
             PerspectiveResavedTable = perspectiveTables?.resaved,
             PerspectiveInfoTable = perspectiveTables?.info,
+            InactiveByTable = inactiveTables?.byTable ?? new Dictionary<string, int>(),
+            InactiveLastTable = inactiveTables?.last,
+            InactiveCount = _relationships.Count(r => !r.IsActive),
+            InactiveResavedTable = inactiveTables?.resaved,
             KpiScriptVersion = (_tables.Any(t => t.DateColumn is not null) ? 10 : _hierarchies.Count > 0 ? 9 : 1) + ScriptEdits(),
         };
 
@@ -220,6 +295,13 @@ internal sealed class ModelSerializer
         // Data: encode every table into its dimension folder.
         var encoded = new List<EncodedTable>();
         var dimensionFiles = new Dictionary<string, (List<LoggedFile> files, long size)>();
+        // An inactive relationship next to calculated columns stays unprocessed (H82, manual calculation mode): no index, a plain foreign key column.
+        if (_tables.Any(t => t.CalculatedColumns.Count > 0))
+            foreach (var rel in _relationships.Where(r => !r.IsActive))
+            {
+                rel.Unprocessed = true;
+                if (!_relationships.Any(r => r.IsActive && r.FromColumn == rel.FromColumn)) rel.FromColumn.IsForeignKey = false;
+            }
         foreach (var t in _tables)
         {
             var sink = new DimensionSink(_abf, dbFolder + "\\" + t.Id + ".0.dim");
@@ -265,8 +347,8 @@ internal sealed class ModelSerializer
         {
             if (Info.Calc.CubeInfo) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
         }
-        else if (Info.KpiProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
-        else if (!Info.AnyHierarchy) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
+        else if (Info.KpiProfile && !Info.InactiveProfile) AddText(cubeGroup, cubeFolder + "\\info." + Info.CubeVersion + ".xml", AsslWriter.CubeInfo);
+        else if (!Info.AnyHierarchy && !Info.InactiveProfile) AddText(cubeGroup, cubeFolder + "\\info.1.xml", "<Cube xmlns=\"http://schemas.microsoft.com/analysisservices/2003/ext\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"/>");
         foreach (var t in encoded)
         {
             var ids = tableIds[t.Id];
@@ -282,8 +364,8 @@ internal sealed class ModelSerializer
         // Perspectives sit between the partitions and the script in Excel's backup log (H65).
         for (int i = 0; i < _perspectives.Count; i++)
         {
-            var persp = Group(BackupLog.ClassPerspective, _perspectives[i].Name, _perspectives[i].Name, 0, cubeFolder, Xml.Guid());
-            AddText(persp, cubeFolder + "\\" + AsslWriter.PerspectiveFileName(_perspectives[i].Name),
+            var persp = Group(BackupLog.ClassPerspective, _perspectives[i].Name, _perspectives[i].Name, Info.PerspectiveVersion, cubeFolder, Xml.Guid());
+            AddText(persp, cubeFolder + "\\" + AsslWriter.PerspectiveFileName(_perspectives[i].Name, Info.PerspectiveVersion),
                 AsslWriter.Perspective(Info, _perspectives[i], i, persp.ObjectId, _tables));
         }
         var script = Group(BackupLog.ClassMdxScript, "MdxScript", "MdxScript", Info.ScriptVersion, cubeFolder, Info.MdxScriptObjectId);
@@ -299,7 +381,8 @@ internal sealed class ModelSerializer
             var dim = Group(BackupLog.ClassDimension, t.Id, t.Name, dv, dimFolder, tableIds[t.Id].DimensionObjectId);
             var names = files.Select(f => f.Path[(dimFolder.Length + 1)..]).ToList();
             AddText(dim, dbFolder + "\\" + t.Id + "." + dv + ".dim.xml", t.IsLinked ? AsslWriter.LinkedDimension(Info, t, names, size) : AsslWriter.Dimension(Info, t, names, size, dv));
-            if (t.IsLinked || !Info.HierarchyTables.Contains(t.Id) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t));
+            // With two or more inactive relationships Excel no longer keeps the many-side dimension's information file (H77).
+            if (t.IsLinked || (!Info.HierarchyTables.Contains(t.Id) && !(Info.InactiveCount >= 2 && t.Id == Info.InactiveLastTable)) || Info.Calc?.HasDimensionInfo(t.Id) == true) AddText(dim, dimFolder + "\\info." + dv + ".xml", AsslWriter.DimensionInfo(t, Info.InactiveOf(t.Id) > 0 ? (Info.Calc is not null ? 4 : Info.AnyDate ? 2 : 1) : 0, Info.InactiveOf(t.Id) > 0 && Info.Calc is not null));
             dim.Files.AddRange(files);
         }
 

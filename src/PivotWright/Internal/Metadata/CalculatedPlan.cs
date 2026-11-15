@@ -141,9 +141,10 @@ internal sealed record CalculatedPlan
 
         var facts = new Dictionary<string, CalculatedTableFacts>();
         var columns = new Dictionary<(string, string), (int, int, int)>();
-        // The primary side of the first relationship is saved again, unless it holds the column itself: in the samples with a column on
-        // the many-side table, and (H31, H32) in a model with a date table whatever table holds the column.
-        var resaved = many.Count >= 1 || date ? relationships.FirstOrDefault()?.To : null;
+        // The first table of the model is saved again (H92: tables created Dates, Products, Sales: Dates; H93: the Date relationship first:
+        // Products; the primary side of the first relationship in the earlier samples, where it was the first table too): in the samples with a
+        // column on the many-side table, and (H31, H32) in a model with a date table whatever table holds the column.
+        var resaved = many.Count >= 1 || date ? tables.FirstOrDefault() : null;
         var partitionData = new Dictionary<string, int>();
         var groupData = new Dictionary<string, int>();
         foreach (var t in tables)

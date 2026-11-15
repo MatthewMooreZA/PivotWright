@@ -191,9 +191,21 @@ model.AddRelationship(sales["CustomerKey"], customers["CustomerKey"]);
 
 PivotTables can then slice `Sales` by any column of `Products` and `Customers`. Rules, all enforced:
 
-- Both columns need the same data type, and the tables must differ and not already be related (directly or through a cycle).
+- Both columns need the same data type, and the tables must differ and not already be related (directly or through a cycle), except for an inactive relationship (below).
 - The key column of the "one" table must have no blanks and no duplicates (text is compared case-insensitively, like the engine does). This is checked when you call `Save`, which throws an `InvalidOperationException` naming the offending value.
 - Foreign key values with no match are allowed (as in Excel); they show up as BLANK.
+
+#### Inactive relationships and role-playing dates
+
+Two tables have one active relationship. A further one, such as a ship date next to an order date, is inactive, as Power Pivot makes it when you drag a second column onto the date table. Pass `isActive: false` after the active one; a measure uses it with `USERELATIONSHIP`:
+
+```csharp
+model.AddRelationship(sales["Date"], dates["Date"]);                       // active: filters Sales by order date
+var shipped = model.AddRelationship(sales["Ship Date"], dates["Date"], isActive: false);   // shipped.IsActive == false
+sales.AddMeasure("Qty by Ship Date", "CALCULATE(SUM(Sales[Qty]), USERELATIONSHIP(Sales[Ship Date], Dates[Date]))");
+```
+
+Written as Excel saves it (`reference/excel-samples/H73_roleplay_inactive_manual.xlsx`, `docs/SPEC.md` section 14). Only the shapes of the samples are supported (H73, H76 to H80: one or two inactive relationships from one table), so `Save` accepts inactive relationships from one table in a model with a measure, with or without hierarchies and a date table, and hidden columns in a model with hierarchies and no date table, and without hidden columns, calculated columns, KPIs or perspectives; the many-side table also needs an active relationship to a table other than the inactive one's (Sales -> Products next to Sales -> Dates), in either order. Other shapes are refused with a message. Excel-verified as a generated file without a date table (`roleplay_inactive_v1`, including a `USERELATIONSHIP` measure); the date table variant follows Excel's `H76` and is Excel-verified too (`roleplay_datetable_inactive_v1`).
 
 `SaveModelPart(stream)` writes just the `item.data` part, if you want to inject the model into a workbook of your own.
 
